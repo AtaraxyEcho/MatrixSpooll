@@ -10,7 +10,16 @@ import {
 import { errMsg, voidCall, voidPromise } from "@/utils/async";
 import { formatDate } from "@/utils/date-format";
 import { Link, useLocation } from "wouter";
-import { AlertTriangle, Library, Loader2, Plus, Search, Settings, Upload } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronLeft,
+  Library,
+  Loader2,
+  Plus,
+  Search,
+  Settings,
+  Upload,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { API } from "@/api";
@@ -31,6 +40,7 @@ import { rememberAssetLibraryReturnTo } from "./AssetLibraryPage";
 import { ICON_BTN_FILLED_CLS } from "@/components/ui/darkroom-tokens";
 import {
   Poster,
+  ProjectCard,
   PhasePill,
   NeedsRepairPill,
   RepairReasonLine,
@@ -69,10 +79,8 @@ type GreetingKey =
 
 const ACCENT_BUTTON_STYLE: CSSProperties = {
   color: "oklch(0.14 0 0)",
-  background:
-    "linear-gradient(180deg, var(--color-accent-2), var(--color-accent))",
-  boxShadow:
-    "inset 0 1px 0 oklch(1 0 0 / 0.3), 0 0 0 1px oklch(0.55 0.10 295 / 0.4), 0 4px 14px -6px var(--color-accent)",
+  background: "var(--color-accent)",
+  boxShadow: "0 0 0 1px oklch(0.55 0.10 295 / 0.4)",
 };
 
 function projectActivityScore(p: ProjectSummary): number {
@@ -377,6 +385,7 @@ function _NewProjectTile({ onClick, t }: { onClick: () => void; t: TFunction }) 
 // -- TopBar -------------------------------------------------------------------
 
 interface TopBarProps {
+  mode: "home" | "list";
   searchValue: string;
   onSearch: (v: string) => void;
   onImport: () => void;
@@ -390,6 +399,7 @@ interface TopBarProps {
 }
 
 function TopBar({
+  mode,
   searchValue,
   onSearch,
   onImport,
@@ -405,19 +415,33 @@ function TopBar({
   return (
     <header className="app-topbar-surface">
       <div className="app-topbar-content app-topbar-inner app-lobby-topbar">
-        <div className="min-w-0 flex items-center gap-2.5">
-          <img
-            src="/android-chrome-192x192.png"
-            alt={BRAND.name}
-            className="h-8 w-8 rounded-lg"
-          />
-          <span
-            className="font-sans text-[17px] font-medium tracking-[-0.012em] text-text"
-            aria-hidden
+        {mode === "list" ? (
+          <Link
+            href="/app"
+            className="app-topbar__leading inline-flex min-w-0 items-center gap-2 no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
-            {BRAND.name}
-          </span>
-        </div>
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-hairline-soft text-text-2 transition-colors hover:border-accent/60 hover:text-text">
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </span>
+            <span className="truncate text-[15px] font-semibold text-text">
+              {t("dashboard:project_list")}
+            </span>
+          </Link>
+        ) : (
+          <div className="min-w-0 flex items-center gap-2.5">
+            <img
+              src="/android-chrome-192x192.png"
+              alt={BRAND.name}
+              className="h-8 w-8 rounded-lg"
+            />
+            <span
+              className="font-sans text-[17px] font-medium tracking-[-0.012em] text-text"
+              aria-hidden
+            >
+              {BRAND.name}
+            </span>
+          </div>
+        )}
 
         <label className="app-lobby-topbar__search flex items-center gap-2 rounded-lg border border-hairline-soft bg-bg/55 px-3 py-1.5 transition-colors focus-within:border-accent/60">
           <Search className="h-3.5 w-3.5 shrink-0 text-text-3" />
@@ -692,9 +716,8 @@ function FilterPills({ active, onChange, counts, phaseLabels, t }: FilterPillsPr
       className="sticky z-20 border-b border-hairline backdrop-blur-md"
       style={{
         top: "var(--lobby-topbar-h, 57px)",
-        background:
-          "linear-gradient(180deg, oklch(0.20 0.011 265 / 0.55), oklch(0.15 0.010 265 / 0.45))",
-        backdropFilter: "blur(16px) saturate(1.1)",
+        background: "oklch(0.14 0.01 265 / 0.96)",
+        backdropFilter: "blur(10px)",
         borderTopWidth: 1,
         borderTopColor: "var(--color-hairline-soft)",
       }}
@@ -709,7 +732,7 @@ function FilterPills({ active, onChange, counts, phaseLabels, t }: FilterPillsPr
               onClick={() => onChange(c.key)}
               aria-pressed={isActive}
               className={
-                "inline-flex items-center rounded-full px-3 py-1 text-[11.5px] font-medium backdrop-blur-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
+                "inline-flex items-center rounded-full px-3 py-1 text-[11.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
                 (isActive
                   ? "border border-accent/40 bg-accent/45 text-text"
                   : "border border-hairline-soft bg-[oklch(0.22_0.012_265_/_0.7)] text-text-3 hover:border-hairline hover:bg-[oklch(0.24_0.012_265_/_0.78)] hover:text-text-2")
@@ -736,9 +759,80 @@ function FilterPills({ active, onChange, counts, phaseLabels, t }: FilterPillsPr
   );
 }
 
+interface ProjectListViewProps {
+  projects: ProjectSummary[];
+  hasProjects: boolean;
+  styleLabels: Record<string, string>;
+  onDelete: (project: ProjectSummary) => void;
+  onCreate: () => void;
+  t: TFunction;
+}
+
+function ProjectListView({ projects, hasProjects, styleLabels, onDelete, onCreate, t }: ProjectListViewProps) {
+  return (
+    <section
+      className="app-project-list"
+      aria-labelledby="project-list-heading"
+      data-testid="project-list-page"
+    >
+      <div className="app-project-list__header">
+        <div>
+          <p className="app-section-kicker">{t("dashboard:project_list")}</p>
+          <h1 id="project-list-heading">{t("dashboard:all_projects")}</h1>
+          <p>{t("dashboard:project_list_description")}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onCreate}
+          className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-md px-3.5 text-[12px] font-semibold transition-colors hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          style={ACCENT_BUTTON_STYLE}
+        >
+          <Plus className="h-4 w-4" aria-hidden />
+          {t("dashboard:create_project")}
+        </button>
+      </div>
+
+      {projects.length === 0 && hasProjects ? (
+        <div className="app-project-list__empty">
+          <h2>{t("dashboard:lobby_no_filter_match")}</h2>
+          <p>{t("dashboard:lobby_no_filter_match_hint")}</p>
+        </div>
+      ) : projects.length === 0 ? (
+        <div className="app-project-list__empty">
+          <h2>{t("dashboard:no_projects")}</h2>
+          <p>{t("dashboard:start_creating_hint")}</p>
+          <button
+            type="button"
+            onClick={onCreate}
+            className="mt-4 inline-flex min-h-9 items-center gap-2 rounded-md border border-hairline-strong px-3 text-[12px] font-semibold text-text-2 transition-colors hover:border-accent/60 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden />
+            {t("dashboard:new_project")}
+          </button>
+        </div>
+      ) : (
+        <div className="app-project-list__grid">
+          {projects.map((project) => (
+            <ProjectCard
+              key={project.name}
+              project={project}
+              styleLabel={styleLabels[project.name] ?? t("dashboard:style_not_set")}
+              onDelete={() => onDelete(project)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // -- ProjectsPage -------------------------------------------------------------
 
-export function ProjectsPage() {
+export interface ProjectsPageProps {
+  mode?: "home" | "list";
+}
+
+export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
   const { t } = useTranslation(["common", "dashboard", "assets"]);
   const [, navigate] = useLocation();
   const {
@@ -937,12 +1031,12 @@ export function ProjectsPage() {
       className="app-lobby-page relative min-h-screen text-text"
       style={
         {
-          background:
-            "radial-gradient(1100px 540px at 8% -10%, oklch(0.32 0.05 295 / 0.28), transparent 55%), radial-gradient(900px 500px at 100% 110%, oklch(0.26 0.04 260 / 0.25), transparent 55%), linear-gradient(180deg, var(--color-bg-grad-a), var(--color-bg-grad-b))",
+          background: "var(--color-bg-grad-a)",
         }
       }
     >
       <TopBar
+        mode={mode}
         searchValue={searchQuery}
         onSearch={setSearchQuery}
         onImport={() => importInputRef.current?.click()}
@@ -966,12 +1060,14 @@ export function ProjectsPage() {
         className="hidden"
       />
 
-      <HomeHeroComposer
-        onCreated={(projectName) => {
-          void fetchProjects();
-          navigate(`/app/projects/${projectName}`);
-        }}
-      />
+      {mode === "home" ? (
+        <HomeHeroComposer
+          onCreated={(projectName) => {
+            void fetchProjects();
+            navigate(`/app/projects/${projectName}`);
+          }}
+        />
+      ) : null}
 
       {projects.length > 0 ? (
         <FilterPills
@@ -986,7 +1082,7 @@ export function ProjectsPage() {
       <main className="mx-auto w-full pt-2">
         {/* 引导运行期间才挂，退出即卸载。放在加载/空态分支之外——首次使用时项目列表通常是空的，
             而演示卡正是那一刻最需要讲的东西。 */}
-        {tourActive ? <OnboardingDemoCard /> : null}
+        {mode === "home" && tourActive ? <OnboardingDemoCard /> : null}
         {projectsLoading ? (
           <div className="flex items-center justify-center px-6 py-20">
             <Loader2 className="h-6 w-6 motion-safe:animate-spin text-accent" />
@@ -994,7 +1090,16 @@ export function ProjectsPage() {
           </div>
         ) : (
           <>
-            {filteredProjects.length === 0 && projects.length > 0 ? (
+            {mode === "list" ? (
+              <ProjectListView
+                projects={filteredProjects}
+                hasProjects={projects.length > 0}
+                styleLabels={styleLabels}
+                onDelete={setDeletingProject}
+                onCreate={() => setShowCreateModal(true)}
+                t={t}
+              />
+            ) : filteredProjects.length === 0 && projects.length > 0 ? (
               <div className="flex flex-col items-center justify-center px-6 py-16 text-text-3">
                 <p className="text-lg text-text">{t("dashboard:lobby_no_filter_match")}</p>
                 <p className="mt-1 text-sm">{t("dashboard:lobby_no_filter_match_hint")}</p>

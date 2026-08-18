@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from lib.api_errors import BadRequestError, ConflictError, NotFoundError
 from lib.aspect_size import is_valid_aspect_ratio
+from lib.config.registry import model_info_for
 from lib.config.resolver import VideoBucketCapabilityError
 from lib.generation_queue import free_video_capability, get_generation_queue
 from lib.generation_queue_client import TaskSpec
@@ -212,6 +213,22 @@ def _free_request_payload(req: FreeCreationRequest) -> dict[str, Any]:
     return payload
 
 
+def _validate_declared_resolution(provider_id: str, model_id: str, requested: str | None) -> None:
+    """Reject a resolution only when the selected built-in model declares a whitelist."""
+
+    if not requested:
+        return
+    model_info = model_info_for(provider_id, model_id)
+    supported = tuple(model_info.resolutions) if model_info is not None else ()
+    if supported and requested.casefold() not in {item.casefold() for item in supported}:
+        raise BadRequestError(
+            "free_creation_resolution_not_supported",
+            model=f"{provider_id}/{model_id}",
+            resolution=requested,
+            supported=", ".join(supported),
+        )
+
+
 async def _preflight_free_creation(
     project_name: str,
     project: dict,
@@ -241,6 +258,11 @@ async def _preflight_free_creation(
                     duration=duration,
                     supported=", ".join(str(item) for item in supported),
                 )
+            _validate_declared_resolution(
+                ctx.video.provider_model.provider_id,
+                ctx.video.backend_model,
+                req.resolution,
+            )
             payload["model"] = f"{ctx.video.provider_model.provider_id}/{ctx.video.backend_model}"
         else:
             ctx = await resolve_generation_context(
@@ -250,6 +272,11 @@ async def _preflight_free_creation(
                 project_path=project_path,
                 user_id=user_id,
                 image=ImageLaneRequest(capability="i2i" if req.output_type == "edit" else "t2i"),
+            )
+            _validate_declared_resolution(
+                ctx.image.provider_model.provider_id,
+                ctx.image.backend_model,
+                req.resolution,
             )
             payload["model"] = f"{ctx.image.provider_model.provider_id}/{ctx.image.backend_model}"
     except (ImageCapabilityError, VideoCapabilityError, VideoBucketCapabilityError) as exc:

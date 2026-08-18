@@ -169,7 +169,7 @@ The project list route is also the product homepage. Its primary action is an in
 - The project list is rendered below the composer as a recent-project rail. It uses a two-row horizontal grid with bounded card dimensions so large project libraries do not expand the page vertically.
 - The legacy project creation modal remains available from the top bar and rail card for users who need explicit project metadata before entering the workspace.
 
-The homepage composer now performs lane/model preflight, registers successful media in the shared artifact manifest, emits project SSE changes, exposes read-only version history, and limits creation reads to the most recent 40 records. Model-specific aspect-ratio declarations and archive/cost/delete integration remain tracked below.
+The homepage composer now performs lane/model/resolution preflight where the selected model declares a resolution whitelist, registers successful media in the shared artifact manifest, emits project SSE changes, exposes read-only version history, and limits creation reads to the most recent 40 records. Model-specific aspect-ratio declarations and archive/cost/delete integration remain tracked below.
 
 - [x] 创建向导增加第四种内容模式“自由创作”。选中后隐藏 source kind、target duration、speech rate、generation route 和 grid 控件。
 - [ ] 仍允许配置项目默认风格、默认模型和默认比例；自由项目增加默认媒体类型（图片/视频）但不锁定每次请求。

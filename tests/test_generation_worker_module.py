@@ -1228,6 +1228,41 @@ class TestGenerationWorker:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_free_orphan_failure_discards_committed_result(self, monkeypatch):
+        queue = _FakeQueue()
+        queue._orphans = [
+            {
+                "task_id": "free-orphan",
+                "status": "running",
+                "provider_id": "gemini-aistudio",
+                "provider_job_id": None,
+                "media_type": "image",
+                "task_type": "free_image",
+                "payload": {},
+                "project_name": "demo",
+                "resource_id": "c_orphan",
+            }
+        ]
+        worker = GenerationWorker(queue=queue)
+        updates: list[dict] = []
+
+        async def _capture(_task, **kwargs):
+            updates.append(kwargs)
+
+        monkeypatch.setattr(worker, "_sync_free_creation_metadata", _capture)
+        await worker._handle_orphan_tasks_on_start()
+
+        assert updates == [
+            {
+                "status": "failed",
+                "error_code": "restart_lost_image",
+                "error": "[restart_lost_image]",
+                "discard_result": True,
+            }
+        ]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_request_cancel_signals_inflight_task(self):
         queue = _FakeQueue()
         worker = GenerationWorker(queue=queue)

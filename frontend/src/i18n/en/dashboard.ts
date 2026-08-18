@@ -14,6 +14,7 @@ export default {
   'source_text': 'Source Text',
   'source_file': 'Source File',
   'project_list': 'Projects List',
+  'project_list_description': 'Browse, filter, and continue every project from one place.',
   'all_projects': 'All Projects',
   'search_projects': 'Search projects...',
   'recent_projects': 'Recent Projects',

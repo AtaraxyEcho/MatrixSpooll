@@ -580,14 +580,13 @@ export function ProjectSettingsPage() {
       className="fixed inset-0 z-50 flex flex-col text-text"
       style={
         {
-          background:
-            "radial-gradient(900px 480px at 8% -10%, oklch(0.32 0.05 295 / 0.22), transparent 55%), radial-gradient(800px 460px at 100% 110%, oklch(0.26 0.04 260 / 0.22), transparent 55%), linear-gradient(180deg, var(--color-bg-grad-a), var(--color-bg-grad-b))",
+          background: "var(--color-bg-grad-a)",
         }
       }
     >
       {/* ─── Sticky top bar ─── */}
       <header className="app-topbar-surface">
-        <div className="app-topbar-content app-topbar-content--narrow app-topbar-inner app-project-settings-topbar">
+        <div className="app-topbar-content app-topbar-content--wide app-topbar-inner app-project-settings-topbar">
           <button
             onClick={() => guardedNavigate(`/app/projects/${projectName}`)}
             className="inline-flex items-center gap-1.5 rounded-md border border-hairline-soft bg-bg-grad-a/45 px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -598,16 +597,13 @@ export function ProjectSettingsPage() {
           </button>
           <span aria-hidden className="h-5 w-px bg-hairline-soft" />
           <div className="min-w-0 flex-1">
-            <div className="min-w-0 truncate font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-accent-2">
-              Project Booth — {projectName.toUpperCase()}
-            </div>
             <h1
-              className="font-editorial mt-0.5 truncate"
+              className="mt-0.5 truncate"
               style={{
-                fontWeight: 400,
-                fontSize: 24,
+                fontWeight: 600,
+                fontSize: 21,
                 lineHeight: 1.05,
-                letterSpacing: "-0.012em",
+                letterSpacing: "-0.01em",
                 color: "var(--color-text)",
               }}
               title={getProjectDisplayName(projectTitle, t("untitled_project"))}

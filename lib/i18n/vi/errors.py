@@ -418,6 +418,7 @@ MESSAGES = {
     "free_creation_project_required": "Tạo tác tự do chỉ khả dụng trong dự án tạo tác tự do",
     "free_creation_reference_invalid": "Đường dẫn tệp tham chiếu không hợp lệ",
     "free_creation_reference_type_unsupported": "Sáng tạo tự do chưa hỗ trợ tệp tham chiếu loại {type}",
+    "free_creation_resolution_not_supported": "Mô hình {model} không hỗ trợ độ phân giải {resolution} (được hỗ trợ: {supported})",
     "free_creation_parent_not_found": "Không tìm thấy hoặc không thể dùng ảnh cha tạo tác tự do '{id}'",
     "free_creation_not_found": "Không tìm thấy tạo tác tự do '{id}'",
     "free_creation_media_not_found": "Không tìm thấy tệp phương tiện của tạo tác tự do '{id}'",

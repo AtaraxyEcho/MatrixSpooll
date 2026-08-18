@@ -57,6 +57,10 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
     return [...new Set(values ?? [])];
   }, [candidates, outputType]);
   const selectedModel = model === "auto" || modelOptions.includes(model) ? model : "auto";
+  const resolutionOptions = outputType === "video"
+    ? ["480p", "720p", "1080p", "4k"]
+    : ["1.5k", "2k", "4k"];
+  const selectedResolution = resolutionOptions.includes(resolution) ? resolution : "";
 
   const loadCreations = useCallback(async () => {
     try {
@@ -124,7 +128,7 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
         .map((item) => item.trim())
         .filter(Boolean),
       aspect_ratio: aspectRatio,
-      resolution: resolution || undefined,
+      resolution: selectedResolution || undefined,
       size: outputType === "video" ? undefined : size.trim() || undefined,
       model: selectedModel === "auto" ? undefined : selectedModel,
       quantity: outputType === "edit" ? 1 : Number(quantity) || 1,
@@ -223,16 +227,13 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
               <label className="text-sm text-[var(--color-text-muted)]">
                 <span className="mb-1.5 block">{t("free_creation_resolution")}</span>
                 <select
-                  value={resolution}
+                  value={selectedResolution}
                   onChange={(event) => setResolution(event.target.value)}
                   className="h-10 w-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
                   disabled={readOnly || submitting}
                 >
                   <option value="">{t("free_creation_resolution_auto")}</option>
-                  {(outputType === "video"
-                    ? ["480p", "720p", "1080p", "4k"]
-                    : ["1.5k", "2k", "4k"]
-                  ).map((option) => (
+                  {resolutionOptions.map((option) => (
                     <option key={option} value={option}>{option}</option>
                   ))}
                 </select>

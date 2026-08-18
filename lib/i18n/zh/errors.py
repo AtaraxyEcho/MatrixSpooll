@@ -366,6 +366,7 @@ MESSAGES = {
     "free_creation_project_required": "自由创作仅可用于自由创作项目",
     "free_creation_reference_invalid": "参考文件路径无效",
     "free_creation_reference_type_unsupported": "当前自由创作不支持 {type} 类型的参考文件",
+    "free_creation_resolution_not_supported": "模型 {model} 不支持 {resolution} 分辨率（仅支持 {supported}）",
     "free_creation_parent_not_found": "自由创作父图「{id}」不存在或不可用",
     "free_creation_not_found": "自由创作「{id}」不存在",
     "free_creation_media_not_found": "自由创作「{id}」的媒体文件不存在",

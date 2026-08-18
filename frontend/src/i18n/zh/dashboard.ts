@@ -15,6 +15,7 @@ export default {
   'source_text': '源文本',
   'source_file': '源文件',
   'project_list': '项目列表',
+  'project_list_description': '在一个页面中浏览、筛选并继续处理所有项目。',
   'all_projects': '所有项目',
   'search_projects': '搜索项目...',
   'recent_projects': '最近访问',

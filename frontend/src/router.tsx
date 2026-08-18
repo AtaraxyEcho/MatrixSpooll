@@ -198,18 +198,20 @@ export function AppRoutes() {
 
         {/* Root redirects to projects list */}
         <Route path="/">
-          <Redirect to="/app/projects" />
+          <Redirect to={ROUTE_APP} />
         </Route>
 
-        {/* /app and /app/ also redirect to projects list */}
+        {/* /app is the authenticated home surface. */}
         <Route path={ROUTE_APP}>
-          <Redirect to={ROUTE_APP_PROJECTS} />
+          <AuthGuard>
+            <ProjectsPage mode="home" />
+          </AuthGuard>
         </Route>
 
-        {/* Projects list */}
+        {/* Full project list */}
         <Route path={ROUTE_APP_PROJECTS}>
           <AuthGuard>
-            <ProjectsPage />
+            <ProjectsPage mode="list" />
           </AuthGuard>
         </Route>
 

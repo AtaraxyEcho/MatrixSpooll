@@ -16,7 +16,6 @@ import {
   ACCENT_BUTTON_STYLE,
   ICON_BTN_FILLED_CLS,
   INPUT_CLS,
-  ambientGlowStyle,
 } from "@/components/ui/darkroom-tokens";
 import type { Asset, AssetType } from "@/types/asset";
 
@@ -24,7 +23,7 @@ const ASSET_LIBRARY_RETURN_TO_KEY = "assetLibrary:returnTo";
 
 /** 入口按钮点击前调用，记录返回目标。只接受应用内部路径，避免 open redirect 风险。 */
 export function rememberAssetLibraryReturnTo(pathname: string) {
-  if (pathname.startsWith("/app/")) {
+  if (pathname === "/app" || pathname.startsWith("/app/")) {
     sessionStorage.setItem(ASSET_LIBRARY_RETURN_TO_KEY, pathname);
   }
 }
@@ -45,8 +44,6 @@ const EMPTY_KEY: Record<AssetType, string> = {
   scene: "library_empty_scene",
   prop: "library_empty_prop",
 };
-
-const HEADER_GLOW_STYLE = ambientGlowStyle({ at: "30% 0%", intensity: 0.08 });
 
 export function AssetLibraryPage() {
   const { t } = useTranslation("assets");
@@ -186,9 +183,6 @@ export function AssetLibraryPage() {
 
   return (
     <div className="relative flex min-h-screen flex-col bg-bg text-text">
-      {/* Decorative ambient glow */}
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-72" style={HEADER_GLOW_STYLE} />
-
       <header className="app-topbar-surface">
         <div className="app-topbar-content app-topbar-content--wide app-topbar-inner app-library-topbar">
           <div className="min-w-0 flex items-start gap-4">
@@ -197,7 +191,7 @@ export function AssetLibraryPage() {
               onClick={() => {
                 const returnTo = sessionStorage.getItem(ASSET_LIBRARY_RETURN_TO_KEY);
                 sessionStorage.removeItem(ASSET_LIBRARY_RETURN_TO_KEY);
-                navigate(returnTo && returnTo.startsWith("/app/") ? returnTo : "/app/projects");
+                navigate(returnTo && returnTo.startsWith("/app/") ? returnTo : "/app");
               }}
               aria-label={t("back_to_projects")}
               title={t("back_to_projects")}
@@ -206,10 +200,7 @@ export function AssetLibraryPage() {
               <ChevronLeft className="h-4 w-4" />
             </button>
             <div className="min-w-0">
-              <div className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-text-4">
-                library · assets
-              </div>
-              <h1 className="font-editorial mt-0.5 truncate text-[28px] leading-[1.05] tracking-tight text-text">
+              <h1 className="mt-0.5 truncate text-[24px] font-semibold leading-[1.05] tracking-tight text-text">
                 {t("library_title")}
               </h1>
               <p className="mt-1.5 text-[13px] text-text-3">{t("library_subtitle")}</p>

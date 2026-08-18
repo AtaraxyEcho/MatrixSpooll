@@ -15,6 +15,7 @@ export default {
   'source_text': 'Nội dung gốc',
   'source_file': 'Tệp gốc',
   'project_list': 'Danh sách dự án',
+  'project_list_description': 'Duyệt, lọc và tiếp tục mọi dự án từ một nơi.',
   'all_projects': 'Tất cả dự án',
   'search_projects': 'Tìm kiếm dự án...',
   'recent_projects': 'Dự án gần đây',

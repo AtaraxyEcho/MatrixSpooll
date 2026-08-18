@@ -11,6 +11,7 @@ from server.routers.free_creations import (
     _free_request_payload,
     _record_batch_compensation,
     _record_enqueued_metadata,
+    _validate_declared_resolution,
     _validate_references,
 )
 from server.services import free_creation_tasks as free_creation_tasks_module
@@ -70,6 +71,13 @@ def test_free_creation_model_selects_only_the_requested_media_lane() -> None:
 
     with pytest.raises(BadRequestError):
         _free_request_payload(FreeCreationRequest(output_type="image", prompt="poster", model="missing-provider"))
+
+
+def test_declared_video_resolution_is_rejected_before_enqueue() -> None:
+    with pytest.raises(BadRequestError):
+        _validate_declared_resolution("ark", "doubao-seedance-1-5-pro-251215", "4k")
+
+    _validate_declared_resolution("ark", "doubao-seedance-1-5-pro-251215", "1080P")
 
 
 def test_reference_validation_is_media_aware_and_path_safe(tmp_path: Path) -> None:

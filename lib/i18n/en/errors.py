@@ -416,6 +416,7 @@ MESSAGES = {
     "free_creation_project_required": "Free creation is only available in free creation projects",
     "free_creation_reference_invalid": "The reference file path is invalid",
     "free_creation_reference_type_unsupported": "Free creation does not support {type} reference files",
+    "free_creation_resolution_not_supported": "Model {model} does not support {resolution} resolution (supported: {supported})",
     "free_creation_parent_not_found": "Free creation parent image '{id}' does not exist or is unavailable",
     "free_creation_not_found": "Free creation '{id}' does not exist",
     "free_creation_media_not_found": "Media for free creation '{id}' does not exist",

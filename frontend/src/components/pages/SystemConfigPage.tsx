@@ -130,14 +130,13 @@ export function SystemConfigPage() {
       className="relative flex h-screen flex-col text-text"
       style={
         {
-          background:
-            "radial-gradient(900px 480px at 8% -10%, oklch(0.32 0.05 295 / 0.22), transparent 55%), radial-gradient(800px 460px at 100% 110%, oklch(0.26 0.04 260 / 0.22), transparent 55%), linear-gradient(180deg, var(--color-bg-grad-a), var(--color-bg-grad-b))",
+          background: "var(--color-bg-grad-a)",
         }
       }
     >
       {/* ─── Top bar ─── */}
       <header className="app-topbar-surface">
-        <div className="app-topbar-inner app-settings-topbar">
+        <div className="app-topbar-content app-topbar-content--wide app-topbar-inner app-settings-topbar">
           <div className="app-settings-topbar__leading">
             <Link
               href="/app/projects"

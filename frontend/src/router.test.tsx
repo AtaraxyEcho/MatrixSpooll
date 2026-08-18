@@ -22,7 +22,9 @@ vi.mock("@/components/canvas/StudioCanvasRouter", () => ({
 }));
 
 vi.mock("@/components/pages/ProjectsPage", () => ({
-  ProjectsPage: () => <div data-testid="projects-page">Projects Page</div>,
+  ProjectsPage: ({ mode = "home" }: { mode?: "home" | "list" }) => (
+    <div data-testid={`projects-page-${mode}`}>Projects Page</div>
+  ),
 }));
 
 vi.mock("@/components/pages/SystemConfigPage", () => ({
@@ -62,14 +64,19 @@ describe("AppRoutes", () => {
     vi.useRealTimers();
   });
 
-  it("redirects root path to /app/projects", async () => {
+  it("redirects the root path to the home route", async () => {
     renderAt("/");
-    expect(await screen.findByTestId("projects-page")).toBeInTheDocument();
+    expect(await screen.findByTestId("projects-page-home")).toBeInTheDocument();
   });
 
-  it("redirects /app to /app/projects", async () => {
+  it("renders the home surface at /app", async () => {
     renderAt("/app");
-    expect(await screen.findByTestId("projects-page")).toBeInTheDocument();
+    expect(await screen.findByTestId("projects-page-home")).toBeInTheDocument();
+  });
+
+  it("renders the full project list at /app/projects", async () => {
+    renderAt("/app/projects");
+    expect(await screen.findByTestId("projects-page-list")).toBeInTheDocument();
   });
 
   it("renders 404 for unknown routes", () => {

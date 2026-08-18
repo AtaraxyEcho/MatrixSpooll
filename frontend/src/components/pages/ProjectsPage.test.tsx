@@ -11,12 +11,12 @@ vi.mock("@/components/pages/CreateProjectModal", () => ({
   CreateProjectModal: () => <div data-testid="create-project-modal">Create Project Modal</div>,
 }));
 
-function renderPage() {
-  const location = memoryLocation({ path: "/app/projects", record: true });
+function renderPage(mode: "home" | "list" = "home") {
+  const location = memoryLocation({ path: mode === "list" ? "/app/projects" : "/app", record: true });
   return {
     ...render(
       <Router hook={location.hook}>
-        <ProjectsPage />
+        <ProjectsPage mode={mode} />
       </Router>,
     ),
     location,
@@ -46,6 +46,15 @@ describe("ProjectsPage", () => {
 
     // 0 项目时仅渲染 NewProjectTile 占位卡（lobby_new_project_title）
     expect(await screen.findByText("新建项目")).toBeInTheDocument();
+  });
+
+  it("renders a dedicated project list without the homepage composer", async () => {
+    vi.spyOn(API, "listProjects").mockResolvedValue({ projects: [] });
+
+    renderPage("list");
+
+    expect(await screen.findByTestId("project-list-page")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "鍥剧墖鐢熸垚" })).not.toBeInTheDocument();
   });
 
   it("creates an image free project from the homepage composer", async () => {
