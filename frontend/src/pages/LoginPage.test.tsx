@@ -68,19 +68,19 @@ describe("LoginPage returnTo consumption", () => {
     });
   });
 
-  it("falls back to /app/projects when ?from is an unsafe open-redirect target", async () => {
+  it("falls back to /app when ?from is an unsafe open-redirect target", async () => {
     const { container, history } = renderLoginAt("/login?from=https%3A%2F%2Fevil.com%2Fapp%2Fx");
     submitLogin(container);
     await waitFor(() => {
-      expect(history.at(-1)).toBe("/app/projects");
+      expect(history.at(-1)).toBe("/app");
     });
   });
 
-  it("falls back to /app/projects when no ?from is present", async () => {
+  it("falls back to /app when no ?from is present", async () => {
     const { container, history } = renderLoginAt("/login");
     submitLogin(container);
     await waitFor(() => {
-      expect(history.at(-1)).toBe("/app/projects");
+      expect(history.at(-1)).toBe("/app");
     });
   });
 });
