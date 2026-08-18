@@ -39,7 +39,7 @@ body {
 }
 
 .app-topbar-content--wide {
-    max-width: 1152px;
+    max-width: var(--app-topbar-content-max);
 }
 
 .app-topbar-content--narrow {
