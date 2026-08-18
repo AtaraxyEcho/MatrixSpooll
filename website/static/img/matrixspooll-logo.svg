@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" role="img" aria-labelledby="title desc">
+  <title id="title">MatrixSpooll</title>
+  <desc id="desc">MatrixSpooll logo</desc>
+  <rect width="160" height="160" rx="28" fill="#111827" />
+  <path d="M32 125V35h25l23 44 23-44h25v90h-20V66l-27 49h-3L51 66v59z" fill="#f4f7ff" />
+  <path d="M88 28c26 0 47 21 47 47 0 18-10 34-25 42l-10-17c9-5 15-14 15-25 0-15-12-27-27-27z" fill="#7568f4" />
+  <circle cx="88" cy="75" r="7" fill="#111827" stroke="#c8c2ff" stroke-width="3" />
+  <text x="190" y="103" fill="#f4f7ff" font-family="Inter, Arial, sans-serif" font-size="56" font-weight="700" letter-spacing="-1">MatrixSpooll</text>
+</svg>

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">MatrixSpooll</title>
+  <desc id="desc">A spool-inspired M mark for MatrixSpooll</desc>
+  <defs>
+    <linearGradient id="core" x1="72" y1="72" x2="440" y2="440" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f4f7ff" />
+      <stop offset="1" stop-color="#aebdff" />
+    </linearGradient>
+    <linearGradient id="accent" x1="112" y1="96" x2="420" y2="420" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8c7dff" />
+      <stop offset="1" stop-color="#3d31c9" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="#111827" />
+  <path d="M104 382V130l76 0 76 142 76-142h76v252h-58V218l-88 158h-12l-88-158v164z" fill="url(#core)" />
+  <path d="M282 118c72 0 130 58 130 130 0 50-28 94-70 116l-26-48c24-13 40-38 40-68 0-41-33-74-74-74z" fill="url(#accent)" />
+  <path d="M282 118v56c41 0 74 33 74 74 0 30-17 56-42 68l26 48c42-22 70-66 70-116 0-72-58-130-130-130z" fill="none" stroke="#c8c2ff" stroke-width="10" stroke-linejoin="round" />
+  <circle cx="282" cy="248" r="20" fill="#111827" stroke="#c8c2ff" stroke-width="8" />
+  <path d="M282 138v38M282 320v38M192 248h38M334 248h38" stroke="#c8c2ff" stroke-width="8" stroke-linecap="round" />
+</svg>

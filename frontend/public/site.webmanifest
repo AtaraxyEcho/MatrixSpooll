@@ -1,0 +1,33 @@
+{
+    "name": "MatrixSpooll",
+    "short_name": "MatrixSpooll",
+    "icons": [
+        {
+            "src": "/matrixspooll-mark.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any"
+        },
+        {
+            "src": "/matrixspooll-mark.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any"
+        },
+        {
+            "src": "/matrixspooll-mark.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "maskable"
+        },
+        {
+            "src": "/matrixspooll-mark.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "maskable"
+        }
+    ],
+    "theme_color": "#111827",
+    "background_color": "#111827",
+    "display": "standalone"
+}
