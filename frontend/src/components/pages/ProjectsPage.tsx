@@ -30,7 +30,6 @@ import { OpenClawModal } from "./OpenClawModal";
 import { rememberAssetLibraryReturnTo } from "./AssetLibraryPage";
 import { ICON_BTN_FILLED_CLS } from "@/components/ui/darkroom-tokens";
 import {
-  ProjectCard,
   Poster,
   PhasePill,
   NeedsRepairPill,
@@ -47,6 +46,8 @@ import { ONBOARDING_ANCHORS } from "@/onboarding/anchors";
 import { OnboardingDemoCard } from "@/onboarding/OnboardingDemoCard";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { BRAND } from "@/branding";
+import { HomeHeroComposer } from "./HomeHeroComposer";
+import { HomeProjectRail } from "./HomeProjectRail";
 import {
   PHASE_ORDER,
   type Phase,
@@ -84,7 +85,7 @@ function projectActivityScore(p: ProjectSummary): number {
   return PHASE_ORDER.indexOf(status.phase) * 10 + status.phase_progress;
 }
 
-function pickFeaturedProject(projects: ProjectSummary[]): ProjectSummary | null {
+function _pickFeaturedProject(projects: ProjectSummary[]): ProjectSummary | null {
   let best: ProjectSummary | null = null;
   let bestScore = -Infinity;
   for (const p of projects) {
@@ -120,7 +121,7 @@ interface NowEditingCardProps {
   t: TFunction;
 }
 
-function NowEditingCard({ project, styleLabel, phaseLabels, t }: NowEditingCardProps) {
+function _NowEditingCard({ project, styleLabel, phaseLabels, t }: NowEditingCardProps) {
   const status = asProjectStatus(project.status);
   const phase: Phase | null = status?.phase ?? null;
   const phaseLabel = phase ? phaseLabels[phase] : "";
@@ -362,7 +363,7 @@ function PlaceholderTile({ onClick, title, kicker, icon, ariaLabel }: Placeholde
   );
 }
 
-function NewProjectTile({ onClick, t }: { onClick: () => void; t: TFunction }) {
+function _NewProjectTile({ onClick, t }: { onClick: () => void; t: TFunction }) {
   return (
     <PlaceholderTile
       onClick={onClick}
@@ -536,6 +537,8 @@ interface HeroStripProps {
   t: TFunction;
 }
 
+// Retained for the legacy lobby experiment; the homepage now renders HomeHeroComposer.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function HeroStrip({ totals, t }: HeroStripProps) {
   const { i18n } = useTranslation();
   const greetingKey = useMemo<GreetingKey>(() => getGreetingKey(), []);
@@ -896,6 +899,7 @@ export function ProjectsPage() {
   const phaseCounts = useMemo(() => {
     const out: Record<Phase, number> & { all: number } = {
       all: 0,
+      creative: 0,
       preparation: 0,
       script: 0,
       production: 0,
@@ -907,36 +911,6 @@ export function ProjectsPage() {
       if (status) out[status.phase] += 1;
     }
     return out;
-  }, [projects]);
-
-  const totals = useMemo(() => {
-    // Hero 计数与筛选胶囊读同一套阶段词汇：Hero 报的每一个数都能在下面的胶囊上点开。
-    // 四个阶段格覆盖全部阶段，因此只有状态无法解析的项目会落在 total 里而不进任何一格。
-    let preparation = 0;
-    let script = 0;
-    let production = 0;
-    let completed = 0;
-    let episodesCompleted = 0;
-    let episodesInProduction = 0;
-    for (const p of projects) {
-      const s = asProjectStatus(p.status);
-      if (!s) continue;
-      if (s.phase === "production") production += 1;
-      else if (s.phase === "completed") completed += 1;
-      else if (s.phase === "script") script += 1;
-      else preparation += 1;
-      episodesCompleted += s.episodes_summary.completed;
-      episodesInProduction += s.episodes_summary.in_production;
-    }
-    return {
-      total: projects.length,
-      preparation,
-      script,
-      production,
-      completed,
-      episodesCompleted,
-      episodesInProduction,
-    };
   }, [projects]);
 
   const styleLabels = useMemo(() => {
@@ -958,18 +932,6 @@ export function ProjectsPage() {
     });
   }, [projects, phaseFilter, searchQuery, phaseLabels]);
 
-  const featuredCandidate = useMemo(() => pickFeaturedProject(projects), [projects]);
-  const featured =
-    phaseFilter === "all" && !searchQuery.trim() ? featuredCandidate : null;
-
-  const restProjects = useMemo(
-    () =>
-      featured
-        ? filteredProjects.filter((p) => p.name !== featured.name)
-        : filteredProjects,
-    [featured, filteredProjects],
-  );
-
   return (
     <div
       className="app-lobby-page relative min-h-screen text-text"
@@ -977,7 +939,7 @@ export function ProjectsPage() {
         {
           background:
             "radial-gradient(1100px 540px at 8% -10%, oklch(0.32 0.05 295 / 0.28), transparent 55%), radial-gradient(900px 500px at 100% 110%, oklch(0.26 0.04 260 / 0.25), transparent 55%), linear-gradient(180deg, var(--color-bg-grad-a), var(--color-bg-grad-b))",
-        } as CSSProperties
+        }
       }
     >
       <TopBar
@@ -1004,7 +966,12 @@ export function ProjectsPage() {
         className="hidden"
       />
 
-      <HeroStrip totals={totals} t={t} />
+      <HomeHeroComposer
+        onCreated={(projectName) => {
+          void fetchProjects();
+          navigate(`/app/projects/${projectName}`);
+        }}
+      />
 
       {projects.length > 0 ? (
         <FilterPills
@@ -1016,42 +983,19 @@ export function ProjectsPage() {
         />
       ) : null}
 
-      <main className="mx-auto max-w-[1320px] px-6 pt-6 pb-16">
+      <main className="mx-auto w-full pt-2">
         {/* 引导运行期间才挂，退出即卸载。放在加载/空态分支之外——首次使用时项目列表通常是空的，
             而演示卡正是那一刻最需要讲的东西。 */}
         {tourActive ? <OnboardingDemoCard /> : null}
         {projectsLoading ? (
-          <div className="flex items-center justify-center py-20">
+          <div className="flex items-center justify-center px-6 py-20">
             <Loader2 className="h-6 w-6 motion-safe:animate-spin text-accent" />
             <span className="ml-2 text-text-3">{t("dashboard:loading_projects")}</span>
           </div>
-        ) : projects.length === 0 ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <NewProjectTile onClick={() => setShowCreateModal(true)} t={t} />
-          </div>
         ) : (
           <>
-            {featured ? (
-              <section className="mb-7" aria-labelledby="lobby-now-editing-heading">
-                <div className="mb-3 flex items-baseline justify-between">
-                  <h2
-                    id="lobby-now-editing-heading"
-                    className="m-0 font-mono text-[12.5px] font-semibold uppercase tracking-[0.06em] text-text-2"
-                  >
-                    {t("dashboard:lobby_now_editing_eyebrow")}
-                  </h2>
-                </div>
-                <NowEditingCard
-                  project={featured}
-                  styleLabel={styleLabels[featured.name] ?? ""}
-                  phaseLabels={phaseLabels}
-                  t={t}
-                />
-              </section>
-            ) : null}
-
-            {filteredProjects.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-text-3">
+            {filteredProjects.length === 0 && projects.length > 0 ? (
+              <div className="flex flex-col items-center justify-center px-6 py-16 text-text-3">
                 <p className="text-lg text-text">{t("dashboard:lobby_no_filter_match")}</p>
                 <p className="mt-1 text-sm">{t("dashboard:lobby_no_filter_match_hint")}</p>
                 <button
@@ -1066,30 +1010,12 @@ export function ProjectsPage() {
                 </button>
               </div>
             ) : (
-              <section aria-labelledby="lobby-library-heading">
-                <div className="mb-3 flex items-baseline justify-between">
-                  <h2
-                    id="lobby-library-heading"
-                    className="m-0 font-mono text-[12.5px] font-semibold uppercase tracking-[0.06em] text-text-2"
-                  >
-                    {t("dashboard:lobby_library_eyebrow")}
-                  </h2>
-                  <span className="font-mono text-[10.5px] tabular-nums text-text-3">
-                    {t("dashboard:lobby_library_count", { count: restProjects.length })}
-                  </span>
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {restProjects.map((project) => (
-                    <ProjectCard
-                      key={project.name}
-                      project={project}
-                      styleLabel={styleLabels[project.name] ?? ""}
-                      onDelete={() => setDeletingProject(project)}
-                    />
-                  ))}
-                  <NewProjectTile onClick={() => setShowCreateModal(true)} t={t} />
-                </div>
-              </section>
+              <HomeProjectRail
+                projects={filteredProjects}
+                styleLabels={styleLabels}
+                onDelete={setDeletingProject}
+                onCreate={() => setShowCreateModal(true)}
+              />
             )}
           </>
         )}

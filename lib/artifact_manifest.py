@@ -60,6 +60,7 @@ class ArtifactKind(StrEnum):
     EPISODE_AUDIO = "episode-audio"
     EPISODE_SUBTITLE = "episode-subtitle"
     EPISODE_PRESENTATION = "episode-presentation"
+    FREE_CREATION_ARTIFACT = "free-creation-artifact"
 
 
 class ArtifactStatus(StrEnum):
@@ -1635,6 +1636,9 @@ class ArtifactKey:
                 and bool(resource_id)
                 and variant in {"post_production", "use_tts"}
             )
+        elif self.kind is ArtifactKind.FREE_CREATION_ARTIFACT and len(self.components) == 1:
+            creation_id = self.components[0]
+            valid = isinstance(creation_id, str) and bool(creation_id)
         if not valid:
             raise ValueError(f"artifact key components do not match {self.kind!r}: {self.components!r}")
 
@@ -1706,6 +1710,12 @@ class ArtifactKey:
         )
 
     @classmethod
+    def free_creation(cls, creation_id: str) -> Self:
+        """Identify one formal artifact owned by a free-creation request."""
+
+        return cls(ArtifactKind.FREE_CREATION_ARTIFACT, (_non_empty("creation_id", creation_id),))
+
+    @classmethod
     def episode_resource_artifacts(cls, episode: int, resource_id: str) -> tuple[Self, ...]:
         """Enumerate every formal artifact identity owned by one script item."""
 
@@ -1723,7 +1733,7 @@ class ArtifactKey:
     def episode_number(self) -> int | None:
         """Return the owning episode for any episode-scoped artifact key."""
 
-        if self.kind is ArtifactKind.ASSET_SHEET:
+        if self.kind in {ArtifactKind.ASSET_SHEET, ArtifactKind.FREE_CREATION_ARTIFACT}:
             return None
         episode = self.components[0]
         return episode if type(episode) is int else None

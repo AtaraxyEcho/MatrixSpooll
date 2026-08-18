@@ -136,7 +136,7 @@
 ### Request and API
 
 - [x] 新增 `POST /api/v1/projects/{project_name}/creations`，接受自由创作请求并返回 `creation_id`、`task_id`。
-- [ ] 新增列表、详情、版本、取消、重试和下载接口；所有接口继续复用项目级认证和路径围栏。
+- [x] 新增列表、详情、版本、取消、重试和下载能力；版本查询复用项目统一 `VersionManager` 接口，其他接口继续复用项目级认证和路径围栏。
 - [ ] 请求层按 `output_type` 校验参考素材、比例、分辨率和时长；错误发生在入队前。
 - [x] 直连 API 不调用文本模型，当前仅开放 `prompt_mode=original`，原文直接进入媒体 lane；`enhance` 待文本改写实现后再开放。
 
@@ -146,8 +146,8 @@
 - [x] 图片任务解析 image lane；视频任务根据参考素材选择 T2V 或 R2V，不为视频任务无条件解析 image lane。
 - [ ] 编辑任务根据父产物媒体类型选择 image 或 video lane，并记录 `parent_creation_id`。
 - [x] 通过 `GenerationContext` 一次解析实际 provider、model、resolution 和能力；禁止任务执行器重新读取另一套项目默认值。
-- [ ] provider 调用成功后，在同一正式提交边界写入 `creations/` 文件和 `artifact_manifest` 条目；提交失败不得留下可见的“成功”产物。
-- [ ] 任务 payload 保存原始请求和执行事实摘要，但不把完整聊天 transcript 塞入任务记录。
+- [ ] provider 调用成功后，在同一正式提交边界写入 `creations/` 文件和 `artifact_manifest` 条目；当前已登记共享清单并补偿取消竞争，但文件、清单与状态 JSON 尚非单一原子事务。
+- [x] 任务 payload 保存原始请求和执行事实摘要，但不把完整聊天 transcript 塞入任务记录。
 
 ### MCP tools
 
@@ -159,6 +159,17 @@
 **Exit criteria:** 在没有文本模型的直连调用下，文生图只产生一次图片模型调用；文生视频只产生一次视频模型调用；图片生视频不产生额外图片生成调用；所有结果都有可查询的产物清单条目。
 
 ## Phase 4: Add the free project UI
+
+### Homepage composer and project rail
+
+The project list route is also the product homepage. Its primary action is an input-first free creation composer:
+
+- The prompt is the required input. Submitting it creates a `content_mode=free` project, derives a short project title from the prompt, and immediately queues the requested media task in that project.
+- The composer exposes output type, model, aspect ratio, resolution, quantity, and video duration. Image-only size choices are sent as `size`; video does not present an image pixel-size control that providers may ignore.
+- The project list is rendered below the composer as a recent-project rail. It uses a two-row horizontal grid with bounded card dimensions so large project libraries do not expand the page vertically.
+- The legacy project creation modal remains available from the top bar and rail card for users who need explicit project metadata before entering the workspace.
+
+The homepage composer now performs lane/model preflight, registers successful media in the shared artifact manifest, emits project SSE changes, exposes read-only version history, and limits creation reads to the most recent 40 records. Model-specific aspect-ratio declarations and archive/cost/delete integration remain tracked below.
 
 - [x] 创建向导增加第四种内容模式“自由创作”。选中后隐藏 source kind、target duration、speech rate、generation route 和 grid 控件。
 - [ ] 仍允许配置项目默认风格、默认模型和默认比例；自由项目增加默认媒体类型（图片/视频）但不锁定每次请求。
@@ -184,8 +195,8 @@
 
 ## Phase 6: Archive, cost and migration boundaries
 
-- [ ] 归档导出包含 `creations/` 文件、父子版本关系和 `artifact_manifest` 条目。
-- [ ] 导入校验自由产物的路径、hash、媒体类型和请求摘要；不把自由产物转换成 episode artifact。
+- [x] 归档导出包含 `creations/` 文件、父子版本关系和 `artifact_manifest` 条目；`full` 与 `current` 两种范围均有正式往返测试。
+- [ ] 导入已校验自由产物的规范路径、内容 hash 和媒体类型，且不会转换成 episode artifact；请求摘要重算校验仍待补齐。
 - [ ] 成本账本为自由产物使用 `free_creation:{creation_id}` 归属键，项目汇总可以聚合但不能伪造 episode 归属。
 - [ ] 删除项目时一并删除自由产物；单个自由产物删除必须同步移除清单条目并保留任务历史的失败/取消证据。
 - [ ] 若 schema 版本需要递增，新增一次性迁移；存量固定项目只补显式旧字段，不生成任何自由项目记录。
@@ -197,6 +208,11 @@
 - 项目创建契约已按内容模式分支。`drama`、`narration`、`ad` 创建时仍必须选择 `storyboard` 或 `reference_video`；`free` 不显示生成方式并强制保存 `generation_mode: null`，同时固定 `grid_storyboard: false`。
 - 自由项目绕过脚本、分集和固定工作流状态机，项目摘要显式返回 `workflow_applicable=false`；项目 profile 与自由创作 skill 已可加载。
 - API 与 GenerationQueue 已支持 `free_image`、`free_video`、`free_edit` 的创建、列表、详情、媒体读取、取消和重试。图片请求只解析 image lane；视频请求直接解析 video lane，不强制调用文本模型或先生成图片。
+- 首页输入框已支持图片/视频、模型、比例、分辨率、图片尺寸、数量和视频秒数；提交后默认创建自由项目，项目名由输入内容截取生成，项目区按最多两行横向滚动。
+- 入队前会解析实际媒体 lane 与模型，并拒绝已登记的模型能力或时长错误；最终实际模型写入产物元数据。模型级比例白名单尚未统一，因此比例暂时只做严格语法校验。
+- 成功产物已登记到共享 `artifact_manifest`；自由任务完成会进入项目事件 SSE，列表与项目事件快照均只读取最近 40 条记录；运行中取消使用 `cancelling` 中间态，worker 重启丢失任务会回写可重试的失败态。
+- 自由项目的 `full` 与 `current` 官方归档均可往返保留媒体、任务元数据和共享产物清单；排队、失败等尚无媒体的记录只作为任务证据保留，不会伪装成正式产物。
+- 自由图片、视频和编辑结果复用 `VersionManager`，结果卡可只读查看和下载历史版本；图片编辑延迟到父子关系写入后再一次性提交成功状态。
 - 直连接口当前只接受 `prompt_mode=original`，提示词原文直接进入媒体模型。`enhance` 在真正接入文本模型改写前不会暴露为可用能力。
 - Web 端已将自由项目路由到 `FreeCreationCanvas`，支持输出类型、提示词、项目内参考路径、比例、视频时长、状态轮询、预览、取消、重试、下载和基于图片结果继续编辑。
 - 创建向导、项目设置与画幅容器已支持 `9:16`、`16:9`、`1:1`、`4:3`、`3:4`、`21:9`，后端对任意正整数 `width:height` 做严格语法校验，不再把新比例静默收窄到横屏或竖屏。
@@ -204,8 +220,9 @@
 
 以下工作仍未完成，不能视为现有支持：
 
-- provider/model 级 `supported_aspect_ratios` 与入队前能力拒绝。官方资料没有给出可安全套用于所有 Seedance 型号的统一白名单，因此本阶段不硬编码推断值。
-- 自由产物写入现有 `artifact_manifest`、归档/导入往返、成本归属键和删除一致性；当前 `creations/*.json` 仅承担 MVP 状态与结果索引。
+- provider/model 级 `supported_aspect_ratios` 与比例入队前拒绝。官方资料没有给出可安全套用于所有 Seedance 型号的统一白名单，因此本阶段不硬编码推断值；已登记的 lane、模型和时长能力仍会在入队前校验。
+- 成本归属键、单产物删除一致性、导入时的请求摘要重算，以及文件、清单和状态 JSON 的原子提交；归档/导入基本往返与内容 hash 校验已经完成。
+- 基于视频父产物的编辑。当前 `free_edit` 只接受图片或图片编辑结果，避免在 provider 没有统一视频编辑契约时伪装支持。
 - 自由创作 MCP 工具、聊天入口自动工具调用、文本提示词增强，以及视频任务重启后的 provider checkpoint 恢复。
 - 浏览器上传参考素材和所有旧 raster 图标的位图替换；当前界面使用项目内相对路径，活动入口使用新 SVG，旧位图暂留兼容。
 
@@ -219,7 +236,7 @@
 - [ ] 任务执行：图片、视频、编辑三种任务正确选择 lane，且不解析未声明的媒体 lane。
 - [ ] 产物提交：provider 成功、下载失败、清单写入失败和取消竞争均保持可观测的一致状态。
 - [ ] 比例能力：六种预设、adaptive-only、custom ratio 和 unsupported ratio 均有明确测试。
-- [ ] 归档/导入：自由产物可往返，固定项目归档保持兼容。
+- [x] 归档/导入：自由产物可在 `full`/`current` 范围往返，固定项目归档保持兼容。
 
 ### Frontend
 

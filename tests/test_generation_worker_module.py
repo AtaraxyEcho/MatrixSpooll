@@ -1166,6 +1166,68 @@ class TestGenerationWorker:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_process_free_task_zero_rows_syncs_cancelled_metadata(self, monkeypatch):
+        queue = _FakeQueue(succeeded_rows=0)
+        worker = GenerationWorker(queue=queue)
+        updates: list[dict] = []
+
+        async def _capture(_task, **kwargs):
+            updates.append(kwargs)
+
+        monkeypatch.setattr(worker, "_sync_free_creation_metadata", _capture)
+
+        async def _ok(_task):
+            return {"creation_id": "c_0123456789abcdef0123"}
+
+        monkeypatch.setattr("server.services.generation_tasks.execute_generation_task", _ok)
+        await worker._process_task(
+            {
+                "task_id": "free-raced",
+                "task_type": "free_image",
+                "project_name": "demo",
+                "resource_id": "c_0123456789abcdef0123",
+            }
+        )
+
+        assert updates == [{"status": "cancelled", "discard_result": True}]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_process_free_task_provider_drift_returns_to_queued_metadata(self, monkeypatch):
+        from lib.generation_queue import DispatchProviderChanged
+
+        queue = _FakeQueue()
+        worker = GenerationWorker(queue=queue)
+        updates: list[dict] = []
+
+        async def _capture(_task, **kwargs):
+            updates.append(kwargs)
+
+        monkeypatch.setattr(worker, "_sync_free_creation_metadata", _capture)
+
+        async def _changed(_task, *, claimed_provider_id):
+            raise DispatchProviderChanged(claimed_provider_id=claimed_provider_id, actual_provider_id="minimax")
+
+        monkeypatch.setattr("server.services.generation_tasks.execute_generation_task", _changed)
+        monkeypatch.setattr(worker, "_requeue_single_task", lambda _task_id: _async_true())
+
+        async def _async_true():
+            return True
+
+        await worker._process_task(
+            {
+                "task_id": "free-drift",
+                "task_type": "free_video",
+                "project_name": "demo",
+                "resource_id": "c_0123456789abcdef0123",
+            },
+            claimed_provider_id="ark",
+        )
+
+        assert updates == [{"status": "queued"}]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_request_cancel_signals_inflight_task(self):
         queue = _FakeQueue()
         worker = GenerationWorker(queue=queue)

@@ -48,6 +48,7 @@ MESSAGES = {
     "task_fail_restart_lost_resume_no_job_id": "Tác vụ thiếu thông tin tiếp tục và không thể khôi phục; vui lòng thử lại thủ công",
     "task_fail_restart_lost_checkpoint_no_job_id": "Tác vụ đã vượt qua ranh giới gửi nhưng chưa lưu mã tác vụ của nhà cung cấp và không thể tự động thử lại vì có nguy cơ tính phí trùng",
     "task_fail_execution_identity_unrecoverable": "Không thể khôi phục danh tính gửi của tác vụ: {detail}",
+    "task_fail_free_creation_failed": "Tác phẩm tự do tạo thất bại. Vui lòng thử lại hoặc kiểm tra cài đặt tạo",
     "task_fail_resume_unsupported_provider": "Nhà cung cấp {provider_id} không hỗ trợ tiếp tục tác vụ; vui lòng thử lại thủ công để tránh bị tính phí trùng",
     "task_fail_resume_unsupported_capacity_zero": "Nhà cung cấp {provider_id} có dung lượng video bằng 0 và không thể tiếp tục tác vụ; vui lòng thử lại thủ công",
     "task_fail_resume_unsupported_detail": "Không thể tiếp tục tác vụ: {detail}",

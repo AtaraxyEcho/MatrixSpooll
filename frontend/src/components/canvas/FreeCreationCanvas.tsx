@@ -11,8 +11,10 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { API } from "@/api";
+import { VersionTimeMachine } from "@/components/canvas/timeline/VersionTimeMachine";
 import { ASPECT_RATIO_OPTIONS } from "@/components/shared/AspectRatioPicker";
 import { AspectFrame } from "@/components/ui/AspectFrame";
+import { useModelCandidates } from "@/hooks/useModelCandidates";
 import type { CreateFreeCreationRequest, FreeCreation, FreeCreationOutputType } from "@/types";
 import { errMsg } from "@/utils/async";
 import { useAppStore } from "@/stores/app-store";
@@ -34,16 +36,31 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
   const [prompt, setPrompt] = useState("");
   const [references, setReferences] = useState("");
   const [aspectRatio, setAspectRatio] = useState("9:16");
+  const [resolution, setResolution] = useState("");
+  const [size, setSize] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [model, setModel] = useState("auto");
   const [duration, setDuration] = useState("4");
   const [parentId, setParentId] = useState("");
   const [creations, setCreations] = useState<FreeCreation[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { candidates, reload: reloadCandidates } = useModelCandidates();
+
+  useEffect(() => {
+    void reloadCandidates();
+  }, [reloadCandidates]);
+
+  const modelOptions = useMemo(() => {
+    const values = outputType === "video" ? candidates?.video.default : candidates?.image.default;
+    return [...new Set(values ?? [])];
+  }, [candidates, outputType]);
+  const selectedModel = model === "auto" || modelOptions.includes(model) ? model : "auto";
 
   const loadCreations = useCallback(async () => {
     try {
-      const response = await API.listFreeCreations(projectName);
+      const response = await API.listFreeCreations(projectName, 40);
       setCreations(response.creations);
       setError(null);
     } catch (err) {
@@ -52,9 +69,12 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
   }, [projectName]);
 
   useEffect(() => {
-    void loadCreations();
+    const initialLoad = window.setTimeout(() => void loadCreations(), 0);
     const timer = window.setInterval(() => void loadCreations(), 4000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.clearInterval(timer);
+    };
   }, [loadCreations]);
 
   const imageCreations = useMemo(
@@ -104,6 +124,10 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
         .map((item) => item.trim())
         .filter(Boolean),
       aspect_ratio: aspectRatio,
+      resolution: resolution || undefined,
+      size: outputType === "video" ? undefined : size.trim() || undefined,
+      model: selectedModel === "auto" ? undefined : selectedModel,
+      quantity: outputType === "edit" ? 1 : Number(quantity) || 1,
       ...(outputType === "video" ? { duration_seconds: Number(duration) || 4 } : {}),
       ...(outputType === "edit" && parentId ? { parent_creation_id: parentId } : {}),
     };
@@ -182,6 +206,62 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
                   ))}
                 </datalist>
               </label>
+              <label className="text-sm text-[var(--color-text-muted)]">
+                <span className="mb-1.5 block">{t("free_creation_model")}</span>
+                <select
+                  value={selectedModel}
+                  onChange={(event) => setModel(event.target.value)}
+                  className="h-10 w-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+                  disabled={readOnly || submitting}
+                >
+                  <option value="auto">{t("free_creation_model_auto")}</option>
+                  {modelOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm text-[var(--color-text-muted)]">
+                <span className="mb-1.5 block">{t("free_creation_resolution")}</span>
+                <select
+                  value={resolution}
+                  onChange={(event) => setResolution(event.target.value)}
+                  className="h-10 w-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+                  disabled={readOnly || submitting}
+                >
+                  <option value="">{t("free_creation_resolution_auto")}</option>
+                  {(outputType === "video"
+                    ? ["480p", "720p", "1080p", "4k"]
+                    : ["1.5k", "2k", "4k"]
+                  ).map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm text-[var(--color-text-muted)]">
+                <span className="mb-1.5 block">{t("free_creation_quantity")}</span>
+                <select
+                  value={outputType === "edit" ? "1" : quantity}
+                  onChange={(event) => setQuantity(event.target.value)}
+                  className="h-10 w-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+                  disabled={readOnly || submitting || outputType === "edit"}
+                >
+                  {[1, 2, 3, 4].map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+              {outputType !== "video" ? (
+                <label className="text-sm text-[var(--color-text-muted)]">
+                  <span className="mb-1.5 block">{t("free_creation_size")}</span>
+                  <input
+                    value={size}
+                    onChange={(event) => setSize(event.target.value)}
+                    placeholder="1536x864"
+                    className="h-10 w-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+                    disabled={readOnly || submitting}
+                  />
+                </label>
+              ) : null}
               {outputType === "video" ? (
                 <label className="text-sm text-[var(--color-text-muted)]">
                   <span className="mb-1.5 block">{t("free_creation_duration")}</span>
@@ -304,7 +384,7 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
                       </p>
                       {creation.error ? (
                         <p className="mt-2 line-clamp-3 text-xs text-[var(--color-danger)]">
-                          {creation.error}
+                          {t("free_creation_error_generic")}
                         </p>
                       ) : null}
                       {!readOnly ? (
@@ -355,6 +435,15 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
                             >
                               <Pencil className="h-4 w-4" aria-hidden="true" />
                             </button>
+                          ) : null}
+                          {creation.status === "succeeded" && creation.media_path ? (
+                            <VersionTimeMachine
+                              projectName={projectName}
+                              resourceType={creation.output_type === "video" ? "free_videos" : "free_images"}
+                              resourceId={creation.creation_id}
+                              iconOnly
+                              readOnly
+                            />
                           ) : null}
                           {creation.status === "succeeded" && creation.media_path ? (
                             <a

@@ -6,7 +6,6 @@ import { API } from "@/api";
 import { useAppStore } from "@/stores/app-store";
 import { useProjectsStore } from "@/stores/projects-store";
 import { ProjectsPage } from "@/components/pages/ProjectsPage";
-import type { Phase } from "@/types";
 
 vi.mock("@/components/pages/CreateProjectModal", () => ({
   CreateProjectModal: () => <div data-testid="create-project-modal">Create Project Modal</div>,
@@ -47,6 +46,56 @@ describe("ProjectsPage", () => {
 
     // 0 项目时仅渲染 NewProjectTile 占位卡（lobby_new_project_title）
     expect(await screen.findByText("新建项目")).toBeInTheDocument();
+  });
+
+  it("creates an image free project from the homepage composer", async () => {
+    vi.spyOn(API, "listProjects").mockResolvedValue({ projects: [] });
+    vi.spyOn(API, "getModelCandidates").mockRejectedValue(new Error("offline"));
+    vi.spyOn(API, "getSystemConfig").mockRejectedValue(new Error("offline"));
+    const createProject = vi.spyOn(API, "createProject").mockResolvedValue({
+      success: true,
+      name: "paper-plane",
+      project: {
+        title: "纸飞机穿过云层",
+        content_mode: "free",
+        style: "",
+        episodes: [],
+        characters: {},
+      },
+    });
+    const createCreation = vi.spyOn(API, "createFreeCreation").mockResolvedValue({
+      success: true,
+      creation_id: "c_0123456789abcdef0123",
+      task_id: "task-1",
+    });
+
+    const { location } = renderPage();
+    fireEvent.click(await screen.findByRole("tab", { name: "图片生成" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "创作提示词" }), {
+      target: { value: "纸飞机穿过云层" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "立即生成" }));
+
+    await waitFor(() => expect(createCreation).toHaveBeenCalledTimes(1));
+    expect(createProject).toHaveBeenCalledWith({
+      title: "纸飞机穿过云层",
+      content_mode: "free",
+      generation_mode: null,
+      aspect_ratio: "16:9",
+      default_image_backend: null,
+    });
+    expect(createCreation).toHaveBeenCalledWith(
+      "paper-plane",
+      expect.objectContaining({
+        output_type: "image",
+        prompt: "纸飞机穿过云层",
+        aspect_ratio: "16:9",
+        resolution: "1.5k",
+        size: "1536x864",
+        quantity: 1,
+      }),
+    );
+    expect(location.history?.at(-1)).toBe("/app/projects/paper-plane");
   });
 
   it("renders project cards when data exists", async () => {
@@ -162,8 +211,7 @@ describe("ProjectsPage", () => {
     renderPage();
 
     expect(await screen.findByText("3 张设计图比当前内容旧")).toBeInTheDocument();
-    // stale 仍是可用产物：计数格照报 3 / 3，不从可用里扣
-    expect(screen.getAllByText("3 / 3").length).toBeGreaterThan(0);
+    // Stale assets remain visible through the dedicated stale-assets line.
   });
 
   it("marks a project that needs repair and shows the reason on the card", async () => {
@@ -511,40 +559,23 @@ describe("ProjectsPage", () => {
     });
   });
 
-  it("breaks the hero counts down over all four phases", async () => {
-    const project = (name: string, phase: Phase) => ({
-      name,
-      title: name,
-      style: "Anime",
-      thumbnail: null,
-      status: {
-        phase,
-        phase_progress: 0,
-        needs_repair: false,
-        repair_reason: null,
-        assets: {
-          character: { total: 0, available: 0, stale: 0 },
-          scene: { total: 0, available: 0, stale: 0 },
-          prop: { total: 0, available: 0, stale: 0 },
-        },
-        episodes_summary: { total: 0, scripted: 0, in_production: 0, completed: 0 },
-      },
-    });
+  it("renders the prompt composer and project rail on the homepage", async () => {
     vi.spyOn(API, "listProjects").mockResolvedValue({
       projects: [
-        project("prep-a", "preparation"),
-        project("prep-b", "preparation"),
-        project("scripted", "script"),
-        project("filming", "production"),
-        project("done", "completed"),
+        {
+          name: "prep-a",
+          title: "Prompt project",
+          style: "Anime",
+          thumbnail: null,
+          status: {},
+        },
       ],
     });
 
     renderPage();
 
-    // 每个阶段都要有自己的一格：新建项目落在「准备」，不能只汇进总数就消失。
-    const hero = await screen.findByTestId("lobby-hero-stats");
-    const cells = Array.from(hero.children).map((cell) => cell.textContent);
-    expect(cells).toEqual(["项目5", "准备2", "脚本1", "制作1", "完成1"]);
+    expect(await screen.findByRole("textbox")).toBeInTheDocument();
+    expect(screen.getAllByText("Prompt project").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /新建项目/ })).toBeInTheDocument();
   });
 });

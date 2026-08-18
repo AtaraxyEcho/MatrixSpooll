@@ -73,6 +73,7 @@ def test_formal_input_selection_retains_identity_for_the_provider_recheck() -> N
         ArtifactKey.episode_audio(12, "segment:/3"),
         ArtifactKey.episode_subtitle(12, "segment:/3", "use_tts"),
         ArtifactKey.episode_presentation(12, "segment:/3", "post_production"),
+        ArtifactKey.free_creation("c_0123456789abcdef0123"),
     ],
 )
 def test_artifact_key_round_trips_without_display_string_parsing(key: ArtifactKey) -> None:

@@ -18,6 +18,8 @@ from typing import Any
 
 from lib import PROJECT_ROOT
 from lib.content_digest import canonical_json_bytes
+from lib.json_io import load_json_or_none
+from lib.path_safety import try_safe_join
 from lib.project_change_hints import (
     ProjectChangeBatch,
     ProjectChangeSource,
@@ -56,7 +58,10 @@ def _fingerprint(value: Any) -> str:
 # 映射为 ``reference_video_ready``（见 generation_tasks._SKELETON_DRIVEN_TASK_ACTIONS），而快照
 # 差分表示为 ``video_ready``。两侧 entity_type/entity_id 相同，
 # 只有 action 不同，不归一会让同一次完成广播成两条。
-_EQUIVALENT_ACTIONS: dict[str, str] = {"reference_video_ready": "video_ready"}
+_EQUIVALENT_ACTIONS: dict[str, str] = {
+    "reference_video_ready": "video_ready",
+    "free_creation_ready": "updated",
+}
 
 
 def _change_identity(change: dict[str, Any]) -> tuple[Any, Any, Any]:
@@ -655,7 +660,8 @@ class ProjectEventService:
 
     def _build_snapshot(self, project_name: str) -> dict[str, Any]:
         project = self.pm.load_project(project_name)
-        scripts_dir = self.pm.get_project_path(project_name) / "scripts"
+        project_path = self.pm.get_project_path(project_name)
+        scripts_dir = project_path / "scripts"
         project_meta = {
             "title": str(project.get("title") or ""),
             "style": str(project.get("style") or ""),
@@ -731,6 +737,33 @@ class ProjectEventService:
                     continue
                 scripts[script_path.name] = self._normalize_script_snapshot(script)
 
+        free_creations: dict[str, Any] = {}
+        creations_dir = project_path / "creations"
+        if creations_dir.is_dir():
+            creation_files = sorted(
+                creations_dir.glob("*.json"),
+                key=lambda item: item.stat().st_mtime_ns,
+                reverse=True,
+            )[:40]
+            for creation_file in creation_files:
+                metadata = load_json_or_none(creation_file)
+                if not isinstance(metadata, dict) or not isinstance(metadata.get("creation_id"), str):
+                    continue
+                media_path = metadata.get("media_path")
+                media_mtime = None
+                if isinstance(media_path, str):
+                    media_file = try_safe_join(project_path, media_path)
+                    if media_file is not None and media_file.is_file():
+                        media_mtime = media_file.stat().st_mtime_ns
+                free_creations[metadata["creation_id"]] = {
+                    "status": metadata.get("status"),
+                    "output_type": metadata.get("output_type"),
+                    "media_path": media_path,
+                    "version": metadata.get("version"),
+                    "error_code": metadata.get("error_code"),
+                    "media_mtime": media_mtime,
+                }
+
         return {
             "project": {
                 "meta": project_meta,
@@ -739,6 +772,7 @@ class ProjectEventService:
                 "props": props,
                 "overview": normalized_overview,
                 "episodes": episodes,
+                "free_creations": free_creations,
             },
             "scripts": scripts,
         }
@@ -918,11 +952,47 @@ class ProjectEventService:
             )
         )
         changes.extend(
+            self._diff_free_creations(
+                previous["project"].get("free_creations", {}),
+                current["project"].get("free_creations", {}),
+            )
+        )
+        changes.extend(
             self._diff_script_items(
                 previous["scripts"],
                 current["scripts"],
             )
         )
+        return changes
+
+    @staticmethod
+    def _diff_free_creations(
+        previous_items: dict[str, Any],
+        current_items: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        changes: list[dict[str, Any]] = []
+        ids = set(current_items)
+        if len(current_items) < 40:
+            ids |= set(previous_items)
+        for creation_id in sorted(ids):
+            if creation_id not in current_items:
+                action = "deleted"
+            elif creation_id not in previous_items:
+                action = "created"
+            elif previous_items[creation_id] == current_items[creation_id]:
+                continue
+            else:
+                action = "updated"
+            changes.append(
+                {
+                    "entity_type": "free_creation",
+                    "action": action,
+                    "entity_id": creation_id,
+                    "label": creation_id,
+                    "focus": None,
+                    "important": action != "deleted",
+                }
+            )
         return changes
 
     def _diff_named_entities(

@@ -933,14 +933,21 @@ class API {
     });
   }
 
-  static async listFreeCreations(projectName: string): Promise<{ creations: FreeCreation[] }> {
-    return this.request(`/projects/${encodeURIComponent(projectName)}/creations`);
+  static async listFreeCreations(projectName: string, limit = 40): Promise<{ creations: FreeCreation[] }> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/creations?limit=${encodeURIComponent(String(limit))}`,
+    );
   }
 
   static async createFreeCreation(
     projectName: string,
     payload: CreateFreeCreationRequest,
-  ): Promise<{ success: boolean; creation_id: string; task_id: string }> {
+  ): Promise<{
+    success: boolean;
+    creation_id: string;
+    task_id: string;
+    creations?: Array<{ creation_id: string; task_id: string }>;
+  }> {
     return this.request(`/projects/${encodeURIComponent(projectName)}/creations`, {
       method: "POST",
       body: JSON.stringify(payload),

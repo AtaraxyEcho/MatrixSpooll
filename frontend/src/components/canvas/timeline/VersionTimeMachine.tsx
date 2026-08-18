@@ -10,7 +10,7 @@ import { PresentationPlayer } from "@/components/shared/PresentationPlayer";
 
 interface VersionTimeMachineProps {
   projectName: string;
-  resourceType: "storyboards" | "videos" | "audio" | "characters" | "scenes" | "props" | "products" | "reference_videos" | "grids";
+  resourceType: "storyboards" | "videos" | "audio" | "characters" | "scenes" | "props" | "products" | "reference_videos" | "grids" | "free_images" | "free_videos";
   resourceId: string;
   onRestore?: (version: number) => void | Promise<void>;
   /** Icon-only trigger button: hides label and chevron for narrow card headers. */
@@ -73,6 +73,8 @@ export function VersionTimeMachine({
     resourceType === "storyboards" ? `storyboards/scene_${resourceId}.png` :
     resourceType === "videos" ? `videos/scene_${resourceId}.mp4` :
     resourceType === "reference_videos" ? `reference_videos/${resourceId}.mp4` :
+    resourceType === "free_videos" ? `creations/${resourceId}.mp4` :
+    resourceType === "free_images" ? `creations/${resourceId}.png` :
     resourceType === "audio" ? `audio/segment_${resourceId}.wav` :
     resourceType === "characters" ? `characters/${resourceId}.png` :
     resourceType === "scenes" ? `scenes/${resourceId}.png` :
@@ -362,9 +364,9 @@ export function VersionTimeMachine({
 
                     {/* Media preview */}
                     {selectedInfo.file_url &&
-                      (resourceType === "videos" || resourceType === "reference_videos" ? (
+                      (resourceType === "videos" || resourceType === "reference_videos" || resourceType === "free_videos" ? (
                         <div className="mb-2 aspect-video w-full overflow-hidden rounded-lg border border-gray-800 bg-black">
-                          {selectedInfo.presentation_available !== true ? (
+                          {selectedInfo.presentation_available !== true || resourceType === "free_videos" ? (
                             // eslint-disable-next-line jsx-a11y/media-has-caption -- 无法进入共享成片读取器的历史视频仅展示原始媒体
                             <video
                               src={selectedInfo.file_url}
@@ -405,14 +407,14 @@ export function VersionTimeMachine({
                         </div>
                       ))}
 
-                    {resourceType === "audio" && selectedInfo.file_url && (
+                    {selectedInfo.file_url && (
                       <a
                         href={selectedInfo.file_url}
                         download
                         className="mb-2 inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[10px] font-medium text-gray-300 hover:bg-gray-800 hover:text-white"
                       >
                         <Download className="h-3 w-3" aria-hidden />
-                        {t("version_download_audio")}
+                        {t(resourceType === "audio" ? "version_download_audio" : "version_download_media")}
                       </a>
                     )}
 

@@ -787,6 +787,7 @@ class GenerationWorker:
         except asyncio.CancelledError:
             # 用户/级联取消：worker.request_cancel 触发 asyncio.Task.cancel()
             await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
+            await self._sync_free_creation_metadata(task, status="cancelled", discard_result=True)
             raise
         except DispatchProviderChanged as exc:
             # 视频任务在执行入口重新读取当前状态；若 provider 已从认领时的槽漂移，
@@ -821,6 +822,18 @@ class GenerationWorker:
                 )
                 if rows == 0:
                     await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
+                    await self._sync_free_creation_metadata(task, status="cancelled", discard_result=True)
+                elif task_type in ("free_image", "free_video", "free_edit"):
+                    await self._sync_free_creation_metadata(
+                        task,
+                        status="failed",
+                        error_code="dispatch_provider_requeue_failed",
+                        error=encode_failure(
+                            "dispatch_provider_requeue_failed",
+                            claimed_provider_id=exc.claimed_provider_id,
+                            actual_provider_id=exc.actual_provider_id,
+                        ),
+                    )
                 return
             logger.info(
                 "任务 %s 执行 provider 从 %s 变为 %s，已回队等待新槽",
@@ -828,6 +841,7 @@ class GenerationWorker:
                 exc.claimed_provider_id,
                 exc.actual_provider_id,
             )
+            await self._sync_free_creation_metadata(task, status="queued")
             return
         except Exception as exc:
             logger.exception("任务失败 %s (type=%s, provider=%s)", task_id, task_type, provider_id)
@@ -835,6 +849,7 @@ class GenerationWorker:
             if rows == 0:
                 # 外部已抢先翻 cancelling → 落地 cancelled 终态
                 await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
+                await self._sync_free_creation_metadata(task, status="cancelled", discard_result=True)
             return
 
         try:
@@ -843,6 +858,7 @@ class GenerationWorker:
             # mark_succeeded 期间被取消：shield 让 inner 跑完了；inner 完成情况由
             # rowcount 决定——拿不到了，按"被外部取消"语义兜底。
             await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
+            await self._sync_free_creation_metadata(task, status="cancelled", discard_result=True)
             raise
         except Exception:
             # mark_succeeded 自身抛错（DB 超时 / OperationalError）：上层 _drain_finished_tasks
@@ -852,6 +868,7 @@ class GenerationWorker:
         if rows == 0:
             # 0-rows-cancelled 协议：execute 跑赢但 DB 已被外部翻 cancelling
             await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
+            await self._sync_free_creation_metadata(task, status="cancelled", discard_result=True)
         else:
             logger.info("任务完成 %s (type=%s, provider=%s)", task_id, task_type, provider_id)
 
@@ -1032,6 +1049,60 @@ class GenerationWorker:
         except Exception:
             logger.warning("video provider media cleanup failed task_id=%s", task.get("task_id"), exc_info=True)
 
+    async def _sync_free_creation_metadata(
+        self,
+        task: dict[str, Any],
+        *,
+        status: str,
+        error_code: str | None = None,
+        error: str | None = None,
+        discard_result: bool = False,
+    ) -> None:
+        """Keep project-local free creation metadata aligned with queue terminal state."""
+        if task.get("task_type") not in {"free_image", "free_video", "free_edit"}:
+            return
+        project_name = task.get("project_name")
+        resource_id = task.get("resource_id")
+        task_id = task.get("task_id")
+        if not isinstance(project_name, str) or not isinstance(resource_id, str):
+            return
+        try:
+            from lib.project_manager import get_project_manager
+            from server.services.free_creation_tasks import (
+                discard_free_creation_result,
+                load_creation_metadata,
+                write_creation_metadata,
+            )
+
+            project_path = await asyncio.to_thread(get_project_manager().get_project_path, project_name)
+            metadata = await asyncio.to_thread(load_creation_metadata, project_path, resource_id) or {}
+            current_task_id = metadata.get("task_id")
+            if current_task_id is not None and current_task_id != task_id:
+                return
+            if discard_result:
+                discarded = await asyncio.to_thread(discard_free_creation_result, project_path, metadata)
+                if discarded:
+                    metadata.pop("media_path", None)
+                    metadata.pop("version", None)
+            metadata.update({"creation_id": resource_id, "status": status})
+            if isinstance(task_id, str):
+                metadata["task_id"] = task_id
+            if error_code:
+                metadata["error_code"] = error_code
+            if error:
+                metadata["error"] = error
+            elif status != "failed":
+                metadata.pop("error", None)
+                metadata.pop("error_code", None)
+            await asyncio.to_thread(write_creation_metadata, project_path, resource_id, metadata)
+        except Exception:
+            logger.warning(
+                "free creation orphan metadata update failed task_id=%s resource_id=%s",
+                task_id,
+                resource_id,
+                exc_info=True,
+            )
+
     async def _handle_orphan_tasks_on_start(self) -> None:
         """重启自愈：扫 running + cancelling 孤儿，按"是否可安全 resume"分流。
 
@@ -1080,6 +1151,7 @@ class GenerationWorker:
             status = task.get("status")
             if status == "cancelling":
                 await self.queue.mark_task_cancelled(task_id, cancelled_by="user")
+                await self._sync_free_creation_metadata(task, status="cancelled", discard_result=True)
                 await self._cleanup_video_staging(task)
                 logger.info("孤儿 cancelling → cancelled: %s", task_id)
                 continue
@@ -1099,12 +1171,20 @@ class GenerationWorker:
             # 主动 requeue 会双重扣费。直接丢弃，等用户决定是否手动重试。
             if media_type == "image":
                 logger.warning("孤儿 image running → [restart_lost]: %s", task_id)
+                failure = encode_failure("restart_lost_image")
                 rows = await self.queue.mark_task_failed(
                     task_id,
-                    encode_failure("restart_lost_image"),
+                    failure,
                 )
                 if rows == 0:
                     await self.queue.mark_task_cancelled(task_id, cancelled_by="user")
+                await self._sync_free_creation_metadata(
+                    task,
+                    status="failed" if rows else "cancelled",
+                    error_code="restart_lost_image" if rows else None,
+                    error=failure if rows else None,
+                    discard_result=True,
+                )
                 continue
 
             # audio（TTS）同步、不持久化 job_id、无 resume 入口——与 image 同样降级为
@@ -1122,15 +1202,23 @@ class GenerationWorker:
             # 自由视频尚未持久化可恢复的 provider 提交身份。重启后重跑会重复扣费，
             # 因此明确落失败，交给用户决定是否重试。
             if task_type == "free_video":
+                failure = encode_failure(
+                    "execution_identity_unrecoverable",
+                    detail="free video resume checkpoint is unavailable",
+                )
                 rows = await self.queue.mark_task_failed(
                     task_id,
-                    encode_failure(
-                        "execution_identity_unrecoverable",
-                        detail="free video resume checkpoint is unavailable",
-                    ),
+                    failure,
                 )
                 if rows == 0:
                     await self.queue.mark_task_cancelled(task_id, cancelled_by="user")
+                await self._sync_free_creation_metadata(
+                    task,
+                    status="failed" if rows else "cancelled",
+                    error_code="execution_identity_unrecoverable" if rows else None,
+                    error=failure if rows else None,
+                    discard_result=True,
+                )
                 continue
 
             checkpoint = None

@@ -123,6 +123,7 @@ from lib.storyboard_sequence import (
     group_scenes_by_segment_break,
     resolve_previous_storyboard_path,
 )
+from lib.task_failure import encode_failure
 from lib.thumbnail import extract_video_thumbnail
 from lib.version_manager import PaidVersionCommit
 from lib.video_artifact_facts import VideoArtifactCurrencyFacts
@@ -1334,7 +1335,7 @@ def compute_affected_fingerprints(project_name: str, task_type: str, resource_id
     """计算受影响文件的 mtime 指纹"""
     try:
         project_path = get_project_manager().get_project_path(project_name)
-    except Exception as exc:
+    except Exception:
         return {}
 
     paths: list[tuple[str, Path]] = []
@@ -1435,6 +1436,10 @@ def compute_affected_fingerprints(project_name: str, task_type: str, resource_id
     elif task_type == "tts":
         audio_rel = resource_relative_path("audio", resource_id)
         paths.append((audio_rel, project_path / audio_rel))
+    elif task_type in {"free_image", "free_video", "free_edit"}:
+        for suffix in (".png", ".mp4", ".json"):
+            relative = f"creations/{resource_id}{suffix}"
+            paths.append((relative, project_path / "creations" / f"{resource_id}{suffix}"))
 
     result: dict[str, int] = {}
     for rel, abs_path in paths:
@@ -1452,6 +1457,9 @@ def compute_affected_fingerprints(project_name: str, task_type: str, resource_id
 _TASK_CHANGE_SPECS: dict[str, tuple] = {
     "grid": ("grid", "grid_ready", "宫格「{}」", True),
     "grid_split": ("grid", "grid_split_done", "宫格「{}」切分", True),
+    "free_image": ("free_creation", "free_creation_ready", "「{}」", False),
+    "free_video": ("free_creation", "free_creation_ready", "「{}」", False),
+    "free_edit": ("free_creation", "free_creation_ready", "「{}」", False),
     "voice_sample": ("character", "voice_sample_ready", "「{}」试听样本", False),
     **{atype: (atype, "updated", f"{spec.label_zh}「{{}}」设计图", False) for atype, spec in ASSET_SPECS.items()},
 }
@@ -3470,19 +3478,30 @@ async def _execute_free_creation_task_proxy(
     script_file: str | None = None,
     claimed_provider_id: str | None = None,
 ) -> dict[str, Any]:
+    from lib.project_manager import get_project_manager
     from server.services.free_creation_tasks import (
         execute_free_creation_task,
         load_creation_metadata,
         write_creation_metadata,
     )
 
-    from lib.project_manager import get_project_manager
-
     pm = get_project_manager()
     project_path = pm.get_project_path(project_name)
     existing = await asyncio.to_thread(load_creation_metadata, project_path, resource_id) or {}
     existing.update({"creation_id": resource_id, "status": "running", "task_id": task_id})
+    existing.pop("error", None)
+    existing.pop("error_code", None)
     await asyncio.to_thread(write_creation_metadata, project_path, resource_id, existing)
+
+    def _failure_details(exc: Exception) -> tuple[str, str]:
+        code = getattr(exc, "code", None)
+        params = getattr(exc, "params", {})
+        if isinstance(code, str) and isinstance(params, Mapping):
+            try:
+                return code, encode_failure(code, **dict(params))
+            except KeyError:
+                pass
+        return "free_creation_failed", encode_failure("free_creation_failed")
 
     try:
         return await execute_free_creation_task(
@@ -3495,16 +3514,46 @@ async def _execute_free_creation_task_proxy(
             script_file=script_file,
             claimed_provider_id=claimed_provider_id,
         )
+    except DispatchProviderChanged:
+        existing = await asyncio.to_thread(load_creation_metadata, project_path, resource_id) or {}
+        existing.update(
+            {
+                "creation_id": resource_id,
+                "status": "queued",
+                "task_id": task_id,
+            }
+        )
+        existing.pop("error", None)
+        existing.pop("error_code", None)
+        await asyncio.to_thread(write_creation_metadata, project_path, resource_id, existing)
+        raise
+    except asyncio.CancelledError:
+        existing = await asyncio.to_thread(load_creation_metadata, project_path, resource_id) or {}
+        existing.update(
+            {
+                "creation_id": resource_id,
+                "status": "cancelled",
+                "task_id": task_id,
+            }
+        )
+        existing.pop("media_path", None)
+        existing.pop("version", None)
+        await asyncio.to_thread(write_creation_metadata, project_path, resource_id, existing)
+        raise
     except Exception as exc:
         existing = await asyncio.to_thread(load_creation_metadata, project_path, resource_id) or {}
+        error_code, error = _failure_details(exc)
         existing.update(
             {
                 "creation_id": resource_id,
                 "status": "failed",
                 "task_id": task_id,
-                "error": str(exc),
+                "error_code": error_code,
+                "error": error,
             }
         )
+        existing.pop("media_path", None)
+        existing.pop("version", None)
         await asyncio.to_thread(write_creation_metadata, project_path, resource_id, existing)
         raise
 

@@ -27,6 +27,7 @@ from lib.project_manager import ProjectManager
 from lib.project_migrations.v7_to_v8_artifact_manifest import migrate_v7_to_v8
 from lib.version_manager import VersionManager
 from server.services import project_archive as project_archive_module
+from server.services.free_creation_tasks import register_free_creation_artifact, write_creation_metadata
 from server.services.project_archive import (
     ARCHIVE_MANIFEST_NAME,
     ProjectArchiveService,
@@ -381,6 +382,61 @@ class TestProjectArchiveService:
         assert (pm.get_project_path("demo") / "drafts" / "episode_2").is_dir()
         imported_manifest = json.loads((pm.get_project_path("demo") / MANIFEST_FILENAME).read_text(encoding="utf-8"))
         assert imported_manifest == startup_manifest
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("scope", ["full", "current"])
+    def test_free_creation_artifact_survives_official_archive_round_trip(self, tmp_path, scope):
+        pm = ProjectManager(tmp_path / "projects")
+        project_dir = pm.create_project("free-demo", content_mode="free")
+        pm.create_project_metadata(
+            "free-demo",
+            "Free Demo",
+            "Anime",
+            "free",
+            extras={"generation_mode": None, "grid_storyboard": False},
+        )
+        creation_id = "c_0123456789abcdef0123"
+        media = project_dir / "creations" / f"{creation_id}.png"
+        media.write_bytes(b"generated image")
+        metadata = {
+            "creation_id": creation_id,
+            "status": "succeeded",
+            "output_type": "image",
+            "prompt": "a red kite",
+            "references": [],
+            "media_path": media.relative_to(project_dir).as_posix(),
+        }
+        write_creation_metadata(project_dir, creation_id, metadata)
+        register_free_creation_artifact(project_dir, metadata)
+        failed_creation_id = "c_aaaaaaaaaaaaaaaaaaaa"
+        write_creation_metadata(
+            project_dir,
+            failed_creation_id,
+            {
+                "creation_id": failed_creation_id,
+                "status": "failed",
+                "output_type": "image",
+                "prompt": "a failed request",
+                "references": [],
+            },
+        )
+        key = ArtifactKey.free_creation(creation_id)
+        before = ProjectArtifactManifestAdapter(project_dir).get_entry(key)
+        assert before is not None
+
+        archive_path, _ = ProjectArchiveService(pm).export_project("free-demo", scope=scope)
+        shutil.rmtree(project_dir)
+        try:
+            ProjectArchiveService(pm).import_project_archive(archive_path, uploaded_filename="free-demo.zip")
+        except ProjectArchiveValidationError as exc:
+            blocking = [(item.code, item.message.render()) for item in exc.diagnostics.blocking]
+            pytest.fail(f"free project archive did not round-trip: {blocking}")
+
+        imported_dir = pm.get_project_path("free-demo")
+        assert (imported_dir / "creations" / f"{creation_id}.png").read_bytes() == b"generated image"
+        assert (imported_dir / "creations" / f"{creation_id}.json").is_file()
+        assert (imported_dir / "creations" / f"{failed_creation_id}.json").is_file()
+        assert ProjectArtifactManifestAdapter(imported_dir).get_entry(key) == before
 
     @pytest.mark.unit
     def test_import_rejects_official_manifest_claim_when_formal_bytes_were_replaced(self, tmp_path):

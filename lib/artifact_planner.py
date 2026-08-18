@@ -65,6 +65,7 @@ TARGET_SCHEMA_VERSION = CURRENT_PROJECT_SCHEMA_VERSION
 
 
 _GRID_RECORD_RE = re.compile(r"grid_[0-9a-f]{12}\.json\Z")
+_FREE_CREATION_RECORD_RE = re.compile(r"c_[0-9a-f]{20}\.json\Z")
 
 
 _FORMAL_IMAGE_KINDS = frozenset(
@@ -177,6 +178,7 @@ class TargetStatePlanner:
             self._plan_storyboards()
             self._plan_typed_media()
             self._plan_persisted_presentations()
+            self._plan_existing_free_creation_artifacts()
         except ProjectMigrationError:
             # Already carries the episode / file it was rejected at.
             raise
@@ -238,6 +240,70 @@ class TargetStatePlanner:
         elif kind in {"episode-subtitle", "episode-presentation"}:
             self.load_episodes()
             self._plan_persisted_presentations()
+        elif kind == "free-creation-artifact":
+            self._plan_one_existing_free_creation(key)
+
+    def _plan_existing_free_creation_artifacts(self) -> None:
+        """Carry free-creation claims through activation without episode inference."""
+
+        if self.project.get("content_mode") != "free":
+            return
+        creations_dir = self.project_dir / "creations"
+        if not creations_dir.exists():
+            return
+        if creations_dir.is_symlink() or not creations_dir.is_dir():
+            raise ArtifactManifestError("free creation directory must be a real directory")
+        for metadata_path in sorted(creations_dir.glob("*.json")):
+            if not _FREE_CREATION_RECORD_RE.fullmatch(metadata_path.name):
+                continue
+            self._plan_one_existing_free_creation(ArtifactKey.free_creation(metadata_path.stem))
+
+    def _plan_one_existing_free_creation(
+        self,
+        key: ArtifactKey,
+        *,
+        entry: ArtifactManifestEntry | None = None,
+    ) -> None:
+        if self.project.get("content_mode") != "free":
+            return
+        creation_id = cast(str, key.components[0])
+        metadata_path = f"creations/{creation_id}.json"
+        metadata_observation = self.adapter.inspect_artifact(metadata_path)
+        if metadata_observation.blocker is not None:
+            raise ArtifactManifestError(metadata_observation.blocker.detail)
+        if not metadata_observation.present:
+            return
+        metadata = self._parse_json(self._read_dependency(metadata_path, "free creation metadata"), metadata_path)
+        if not isinstance(metadata, Mapping) or metadata.get("creation_id") != creation_id:
+            raise ValueError(f"free creation metadata has an invalid identity: {metadata_path}")
+        existing = entry if entry is not None else self.adapter.get_entry(key)
+        media_path = metadata.get("media_path")
+        if media_path is None:
+            if existing is not None:
+                raise ValueError(f"free creation claim has no media path: {key.encode()}")
+            return
+        if not isinstance(media_path, str):
+            raise ValueError(f"free creation metadata has an invalid media path: {metadata_path}")
+        output_type = metadata.get("output_type")
+        suffix = ".mp4" if output_type == "video" else ".png" if output_type in {"image", "edit"} else None
+        if suffix is None:
+            raise ValueError(f"free creation metadata has an invalid output type: {metadata_path}")
+        expected_path = f"creations/{creation_id}{suffix}"
+        if media_path != expected_path:
+            raise ValueError(f"free creation metadata has an invalid media path: {metadata_path}")
+        if existing is not None and existing.artifact_path != expected_path:
+            raise ValueError(f"free creation claim has an invalid media path: {key.encode()}")
+        observation = self.adapter.inspect_artifact(expected_path)
+        if observation.blocker is not None:
+            raise ArtifactManifestError(observation.blocker.detail)
+        if not observation.present:
+            return
+        self._record_formal_path(key, observation.artifact_path)
+        if existing is not None:
+            self.entries[key] = ArtifactManifestEntry(
+                artifact_path=observation.artifact_path,
+                basis_digest=existing.basis_digest,
+            )
 
     def load_episode_bindings(self) -> None:
         if self._bindings_loaded:
@@ -1412,7 +1478,7 @@ def plan_artifact_target_state(project_dir: Path) -> ArtifactTargetStatePlan:
 def episode_scope_for_key(key: ArtifactKey) -> int | None:
     """Return the one episode whose control files may affect ``key``."""
 
-    if key.kind is ArtifactKind.ASSET_SHEET:
+    if key.kind in {ArtifactKind.ASSET_SHEET, ArtifactKind.FREE_CREATION_ARTIFACT}:
         return None
     episode = key.components[0]
     if type(episode) is not int:

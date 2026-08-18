@@ -60,6 +60,26 @@ async def _next_event(stream, *, timeout: float) -> tuple[str, dict]:
 
 class TestProjectEventService:
     @pytest.mark.unit
+    def test_diff_snapshots_reports_free_creation_lifecycle(self):
+        previous = {
+            "c_deleted": {"status": "succeeded"},
+            "c_updated": {"status": "running"},
+        }
+        current = {
+            "c_created": {"status": "queued"},
+            "c_updated": {"status": "succeeded"},
+        }
+
+        changes = ProjectEventService._diff_free_creations(previous, current)
+
+        assert {(change["entity_id"], change["action"]) for change in changes} == {
+            ("c_created", "created"),
+            ("c_deleted", "deleted"),
+            ("c_updated", "updated"),
+        }
+        assert all(change["entity_type"] == "free_creation" for change in changes)
+
+    @pytest.mark.unit
     def test_diff_snapshots_reports_character_and_storyboard_changes(self, tmp_path):
         pm = ProjectManager(tmp_path / "projects")
         pm.create_project("demo")

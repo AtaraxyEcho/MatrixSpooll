@@ -22,6 +22,11 @@ interface PhaseTone {
 }
 
 const PHASE_TONE: Record<Phase, PhaseTone> = {
+  creative: {
+    dot: "oklch(0.82 0.10 195)",
+    text: "oklch(0.88 0.06 195)",
+    glow: "oklch(0.82 0.10 195 / 0.35)",
+  },
   preparation: {
     dot: "oklch(0.64 0.020 265)",
     text: "oklch(0.78 0.010 265)",
@@ -263,6 +268,7 @@ export function usePhaseLabels(): Record<Phase, string> {
   const { t } = useTranslation("dashboard");
   return useMemo(
     () => ({
+      creative: t("phase_creative"),
       preparation: t("phase_preparation"),
       script: t("phase_script"),
       production: t("phase_production"),

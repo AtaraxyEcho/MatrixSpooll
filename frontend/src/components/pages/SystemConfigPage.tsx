@@ -137,40 +137,33 @@ export function SystemConfigPage() {
     >
       {/* ─── Top bar ─── */}
       <header className="app-topbar-surface">
-        <div className="app-topbar-content app-topbar-inner app-settings-topbar">
-          <Link
-            href="/app/projects"
-            className="inline-flex items-center gap-1.5 rounded-md border border-hairline-soft bg-bg-grad-a/45 px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            aria-label={t("common:back")}
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{t("common:back")}</span>
-          </Link>
-          <span aria-hidden className="h-5 w-px bg-hairline-soft" />
-          <div className="min-w-0 flex-1">
-            <div className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-accent-2">
-              Control Booth — {currentLang.toUpperCase()}
-            </div>
-            <h1
-              className="font-editorial mt-0.5 truncate"
-              style={{
-                fontWeight: 400,
-                fontSize: 26,
-                lineHeight: 1.05,
-                letterSpacing: "-0.012em",
-                color: "var(--color-text)",
-              }}
+        <div className="app-topbar-inner app-settings-topbar">
+          <div className="app-settings-topbar__leading">
+            <Link
+              href="/app/projects"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-hairline-soft bg-bg-grad-a/45 px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              aria-label={t("common:back")}
             >
-              {t("common:settings")}
-              <span className="ml-2 align-middle font-mono text-[11.5px] font-medium uppercase tracking-[0.08em] text-text-3">
+              <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+              <span className="hidden sm:inline">{t("common:back")}</span>
+            </Link>
+            <span aria-hidden className="h-7 w-px shrink-0 bg-hairline-soft" />
+            <div className="min-w-0">
+              <div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-accent-2">
+                {t("common:settings")}
+              </div>
+              <h1
+                className="font-editorial mt-0.5 truncate text-[21px] font-normal leading-none tracking-[-0.012em] text-text sm:text-[24px]"
+                title={t("dashboard:system_config_title")}
+              >
                 {t("dashboard:system_config_title")}
-              </span>
-            </h1>
+              </h1>
+            </div>
           </div>
           <button
             type="button"
             onClick={cycleLang}
-            className="inline-flex items-center gap-2 rounded-md border border-hairline-soft bg-bg-grad-a/45 px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="inline-flex shrink-0 items-center gap-2 rounded-md border border-hairline-soft bg-bg-grad-a/45 px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             title={langDisplay}
             aria-label={t("dashboard:language_setting")}
           >
