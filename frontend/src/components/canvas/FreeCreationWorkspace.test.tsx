@@ -10,6 +10,26 @@ describe("FreeCreationWorkspace", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(API, "listFreeCreations").mockResolvedValue({ creations: [] });
+    vi.spyOn(API, "getFreeCreationCanvas").mockResolvedValue({
+      canvas: {
+        revision: 0,
+        viewport: { x: 0, y: 0, scale: 1 },
+        positions: {},
+        hidden_creation_ids: [],
+        updated_at: null,
+      },
+    });
+    vi.spyOn(API, "saveFreeCreationCanvas").mockImplementation(async (_projectName, canvas) => ({
+      success: true,
+      canvas: {
+        revision: 1,
+        viewport: canvas.viewport,
+        positions: canvas.positions,
+        hidden_creation_ids: canvas.hidden_creation_ids,
+        updated_at: "2026-08-19T00:00:00Z",
+      },
+    }));
+    vi.spyOn(API, "listFreeCreationReferences").mockResolvedValue({ references: [] });
     vi.spyOn(API, "getModelCandidates").mockResolvedValue({
       image: { default: ["ark/image-model"], buckets: {} },
       video: { default: ["ark/video-model"], buckets: {} },
@@ -35,14 +55,16 @@ describe("FreeCreationWorkspace", () => {
     });
     render(<FreeCreationWorkspace projectName="demo" />);
 
-    fireEvent.click(screen.getByRole("button", { name: t("free_creation_image") }));
+    fireEvent.click(screen.getByRole("tab", { name: t("free_creation_image") }));
+    await screen.findByRole("option", { name: "ark/image-model" });
     fireEvent.change(await screen.findByLabelText(t("free_creation_model")), {
       target: { value: "ark/image-model" },
     });
     fireEvent.change(screen.getByLabelText(t("free_creation_resolution")), {
       target: { value: "2k" },
     });
-    expect(screen.getByLabelText(t("free_creation_size"))).toHaveValue("2048x2048");
+    expect(screen.getByLabelText("W")).toHaveValue(2048);
+    expect(screen.getByLabelText("H")).toHaveValue(1152);
     fireEvent.change(screen.getByLabelText(t("free_creation_quantity")), {
       target: { value: "3" },
     });
@@ -58,7 +80,7 @@ describe("FreeCreationWorkspace", () => {
         output_type: "image",
         model: "ark/image-model",
         resolution: "2k",
-        size: "2048x2048",
+        size: "2048x1152",
         quantity: 3,
       }),
     );
@@ -72,9 +94,9 @@ describe("FreeCreationWorkspace", () => {
     });
     render(<FreeCreationWorkspace projectName="demo" />);
 
-    const duration = screen.getByLabelText(t("free_creation_duration"));
-    await waitFor(() => expect(duration).toHaveAttribute("max", "15"));
-    expect(duration).toHaveAttribute("min", "4");
+    const duration = await screen.findByLabelText(t("free_creation_duration"));
+    await waitFor(() => expect(duration).toHaveAttribute("max", "12"));
+    expect(duration).toHaveAttribute("min", "0");
     expect(duration).toHaveAttribute("aria-valuemin", "4");
     fireEvent.change(duration, { target: { value: "9" } });
     expect(duration).toHaveValue("8");
@@ -109,10 +131,8 @@ describe("FreeCreationWorkspace", () => {
     });
     render(<FreeCreationWorkspace projectName="demo" />);
 
-    fireEvent.click(screen.getByRole("button", { name: t("free_creation_edit") }));
-    const parent = await screen.findByLabelText(t("free_creation_edit"));
-    await waitFor(() => expect(screen.getByRole("option", { name: "source clip" })).toBeInTheDocument());
-    fireEvent.change(parent, { target: { value: "c_0123456789abcdef0125" } });
+    const editButtons = await screen.findAllByRole("button", { name: t("free_creation_use_as_parent") });
+    fireEvent.click(editButtons[0]);
     const videoModel = screen.getByLabelText(t("free_creation_model"));
     await waitFor(() => expect(screen.getByRole("option", { name: "ark/video-model" })).toBeInTheDocument());
     fireEvent.change(videoModel, {

@@ -7,10 +7,11 @@ import logging
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, Query, UploadFile
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from starlette.background import BackgroundTask
 
 from lib.api_errors import BadRequestError, ConflictError, NotFoundError
 from lib.aspect_size import is_valid_aspect_ratio
@@ -31,6 +32,18 @@ from server.services.free_creation_tasks import (
     new_creation_id,
     write_creation_metadata,
 )
+from server.services.free_creation_workspace import (
+    MAX_REFERENCE_BYTES,
+    build_creation_export,
+    delete_reference_upload,
+    list_reference_uploads,
+    load_canvas_state,
+    new_request_id,
+    resolve_reference_claims,
+    save_canvas_state,
+    save_reference_upload,
+    write_creation_request,
+)
 from server.services.generation_context import ImageLaneRequest, VideoLaneRequest, resolve_generation_context
 
 router = APIRouter()
@@ -40,22 +53,46 @@ logger = logging.getLogger(__name__)
 
 FreeOutputType = Literal["image", "video", "edit"]
 PromptMode = Literal["original"]
+FreeReferenceRole = Literal[
+    "first_frame",
+    "last_frame",
+    "reference_image",
+    "reference_video",
+    "reference_audio",
+    "prompt_context",
+]
 CreationId = Annotated[str, PathParam(pattern=r"^c_[a-f0-9]{20}$")]
 _IMAGE_REFERENCE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 _AUDIO_REFERENCE_SUFFIXES = frozenset({".wav", ".mp3"})
 _VIDEO_REFERENCE_SUFFIXES = frozenset({".mp4", ".mov"})
 
 
+class FreeCreationReference(BaseModel):
+    type: Literal["upload", "creation"]
+    role: FreeReferenceRole | None = None
+    reference_id: str | None = Field(default=None, pattern=r"^r_[a-f0-9]{20}$")
+    creation_id: str | None = Field(default=None, pattern=r"^c_[a-f0-9]{20}$")
+    version: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> FreeCreationReference:
+        if self.type == "upload" and self.reference_id and self.creation_id is None and self.version is None:
+            return self
+        if self.type == "creation" and self.creation_id and self.reference_id is None:
+            return self
+        raise ValueError("reference identity does not match its type")
+
+
 class FreeCreationRequest(BaseModel):
     output_type: FreeOutputType
     prompt: str = Field(min_length=1, max_length=10000)
-    references: list[str] = Field(default_factory=list, max_length=8)
+    references: list[str | FreeCreationReference] = Field(default_factory=list, max_length=32)
     aspect_ratio: str | None = Field(default=None, min_length=3, max_length=32)
     resolution: str | None = Field(default=None, max_length=32)
     size: str | None = Field(default=None, max_length=32)
     model: str | None = Field(default=None, max_length=200)
     quantity: int = Field(default=1, ge=1, le=4)
-    duration_seconds: int | None = Field(default=None, gt=0, le=30)
+    duration_seconds: int | None = Field(default=None, gt=0)
     parent_creation_id: str | None = Field(default=None, pattern=r"^c_[a-f0-9]{20}$")
     prompt_mode: PromptMode = "original"
 
@@ -104,6 +141,60 @@ class CreateFreeProjectRequest(BaseModel):
         return value
 
 
+class CanvasPoint(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    x: float
+    y: float
+
+
+class CanvasViewport(CanvasPoint):
+    scale: float = Field(ge=0.35, le=2.5)
+
+
+class CanvasStateUpdate(BaseModel):
+    viewport: CanvasViewport
+    positions: dict[str, CanvasPoint] = Field(default_factory=dict, max_length=500)
+    hidden_creation_ids: list[str] = Field(default_factory=list, max_length=500)
+    hidden_reference_ids: list[str] = Field(default_factory=list, max_length=500)
+    expected_revision: int | None = Field(default=None, ge=0)
+
+    @field_validator("positions")
+    @classmethod
+    def validate_position_ids(cls, value: dict[str, CanvasPoint]) -> dict[str, CanvasPoint]:
+        if any(not key.startswith(("c_", "r_")) for key in value):
+            raise ValueError("canvas position ids must identify creations or references")
+        return value
+
+    @field_validator("hidden_creation_ids")
+    @classmethod
+    def validate_hidden_ids(cls, value: list[str]) -> list[str]:
+        if any(not item.startswith("c_") for item in value):
+            raise ValueError("hidden ids must identify creations")
+        return value
+
+    @field_validator("hidden_reference_ids")
+    @classmethod
+    def validate_hidden_reference_ids(cls, value: list[str]) -> list[str]:
+        if any(not item.startswith("r_") for item in value):
+            raise ValueError("hidden reference ids must identify uploads")
+        return value
+
+
+class FreeCreationExportRequest(BaseModel):
+    scope: Literal["selected", "request", "all"]
+    creation_ids: list[str] = Field(default_factory=list, max_length=500)
+    request_id: str | None = Field(default=None, pattern=r"^q_[a-f0-9]{20}$")
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> FreeCreationExportRequest:
+        if self.scope == "selected" and not self.creation_ids:
+            raise ValueError("creation_ids are required for selected export")
+        if self.scope == "request" and not self.request_id:
+            raise ValueError("request_id is required for request export")
+        return self
+
+
 def _load_free_project(project_name: str) -> tuple[dict, Path]:
     pm = get_project_manager()
     if not pm.project_exists(project_name):
@@ -131,6 +222,36 @@ def _validate_references(project_path: Path, references: list[str], media_type: 
         )
         if path.suffix.lower() not in allowed_suffixes:
             raise BadRequestError("free_creation_reference_type_unsupported", type=path.suffix.lower() or "unknown")
+
+
+def _validate_reference_roles(
+    claims: list[str | FreeCreationReference],
+    resolved_paths: list[str],
+    media_type: Literal["image", "video"],
+) -> None:
+    role_counts: dict[str, int] = {}
+    for claim, path in zip(claims, resolved_paths, strict=False):
+        if isinstance(claim, str):
+            continue
+        role = claim.role
+        if role is None:
+            continue
+        role_counts[role] = role_counts.get(role, 0) + 1
+        suffix = Path(path).suffix.lower()
+        accepted = {
+            "first_frame": _IMAGE_REFERENCE_SUFFIXES,
+            "last_frame": _IMAGE_REFERENCE_SUFFIXES,
+            "reference_image": _IMAGE_REFERENCE_SUFFIXES,
+            "reference_video": _VIDEO_REFERENCE_SUFFIXES,
+            "reference_audio": _AUDIO_REFERENCE_SUFFIXES,
+        }.get(role)
+        if accepted is not None and suffix not in accepted:
+            raise BadRequestError("free_creation_reference_type_unsupported", type=suffix or "unknown")
+        if media_type != "video" and role != "prompt_context":
+            raise BadRequestError("request_invalid")
+    for role in ("first_frame", "last_frame"):
+        if role_counts.get(role, 0) > 1:
+            raise BadRequestError("request_invalid")
 
 
 def _merge_metadata(project_path: Path, creation_id: str, patch: dict) -> dict:
@@ -254,6 +375,7 @@ async def _preflight_free_creation(
     *,
     media_type: Literal["image", "video"],
     parent_media_path: str | None = None,
+    reference_claims: list[dict[str, Any]] | None = None,
     user_id: str,
 ) -> dict[str, Any]:
     """Resolve the selected lane and reject known capability failures before enqueue."""
@@ -262,6 +384,7 @@ async def _preflight_free_creation(
     capability_payload = {
         **payload,
         "references": ([parent_media_path] if parent_media_path else []) + list(req.references),
+        "reference_claims": reference_claims or [],
     }
     try:
         if media_type == "video":
@@ -276,18 +399,21 @@ async def _preflight_free_creation(
             reference_names = capability_payload["references"]
             image_count = sum(Path(item).suffix.lower() in _IMAGE_REFERENCE_SUFFIXES for item in reference_names)
             video_count = sum(Path(item).suffix.lower() in _VIDEO_REFERENCE_SUFFIXES for item in reference_names)
-            duration = req.duration_seconds or 4
             supported = (
                 ctx.video.supported_durations_with_reference_video
                 if video_count and ctx.video.supported_durations_with_reference_video
                 else ctx.video.supported_durations
             )
-            if supported and duration not in supported:
+            if not supported:
+                raise VideoCapabilityError("video_supported_durations_missing")
+            duration = req.duration_seconds if req.duration_seconds is not None else supported[0]
+            if duration not in supported:
                 raise VideoCapabilityError(
                     "video_duration_not_supported",
                     duration=duration,
                     supported=", ".join(str(item) for item in supported),
                 )
+            payload["duration_seconds"] = duration
             if not ctx.video.supported_aspect_ratios:
                 raise VideoCapabilityError(
                     "free_creation_aspect_ratio_capabilities_missing",
@@ -372,6 +498,7 @@ async def get_free_creation_capabilities(
     output_type: Literal["image", "video"] = Query(default="video"),
     model: str | None = Query(default=None, max_length=200),
     reference_kind: Literal["none", "image", "video"] = Query(default="none"),
+    project_name: str | None = None,
 ):
     """Return the effective model capabilities used by the free composer."""
 
@@ -385,7 +512,11 @@ async def get_free_creation_capabilities(
         payload["video_provider" if output_type == "video" else "image_provider"] = provider
         payload["video_model" if output_type == "video" else "image_model"] = model_id
     resolver = ConfigResolver(async_session_factory)
-    project = {"content_mode": "free", "generation_mode": None}
+    project = (
+        (await asyncio.to_thread(_load_free_project, project_name))[0]
+        if project_name
+        else {"content_mode": "free", "generation_mode": None}
+    )
     try:
         if output_type == "video":
             capability = "r2v" if reference_kind in {"image", "video"} else None
@@ -403,6 +534,32 @@ async def get_free_creation_capabilities(
                 default_resolution = await resolver.resolve_resolution(project, resolved.provider_id, resolved.model_id)
                 if default_resolution:
                     resolutions = [default_resolution]
+            modes = ["t2v"]
+            input_slots: list[dict[str, Any]] = []
+            if caps.get("first_frame"):
+                modes.append("first_frame")
+                input_slots.append({"role": "first_frame", "accepted_types": ["image"], "max_count": 1})
+            if caps.get("last_frame"):
+                modes.append("first_last_frame")
+                input_slots.append({"role": "last_frame", "accepted_types": ["image"], "max_count": 1})
+            if (caps.get("max_reference_images") or 0) > 0:
+                modes.append("reference_image")
+                input_slots.append(
+                    {
+                        "role": "reference_image",
+                        "accepted_types": ["image"],
+                        "max_count": int(caps["max_reference_images"]),
+                    }
+                )
+            if (caps.get("max_reference_videos") or 0) > 0:
+                modes.append("reference_video")
+                input_slots.append(
+                    {
+                        "role": "reference_video",
+                        "accepted_types": ["video"],
+                        "max_count": int(caps["max_reference_videos"]),
+                    }
+                )
             return {
                 "output_type": "video",
                 "model": f"{resolved.provider_id}/{resolved.model_id}",
@@ -416,6 +573,10 @@ async def get_free_creation_capabilities(
                 "max_reference_images": caps.get("max_reference_images"),
                 "max_reference_videos": caps.get("max_reference_videos"),
                 "max_reference_media_count": caps.get("max_reference_media_count"),
+                "modes": modes,
+                "input_slots": input_slots,
+                "combinations": [["first_frame", "last_frame"], ["reference_image"], ["reference_video"]],
+                "quantity": {"min": 1, "max": 4},
             }
         resolved = await resolver.resolve_image_backend(project, payload, capability="t2i")
         info = model_info_for(resolved.provider_id, resolved.model_id)
@@ -438,13 +599,39 @@ async def get_free_creation_capabilities(
 @router.post("/projects/{project_name}/creations")
 async def create_free_creation(project_name: str, req: FreeCreationRequest, user: CurrentUser):
     project, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    public_references = [
+        item if isinstance(item, str) else item.model_dump(exclude_none=True) for item in req.references
+    ]
+    try:
+        resolved_references, reference_claims = await asyncio.to_thread(
+            resolve_reference_claims,
+            project_path,
+            public_references,
+            load_creation=load_creation_metadata,
+        )
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_reference_not_found", id=str(exc)) from exc
+    except ValueError as exc:
+        raise BadRequestError("free_creation_reference_invalid") from exc
+    roles = [claim.get("role") for claim in reference_claims if claim.get("role")]
+    if "first_frame" in roles and "last_frame" in roles:
+        effective_mode = "first_last_frame"
+    elif "first_frame" in roles:
+        effective_mode = "first_frame"
+    elif "reference_video" in roles:
+        effective_mode = "reference_video"
+    elif "reference_image" in roles:
+        effective_mode = "reference_image"
+    else:
+        effective_mode = "t2v" if req.output_type == "video" else req.output_type
+    execution_req = req.model_copy(update={"references": resolved_references})
     parent: dict[str, Any] | None = None
     parent_media_path: str | None = None
-    media_type: Literal["image", "video"] = "video" if req.output_type == "video" else "image"
-    if req.parent_creation_id:
-        parent = await asyncio.to_thread(load_creation_metadata, project_path, req.parent_creation_id)
+    media_type: Literal["image", "video"] = "video" if execution_req.output_type == "video" else "image"
+    if execution_req.parent_creation_id:
+        parent = await asyncio.to_thread(load_creation_metadata, project_path, execution_req.parent_creation_id)
         if not parent or parent.get("output_type") not in {"image", "video", "edit"}:
-            raise NotFoundError("free_creation_parent_not_found", id=req.parent_creation_id)
+            raise NotFoundError("free_creation_parent_not_found", id=execution_req.parent_creation_id)
         raw_media_type = parent.get("media_type")
         media_type = (
             raw_media_type
@@ -456,43 +643,49 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
         try:
             parent_path = safe_join(project_path, parent_media) if isinstance(parent_media, str) else None
         except PathTraversalError as exc:
-            raise NotFoundError("free_creation_parent_not_found", id=req.parent_creation_id) from exc
+            raise NotFoundError("free_creation_parent_not_found", id=execution_req.parent_creation_id) from exc
         if parent_path is None or not parent_path.is_file():
-            raise NotFoundError("free_creation_parent_not_found", id=req.parent_creation_id)
+            raise NotFoundError("free_creation_parent_not_found", id=execution_req.parent_creation_id)
 
-    await asyncio.to_thread(_validate_references, project_path, req.references, media_type)
-    if media_type == "image" and req.duration_seconds is not None:
+    await asyncio.to_thread(_validate_references, project_path, resolved_references, media_type)
+    _validate_reference_roles(req.references, resolved_references, media_type)
+    if media_type == "image" and execution_req.duration_seconds is not None:
         raise BadRequestError("request_invalid")
-    if media_type == "video" and req.size is not None:
+    if media_type == "video" and execution_req.size is not None:
         raise BadRequestError("request_invalid")
 
     request_payload = await _preflight_free_creation(
         project_name,
         project,
         project_path,
-        req,
+        execution_req,
         media_type=media_type,
         parent_media_path=parent_media_path,
+        reference_claims=reference_claims,
         user_id=user.id,
     )
-    task_type = {"image": "free_image", "video": "free_video", "edit": "free_edit"}[req.output_type]
+    request_id = new_request_id()
+    task_type = {"image": "free_image", "video": "free_video", "edit": "free_edit"}[execution_req.output_type]
     enqueued: list[dict[str, Any]] = []
     task_payload = {
         **request_payload,
+        "request_id": request_id,
         "media_type": media_type,
-        "references": ([parent_media_path] if parent_media_path else []) + list(req.references),
+        "references": ([parent_media_path] if parent_media_path else []) + resolved_references,
+        "reference_claims": reference_claims,
+        "effective_mode": effective_mode,
     }
     try:
-        for _ in range(req.quantity):
+        for _ in range(execution_req.quantity):
             creation_id = new_creation_id()
             spec = TaskSpec.from_request(
                 task_type=task_type,
                 media_type=media_type,
                 resource_id=creation_id,
-                prompt=req.prompt.strip(),
+                prompt=execution_req.prompt.strip(),
                 source="webui",
                 extra_payload={
-                    "output_type": req.output_type,
+                    "output_type": execution_req.output_type,
                     **task_payload,
                 },
             )
@@ -508,17 +701,20 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
             task_id = str(queue_result["task_id"])
             metadata = {
                 "creation_id": creation_id,
-                "output_type": req.output_type,
+                "request_id": request_id,
+                "output_type": execution_req.output_type,
                 "media_type": media_type,
-                "prompt": req.prompt.strip(),
-                "prompt_mode": req.prompt_mode,
+                "prompt": execution_req.prompt.strip(),
+                "prompt_mode": execution_req.prompt_mode,
                 "references": task_payload["references"],
-                "aspect_ratio": req.aspect_ratio or project.get("aspect_ratio") or "9:16",
-                "resolution": req.resolution,
-                "size": req.size,
+                "reference_claims": reference_claims,
+                "effective_mode": effective_mode,
+                "aspect_ratio": execution_req.aspect_ratio or project.get("aspect_ratio") or "9:16",
+                "resolution": execution_req.resolution,
+                "size": execution_req.size,
                 "model": request_payload.get("model"),
-                "duration_seconds": req.duration_seconds,
-                "parent_creation_id": req.parent_creation_id,
+                "duration_seconds": request_payload.get("duration_seconds"),
+                "parent_creation_id": execution_req.parent_creation_id,
             }
             enqueued.append({"creation_id": creation_id, "task_id": task_id, "metadata": metadata})
             await asyncio.to_thread(
@@ -534,9 +730,27 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
     except Exception:
         await _compensate_partial_batch(project_path, enqueued)
         raise
+    try:
+        await asyncio.to_thread(
+            write_creation_request,
+            project_path,
+            request_id,
+            {
+                "output_type": execution_req.output_type,
+                "media_type": media_type,
+                "prompt": execution_req.prompt,
+                "reference_claims": reference_claims,
+                "duration_seconds": request_payload.get("duration_seconds"),
+                "creation_ids": [item["creation_id"] for item in enqueued],
+            },
+        )
+    except BaseException:
+        await _compensate_partial_batch(project_path, enqueued)
+        raise
     created = [{"creation_id": item["creation_id"], "task_id": item["task_id"]} for item in enqueued]
     return {
         "success": True,
+        "request_id": request_id,
         "creation_id": created[0]["creation_id"],
         "task_id": created[0]["task_id"],
         "creations": created,
@@ -584,9 +798,108 @@ async def create_free_project(req: CreateFreeProjectRequest, user: CurrentUser):
 
 
 @router.get("/projects/{project_name}/creations")
-async def list_free_creations(project_name: str, limit: int = Query(default=40, ge=1, le=100)):
+async def list_free_creations(
+    project_name: str,
+    limit: int = Query(default=60, ge=1, le=100),
+    cursor: str | None = Query(default=None, pattern=r"^c_[a-f0-9]{20}$"),
+):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
-    return {"creations": await asyncio.to_thread(list_creation_metadata, project_path, limit)}
+    creations = await asyncio.to_thread(list_creation_metadata, project_path, None)
+    start = 0
+    if cursor:
+        start = next((index + 1 for index, item in enumerate(creations) if item.get("creation_id") == cursor), 0)
+    page = creations[start : start + limit]
+    next_cursor = page[-1].get("creation_id") if start + limit < len(creations) and page else None
+    return {"creations": page, "next_cursor": next_cursor, "total": len(creations)}
+
+
+@router.get("/projects/{project_name}/free-creation-canvas")
+async def get_free_creation_canvas(project_name: str):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    return {"canvas": await asyncio.to_thread(load_canvas_state, project_path)}
+
+
+@router.put("/projects/{project_name}/free-creation-canvas")
+async def update_free_creation_canvas(project_name: str, req: CanvasStateUpdate):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    try:
+        canvas = await asyncio.to_thread(
+            save_canvas_state,
+            project_path,
+            viewport=req.viewport.model_dump(),
+            positions={key: value.model_dump() for key, value in req.positions.items()},
+            hidden_creation_ids=req.hidden_creation_ids,
+            hidden_reference_ids=req.hidden_reference_ids,
+            expected_revision=req.expected_revision,
+        )
+    except RuntimeError as exc:
+        raise ConflictError("free_creation_canvas_conflict") from exc
+    return {"success": True, "canvas": canvas}
+
+
+@router.get("/projects/{project_name}/free-creation-references")
+async def get_free_creation_references(project_name: str):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    return {"references": await asyncio.to_thread(list_reference_uploads, project_path)}
+
+
+@router.post("/projects/{project_name}/free-creation-references")
+async def upload_free_creation_reference(project_name: str, file: UploadFile = File(...)):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    if not file.filename:
+        raise BadRequestError("free_creation_reference_invalid")
+    content = await file.read(MAX_REFERENCE_BYTES + 1)
+    try:
+        record = await asyncio.to_thread(
+            save_reference_upload,
+            project_path,
+            original_filename=file.filename,
+            content=content,
+        )
+    except (ValueError, OverflowError) as exc:
+        raise BadRequestError("free_creation_reference_invalid") from exc
+    return {
+        "success": True,
+        "reference": record,
+        "url": f"/api/v1/files/{project_name}/{record['path']}",
+    }
+
+
+@router.delete("/projects/{project_name}/free-creation-references/{reference_id}")
+async def remove_free_creation_reference(project_name: str, reference_id: str):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    try:
+        await asyncio.to_thread(delete_reference_upload, project_path, reference_id)
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_reference_not_found") from exc
+    except RuntimeError as exc:
+        raise ConflictError("request_invalid") from exc
+    return {"success": True}
+
+
+@router.post("/projects/{project_name}/free-creation-export")
+async def export_free_creations(project_name: str, req: FreeCreationExportRequest):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    creations = await asyncio.to_thread(list_creation_metadata, project_path, None)
+    try:
+        archive = await asyncio.to_thread(
+            build_creation_export,
+            project_path,
+            scope=req.scope,
+            creation_ids=req.creation_ids,
+            request_id=req.request_id,
+            creations=creations,
+        )
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_export_empty") from exc
+    except ValueError as exc:
+        raise BadRequestError("request_invalid") from exc
+    return FileResponse(
+        archive,
+        media_type="application/zip",
+        filename=f"{project_name}-creations.zip",
+        background=BackgroundTask(archive.unlink, missing_ok=True),
+    )
 
 
 @router.get("/projects/{project_name}/creations/{creation_id}")
@@ -722,6 +1035,8 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
         extra_payload={
             "output_type": output_type,
             "media_type": media_type,
+            "request_id": creation.get("request_id"),
+            "reference_claims": creation.get("reference_claims") or [],
             "references": ([parent_media_path] if parent_media_path else []) + request_references,
             **request_payload,
         },

@@ -117,6 +117,12 @@ def test_supported_locales_all_present():
     assert set(SUPPORTED_LOCALES) == set(MESSAGES.keys())
 
 
+def test_free_creation_capabilities_error_is_user_facing():
+    key = "free_creation_capabilities_unavailable"
+    for locale in SUPPORTED_LOCALES:
+        assert MESSAGES[locale][key] != key
+
+
 def test_format_placeholders_consistent():
     """Both locales must use the same format placeholders for each key."""
     import string

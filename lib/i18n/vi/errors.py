@@ -417,6 +417,9 @@ MESSAGES = {
     "request_invalid": "Yêu cầu không hợp lệ, vui lòng kiểm tra và thử lại",
     "free_creation_project_required": "Tạo tác tự do chỉ khả dụng trong dự án tạo tác tự do",
     "free_creation_reference_invalid": "Đường dẫn tệp tham chiếu không hợp lệ",
+    "free_creation_reference_not_found": "Tài liệu tham chiếu '{id}' không tồn tại hoặc không khả dụng",
+    "free_creation_canvas_conflict": "Canvas đã được cập nhật ở nơi khác. Hãy làm mới rồi thử lại",
+    "free_creation_export_empty": "Phạm vi đã chọn không có tác phẩm hoàn tất để xuất",
     "free_creation_reference_type_unsupported": "Sáng tạo tự do chưa hỗ trợ tệp tham chiếu loại {type}",
     "free_creation_resolution_not_supported": "Mô hình {model} không hỗ trợ độ phân giải {resolution} (được hỗ trợ: {supported})",
     "free_creation_parent_not_found": "Không tìm thấy hoặc không thể dùng ảnh cha tạo tác tự do '{id}'",
@@ -429,6 +432,7 @@ MESSAGES = {
     "video_reference_media_exceeded": "Mô hình {model} chỉ hỗ trợ tối đa {limit} tư liệu ảnh và video tham chiếu nhưng nhận {count}; hãy giảm tư liệu tham chiếu",
     "video_reference_media_required": "Mô hình {model} yêu cầu ít nhất một ảnh hoặc video tham chiếu",
     "video_reference_videos_unreadable": "Mô hình {model} có video tham chiếu bị thiếu hoặc không đọc được; đã hủy tạo: {names}",
+    "free_creation_capabilities_unavailable": "Chưa cấu hình mô hình tạo nội dung cho sáng tạo tự do. Hãy vào Cài đặt > Mô hình để cấu hình",
     "free_creation_aspect_ratio_not_supported": "Mô hình {model} không hỗ trợ tỷ lệ khung hình {ratio}; hãy chọn: {supported}",
     "free_creation_aspect_ratio_capabilities_missing": "Mô hình {model} chưa khai báo các tỷ lệ khung hình được hỗ trợ, nên không thể gửi tác vụ sáng tạo tự do một cách an toàn",
 }

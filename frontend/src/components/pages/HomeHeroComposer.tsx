@@ -25,7 +25,7 @@ import { errMsg } from "@/utils/async";
 import { useAppStore } from "@/stores/app-store";
 
 interface HomeHeroComposerProps {
-  onCreated: (projectName: string) => void;
+  onCreated: (projectName: string, outputType: "image" | "video") => void;
 }
 
 type ModelOptions = { image: string[]; video: string[] };
@@ -591,19 +591,19 @@ interface DurationControlProps {
 
 function DurationControl({ label, minimumLabel, value, durations, onChange }: DurationControlProps) {
   const supported = useMemo(
-    () => (durations?.length ? [...durations].sort((left, right) => left - right) : [4, 5, 6, 8, 10, 12, 15]),
-    [durations],
+    () => (durations?.length ? [...durations].sort((left, right) => left - right) : [value]),
+    [durations, value],
   );
-  const minimum = supported[0] ?? 4;
-  const maximum = supported[supported.length - 1] ?? 15;
+  const minimum = supported[0] ?? value;
+  const maximum = supported[supported.length - 1] ?? value;
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
   const safeValue = supported.includes(value) ? value : supported.reduce((closest, candidate) => (
     Math.abs(candidate - value) < Math.abs(closest - value) ? candidate : closest
   ), supported[0] ?? 4);
-  const minimumProgress = `${((minimum - minimum) / Math.max(1, maximum - minimum)) * 100}%`;
-  const progress = `${((safeValue - minimum) / Math.max(1, maximum - minimum)) * 100}%`;
+  const minimumProgress = `${(minimum / Math.max(1, maximum)) * 100}%`;
+  const progress = `${(safeValue / Math.max(1, maximum)) * 100}%`;
 
   useEffect(() => {
     if (!open) return;
@@ -649,7 +649,7 @@ function DurationControl({ label, minimumLabel, value, durations, onChange }: Du
             <input
               className="home-duration-slider"
               type="range"
-              min={minimum}
+              min={0}
               max={maximum}
               step={1}
               value={safeValue}
@@ -672,7 +672,7 @@ function DurationControl({ label, minimumLabel, value, durations, onChange }: Du
             </span>
           </div>
           <div className="home-duration-ticks" aria-hidden>
-            {[...new Set([minimum, ...supported.filter((_, index) => index % Math.max(1, Math.ceil(supported.length / 3)) === 0), maximum])].map((tick) => (
+            {[...new Set([0, minimum, ...supported.filter((_, index) => index % Math.max(1, Math.ceil(supported.length / 3)) === 0), maximum])].map((tick) => (
               <span key={tick}>{tick}s</span>
             ))}
           </div>
@@ -828,7 +828,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       };
       const project = await API.createFreeProject({ title: shortProjectTitle(cleanPrompt), creation: payload });
       setPrompt("");
-      onCreated(project.name);
+      onCreated(project.name, outputType);
     } catch (err) {
       const message = errMsg(err);
       setError(message);
@@ -949,7 +949,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
               value={effectiveDuration}
               durations={videoDurations}
               onChange={setDuration}
-              minimumLabel={t("home_duration_minimum")}
+              minimumLabel={t("home_duration_minimum", { value: videoDurations[0] ?? effectiveDuration })}
             />
           ) : null}
         </div>

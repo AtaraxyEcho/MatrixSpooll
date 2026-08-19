@@ -1,28 +1,55 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, Loader2, Pencil, Sparkles, Video } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChevronDown,
+  Download,
+  Image,
+  Link2,
+  Loader2,
+  Paperclip,
+  Pencil,
+  Plus,
+  Send,
+  Settings2,
+  Video,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { API } from "@/api";
 import { ASPECT_RATIO_OPTIONS } from "@/components/shared/AspectRatioPicker";
 import { useModelCandidates } from "@/hooks/useModelCandidates";
+import { useAppStore } from "@/stores/app-store";
+import { useFreeCreationStore } from "@/stores/free-creation-store";
 import type {
   CreateFreeCreationRequest,
   FreeCreation,
   FreeCreationCapabilities,
-  FreeCreationOutputType,
+  FreeCreationMediaType,
+  FreeCreationReferenceClaim,
+  FreeCreationReferenceRole,
+  FreeCreationUpload,
 } from "@/types";
 import { errMsg } from "@/utils/async";
-import { useAppStore } from "@/stores/app-store";
 import { FreeCreationInfiniteCanvas } from "./FreeCreationInfiniteCanvas";
+import { FreeCreationSessionSummary } from "./FreeCreationSessionSummary";
 
 export interface FreeCreationWorkspaceProps {
   projectName: string;
   readOnly?: boolean;
+  initialOutputType?: FreeCreationMediaType;
 }
 
-const outputTypes: { value: FreeCreationOutputType; icon: typeof Image; label: string }[] = [
-  { value: "image", icon: Image, label: "free_creation_image" },
-  { value: "video", icon: Video, label: "free_creation_video" },
-  { value: "edit", icon: Pencil, label: "free_creation_edit" },
+interface ComposerReference {
+  claim: FreeCreationReferenceClaim;
+  label: string;
+}
+
+const VIDEO_REFERENCE_ROLES: FreeCreationReferenceRole[] = [
+  "first_frame",
+  "last_frame",
+  "reference_image",
+  "reference_video",
+  "reference_audio",
+  "prompt_context",
 ];
 
 const IMAGE_RESOLUTION_PIXELS: Record<string, number> = {
@@ -30,218 +57,273 @@ const IMAGE_RESOLUTION_PIXELS: Record<string, number> = {
   "2k": 2048,
   "4k": 4096,
 };
-
 const IMAGE_RESOLUTIONS = ["1.5k", "2k", "4k"] as const;
-const IMAGE_REFERENCE_SUFFIXES = [".png", ".jpg", ".jpeg", ".webp"] as const;
-const VIDEO_REFERENCE_SUFFIXES = [".mp4", ".mov"] as const;
 
-interface CapabilityResult {
-  key: string;
-  value: FreeCreationCapabilities | null;
-  error: string | null;
+function dimensionsFor(resolution: string, ratio: string): { width: number; height: number } {
+  const edge = IMAGE_RESOLUTION_PIXELS[resolution] ?? 1536;
+  const [rawWidth, rawHeight] = ratio.split(":").map(Number);
+  if (!rawWidth || !rawHeight) return { width: edge, height: edge };
+  if (rawWidth >= rawHeight) return { width: edge, height: Math.max(1, Math.round(edge * rawHeight / rawWidth)) };
+  return { width: Math.max(1, Math.round(edge * rawWidth / rawHeight)), height: edge };
 }
 
-export function FreeCreationWorkspace({ projectName, readOnly = false }: FreeCreationWorkspaceProps) {
+function claimKey(claim: FreeCreationReferenceClaim): string {
+  return claim.type === "upload"
+    ? `upload:${claim.reference_id}:${claim.role ?? "unassigned"}`
+    : `creation:${claim.creation_id}:${claim.version ?? "current"}:${claim.role ?? "unassigned"}`;
+}
+
+export function FreeCreationWorkspace({ projectName, readOnly = false, initialOutputType }: FreeCreationWorkspaceProps) {
   const { t } = useTranslation("dashboard");
-  const [outputType, setOutputType] = useState<FreeCreationOutputType>("video");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const loadSequenceRef = useRef(0);
+  const [mediaType, setMediaType] = useState<FreeCreationMediaType>(initialOutputType ?? "video");
   const [prompt, setPrompt] = useState("");
-  const [references, setReferences] = useState("");
+  const [references, setReferences] = useState<ComposerReference[]>([]);
+  const [uploads, setUploads] = useState<FreeCreationUpload[]>([]);
   const [aspectRatio, setAspectRatio] = useState("16:9");
   const [resolution, setResolution] = useState("1080p");
-  const [size, setSize] = useState("1536x1536");
-  const [quantity, setQuantity] = useState("1");
+  const initialDimensions = dimensionsFor("1.5k", "16:9");
+  const [imageWidth, setImageWidth] = useState(initialDimensions.width);
+  const [imageHeight, setImageHeight] = useState(initialDimensions.height);
+  const [customSize, setCustomSize] = useState(false);
+  const [quantity, setQuantity] = useState(1);
   const [model, setModel] = useState("auto");
-  const [duration, setDuration] = useState("4");
+  const [duration, setDuration] = useState(4);
   const [parentId, setParentId] = useState("");
   const [creations, setCreations] = useState<FreeCreation[]>([]);
-  const [capabilityResult, setCapabilityResult] = useState<CapabilityResult | null>(null);
+  const [totalCreations, setTotalCreations] = useState(0);
+  const [capabilities, setCapabilities] = useState<FreeCreationCapabilities | null>(null);
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const refreshToken = useFreeCreationStore((state) => state.refreshToken);
   const { candidates, reload: reloadCandidates } = useModelCandidates();
 
   useEffect(() => {
     void reloadCandidates();
   }, [reloadCandidates]);
 
-  const editableCreations = useMemo(
-    () => creations.filter((item) => item.status === "succeeded" && item.media_path),
-    [creations],
-  );
   const selectedParent = useMemo(
-    () => editableCreations.find((item) => item.creation_id === parentId),
-    [editableCreations, parentId],
+    () => creations.find((item) => item.creation_id === parentId) ?? null,
+    [creations, parentId],
   );
-  const usesVideo = outputType === "video"
-    || (outputType === "edit"
-      && (selectedParent?.media_type === "video" || selectedParent?.output_type === "video"));
+  const effectiveMediaType: FreeCreationMediaType = selectedParent
+    ? selectedParent.media_type ?? (selectedParent.output_type === "video" ? "video" : "image")
+    : mediaType;
   const modelOptions = useMemo(() => {
-    const values = usesVideo ? candidates?.video.default : candidates?.image.default;
+    const values = effectiveMediaType === "video" ? candidates?.video.default : candidates?.image.default;
     return [...new Set(values ?? [])];
-  }, [candidates, usesVideo]);
+  }, [candidates, effectiveMediaType]);
   const selectedModel = model === "auto" || modelOptions.includes(model) ? model : "auto";
+
   const referenceKind = useMemo<"none" | "image" | "video">(() => {
-    if (!usesVideo) return "none";
-    if (selectedParent?.media_type === "video" || selectedParent?.output_type === "video") return "video";
-    const paths = references.split(/\r?\n/).map((item) => item.trim().toLowerCase()).filter(Boolean);
-    if (paths.some((item) => VIDEO_REFERENCE_SUFFIXES.some((suffix) => item.endsWith(suffix)))) return "video";
-    if (paths.some((item) => IMAGE_REFERENCE_SUFFIXES.some((suffix) => item.endsWith(suffix)))) return "image";
+    if (effectiveMediaType !== "video") return "none";
+    if (selectedParent && (selectedParent.media_type === "video" || selectedParent.output_type === "video")) return "video";
+    for (const reference of references) {
+      const claim = reference.claim;
+      if (claim.type === "upload") {
+        const upload = uploads.find((item) => item.reference_id === claim.reference_id);
+        if (upload?.media_type === "video") return "video";
+        if (upload?.media_type === "image") return "image";
+      } else {
+        const creation = creations.find((item) => item.creation_id === claim.creation_id);
+        if (creation?.media_type === "video" || creation?.output_type === "video") return "video";
+        if (creation) return "image";
+      }
+    }
     return "none";
-  }, [references, selectedParent, usesVideo]);
-  const capabilityRequestKey = `${usesVideo ? "video" : "image"}:${selectedModel}:${referenceKind}`;
-  const capabilities = capabilityResult?.key === capabilityRequestKey ? capabilityResult.value : null;
-  const capabilityError = capabilityResult?.key === capabilityRequestKey ? capabilityResult.error : null;
+  }, [creations, effectiveMediaType, references, selectedParent, uploads]);
 
   useEffect(() => {
     const controller = new AbortController();
     void API.getFreeCreationCapabilities({
-      outputType: usesVideo ? "video" : "image",
+      outputType: effectiveMediaType,
       model: selectedModel === "auto" ? undefined : selectedModel,
       referenceKind,
+      projectName,
       signal: controller.signal,
-    })
-      .then((next) => {
-        setCapabilityResult({ key: capabilityRequestKey, value: next, error: null });
-      })
-      .catch((err) => {
-        if (!controller.signal.aborted) {
-          setCapabilityResult({
-            key: capabilityRequestKey,
-            value: null,
-            error: usesVideo ? errMsg(err) : null,
-          });
-        }
-      });
+    }).then((next) => {
+      setCapabilities(next);
+      setCapabilityError(null);
+    }).catch((nextError) => {
+      if (!controller.signal.aborted && effectiveMediaType === "video") setCapabilityError(errMsg(nextError));
+    });
     return () => controller.abort();
-  }, [capabilityRequestKey, referenceKind, selectedModel, usesVideo]);
+  }, [effectiveMediaType, projectName, referenceKind, selectedModel]);
 
-  const ratioOptions = useMemo<string[]>(
-    () => capabilities?.output_type === (usesVideo ? "video" : "image") && capabilities.ratios.length
+  const ratioOptions = useMemo(
+    () => capabilities?.output_type === effectiveMediaType && capabilities.ratios.length
       ? capabilities.ratios
-      : usesVideo
-        ? []
-        : ASPECT_RATIO_OPTIONS.map(({ value }) => value),
-    [capabilities, usesVideo],
+      : effectiveMediaType === "image"
+        ? ASPECT_RATIO_OPTIONS.map((option) => option.value)
+        : [],
+    [capabilities, effectiveMediaType],
   );
-  const resolutionOptions = useMemo<string[]>(
-    () => capabilities?.output_type === (usesVideo ? "video" : "image") && capabilities.resolutions.length
+  const resolutionOptions = useMemo(
+    () => capabilities?.output_type === effectiveMediaType && capabilities.resolutions.length
       ? capabilities.resolutions
-      : usesVideo
-        ? []
-        : [...IMAGE_RESOLUTIONS],
-    [capabilities, usesVideo],
+      : effectiveMediaType === "image"
+        ? [...IMAGE_RESOLUTIONS]
+        : [],
+    [capabilities, effectiveMediaType],
   );
-  const durationOptions = useMemo<readonly number[]>(
-    () => capabilities?.output_type === "video" && capabilities.durations.length
-      ? capabilities.durations
+  const durationOptions = useMemo(
+    () => capabilities?.output_type === "video"
+      ? capabilities.durations.filter((value) => Number.isInteger(value) && value > 0)
       : [],
     [capabilities],
   );
-  const selectableDurationOptions = useMemo<readonly number[]>(() => {
-    return durationOptions.filter((value) => Number.isInteger(value) && value > 0);
-  }, [durationOptions]);
-  const effectiveAspectRatio = ratioOptions.includes(aspectRatio) ? aspectRatio : ratioOptions[0] ?? "9:16";
-  const selectedResolution = resolutionOptions.includes(resolution) ? resolution : "";
-  const safeDuration = selectableDurationOptions.reduce(
-    (closest, candidate) => (
-      Math.abs(candidate - (Number(duration) || 4)) < Math.abs(closest - (Number(duration) || 4))
-        ? candidate
-        : closest
-    ),
-    selectableDurationOptions[0] ?? 4,
-  );
-  const minimumDuration = selectableDurationOptions[0] ?? 1;
-  const maximumDuration = selectableDurationOptions[selectableDurationOptions.length - 1] ?? minimumDuration;
-  const durationProgress = ((safeDuration - minimumDuration) / Math.max(1, maximumDuration - minimumDuration)) * 100;
-  const videoCapabilitiesReady = !usesVideo
-    || (capabilities?.output_type === "video" && ratioOptions.length > 0 && selectableDurationOptions.length > 0);
+  const effectiveAspectRatio = ratioOptions.includes(aspectRatio) ? aspectRatio : ratioOptions[0] ?? "16:9";
+  const selectedResolution = resolutionOptions.includes(resolution) ? resolution : resolutionOptions[0] ?? "";
+  const safeDuration = durationOptions.reduce((closest, candidate) => (
+    Math.abs(candidate - duration) < Math.abs(closest - duration) ? candidate : closest
+  ), durationOptions[0] ?? duration);
+  const capabilitiesReady = effectiveMediaType !== "video"
+    || (capabilities?.output_type === "video" && ratioOptions.length > 0 && durationOptions.length > 0);
 
   const loadCreations = useCallback(async () => {
+    const sequence = ++loadSequenceRef.current;
     try {
-      const response = await API.listFreeCreations(projectName, 40);
-      setCreations(response.creations);
+      const loaded: FreeCreation[] = [];
+      const seen = new Set<string>();
+      let cursor: string | undefined;
+      let total = 0;
+      do {
+        const response = await API.listFreeCreations(projectName, 100, cursor);
+        loaded.push(...response.creations);
+        total = response.total ?? loaded.length;
+        if (!response.next_cursor || seen.has(response.next_cursor)) break;
+        seen.add(response.next_cursor);
+        cursor = response.next_cursor;
+      } while (loaded.length < total && loaded.length < 500);
+      if (loadSequenceRef.current !== sequence) return;
+      setCreations(loaded);
+      setTotalCreations(total);
       setError(null);
-    } catch (err) {
-      setError(errMsg(err));
+    } catch (loadError) {
+      if (loadSequenceRef.current === sequence) setError(errMsg(loadError));
     }
   }, [projectName]);
 
   useEffect(() => {
-    const initialLoad = window.setTimeout(() => void loadCreations(), 0);
-    const timer = window.setInterval(() => void loadCreations(), 4000);
-    return () => {
-      window.clearTimeout(initialLoad);
-      window.clearInterval(timer);
-    };
-  }, [loadCreations]);
+    const timer = window.setTimeout(() => void loadCreations(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadCreations, refreshToken]);
+
+  useEffect(() => {
+    void API.listFreeCreationReferences(projectName).then(({ references: next }) => setUploads(next)).catch(() => undefined);
+  }, [projectName]);
+
+  const hasActiveCreation = creations.some((item) => ["queued", "running", "cancelling"].includes(item.status));
+  useEffect(() => {
+    if (!hasActiveCreation) return;
+    const timer = window.setInterval(() => void loadCreations(), 3000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveCreation, loadCreations]);
+
+  const addReference = useCallback((claim: FreeCreationReferenceClaim, label: string) => {
+    setReferences((current) => {
+      const normalized: FreeCreationReferenceClaim = claim.role ? claim : { ...claim, role: claim.type === "upload" ? "reference_image" : "reference_image" };
+      return current.some((item) => claimKey(item.claim) === claimKey(normalized))
+        ? current
+        : [...current, { claim: normalized, label }];
+    });
+  }, []);
+
+  const editFromCreation = (creationId: string) => {
+    const creation = creations.find((item) => item.creation_id === creationId);
+    if (!creation) return;
+    setParentId(creationId);
+    setMediaType(creation.media_type ?? (creation.output_type === "video" ? "video" : "image"));
+  };
+
+  const clearEdit = () => setParentId("");
+
+  const changeMediaType = (next: FreeCreationMediaType) => {
+    setMediaType(next);
+    clearEdit();
+    setModel("auto");
+    if (next === "video") {
+      setResolution("1080p");
+    } else {
+      setResolution("1.5k");
+      const nextDimensions = dimensionsFor("1.5k", effectiveAspectRatio);
+      setImageWidth(nextDimensions.width);
+      setImageHeight(nextDimensions.height);
+      setCustomSize(false);
+    }
+  };
 
   const runCreationAction = async (creationId: string, action: "cancel" | "retry") => {
     if (readOnly) return;
     setActingId(creationId);
-    setError(null);
     try {
-      if (action === "cancel") {
-        await API.cancelFreeCreation(projectName, creationId);
-      } else {
-        await API.retryFreeCreation(projectName, creationId);
-      }
+      if (action === "cancel") await API.cancelFreeCreation(projectName, creationId);
+      else await API.retryFreeCreation(projectName, creationId);
       await loadCreations();
-    } catch (err) {
-      const message = errMsg(err);
-      setError(message);
-      useAppStore.getState().pushToast(message, "error");
+    } catch (actionError) {
+      useAppStore.getState().pushToast(errMsg(actionError), "error");
     } finally {
       setActingId(null);
     }
   };
 
-  const editFromCreation = (creationId: string) => {
-    setOutputType("edit");
-    setParentId(creationId);
-    if (!["1.5k", "2k", "4k"].includes(resolution)) {
-      setResolution("1.5k");
-      setSize("1536x1536");
+  const uploadReferences = async (files: FileList | null) => {
+    if (!files?.length || readOnly) return;
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const result = await API.uploadFreeCreationReference(projectName, file);
+        setUploads((current) => [result.reference, ...current.filter((item) => item.reference_id !== result.reference.reference_id)]);
+        addReference({ type: "upload", reference_id: result.reference.reference_id, role: result.reference.media_type === "video" ? "reference_video" : result.reference.media_type === "audio" ? "reference_audio" : "reference_image" }, result.reference.original_filename);
+      }
+    } catch (uploadError) {
+      useAppStore.getState().pushToast(errMsg(uploadError), "error");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
-  const changeOutputType = (next: FreeCreationOutputType) => {
-    setOutputType(next);
-    if (next === "video") {
-      setResolution("1080p");
-      return;
-    }
-    if (!["1.5k", "2k", "4k"].includes(resolution)) {
-      setResolution("1.5k");
-      setSize("1536x1536");
+  const deleteUpload = async (referenceId: string) => {
+    if (readOnly) return;
+    try {
+      await API.deleteFreeCreationReference(projectName, referenceId);
+      setUploads((current) => current.filter((item) => item.reference_id !== referenceId));
+      setReferences((current) => current.filter((item) => item.claim.type !== "upload" || item.claim.reference_id !== referenceId));
+    } catch (deleteError) {
+      useAppStore.getState().pushToast(errMsg(deleteError), "error");
     }
   };
 
   const handleSubmit = async () => {
     const cleanPrompt = prompt.trim();
-    if (!cleanPrompt || readOnly || !videoCapabilitiesReady) return;
+    if (!cleanPrompt || readOnly || submitting || !capabilitiesReady) return;
     setSubmitting(true);
     setError(null);
+    const editing = Boolean(parentId);
     const payload: CreateFreeCreationRequest = {
-      output_type: outputType,
+      output_type: editing ? "edit" : mediaType,
       prompt: cleanPrompt,
-      references: references
-        .split(/\r?\n/)
-        .map((item) => item.trim())
-        .filter(Boolean),
+      references: references.map((item) => item.claim),
       aspect_ratio: effectiveAspectRatio,
-      resolution: selectedResolution || undefined,
-      size: usesVideo ? undefined : size.trim() || undefined,
+      resolution: effectiveMediaType === "image" && customSize ? undefined : selectedResolution || undefined,
+      size: effectiveMediaType === "image" ? `${imageWidth}x${imageHeight}` : undefined,
       model: selectedModel === "auto" ? undefined : selectedModel,
-      quantity: outputType === "edit" ? 1 : Number(quantity) || 1,
-      ...(usesVideo ? { duration_seconds: safeDuration } : {}),
-      ...(outputType === "edit" && parentId ? { parent_creation_id: parentId } : {}),
+      quantity: editing ? 1 : quantity,
+      duration_seconds: effectiveMediaType === "video" ? safeDuration : undefined,
+      parent_creation_id: editing ? parentId : undefined,
     };
     try {
       await API.createFreeCreation(projectName, payload);
       setPrompt("");
+      clearEdit();
       await loadCreations();
-    } catch (err) {
-      const message = errMsg(err);
+    } catch (submitError) {
+      const message = errMsg(submitError);
       setError(message);
       useAppStore.getState().pushToast(message, "error");
     } finally {
@@ -249,216 +331,143 @@ export function FreeCreationWorkspace({ projectName, readOnly = false }: FreeCre
     }
   };
 
+  const durationMinimum = durationOptions[0] ?? 1;
+  const durationMaximum = durationOptions[durationOptions.length - 1] ?? durationMinimum;
+  const declaredDurationTicks = durationOptions.length <= 6
+    ? durationOptions
+    : [...new Set([0, 0.25, 0.5, 0.75, 1].map((ratio) => (
+      durationOptions[Math.round((durationOptions.length - 1) * ratio)]
+    )))];
+  const durationTicks = [...new Set([0, ...declaredDurationTicks])];
+  const durationMinimumProgress = `${(durationMinimum / Math.max(1, durationMaximum)) * 100}%`;
+  const durationProgress = `${(safeDuration / Math.max(1, durationMaximum)) * 100}%`;
+  const mobileCreations = [...creations].sort(
+    (left, right) => (right.updated_at ?? "").localeCompare(left.updated_at ?? ""),
+  );
+
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-background)] text-[var(--color-text)]">
-      <FreeCreationInfiniteCanvas
-        projectName={projectName}
-        creations={creations}
-        readOnly={readOnly}
-        actingId={actingId}
-        onCancel={(creationId) => void runCreationAction(creationId, "cancel")}
-        onRetry={(creationId) => void runCreationAction(creationId, "retry")}
-        onEdit={editFromCreation}
-      />
-
-      <section className="absolute bottom-2 left-1/2 z-30 max-h-[calc(100%-1rem)] w-[min(920px,calc(100vw-1rem))] -translate-x-1/2 overflow-y-auto border border-[var(--color-hairline)] bg-[var(--color-surface)]/95 p-3 shadow-2xl backdrop-blur-md sm:bottom-4 sm:max-h-[calc(100%-2rem)] sm:w-[min(920px,calc(100vw-2rem))] sm:p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2 text-xs font-semibold text-[var(--color-text)]">
-            <Sparkles className="h-4 w-4 shrink-0 text-[var(--color-accent-2)]" aria-hidden="true" />
-            <span className="truncate">{t("free_creation")}</span>
-          </div>
-          <span className="shrink-0 text-[11px] text-[var(--color-text-muted)]">{creations.length}</span>
-        </div>
-
-        <div className="mb-3 flex gap-1" role="group" aria-label={t("free_creation")}>
-          {outputTypes.map(({ value, icon: Icon, label }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => changeOutputType(value)}
-              disabled={readOnly || submitting}
-              className={`inline-flex min-h-8 items-center gap-1.5 border px-2.5 text-xs transition-colors ${
-                outputType === value
-                  ? "border-[var(--color-accent)] bg-[var(--color-accent)]/15 text-[var(--color-text)]"
-                  : "border-[var(--color-hairline)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}
-              aria-pressed={outputType === value}
-            >
-              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-              {t(label)}
-            </button>
-          ))}
-        </div>
-
-        <textarea
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          rows={2}
-          placeholder={t("free_creation_prompt")}
-          className="w-full resize-none border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 py-2.5 text-sm leading-5 outline-none transition-colors focus:border-[var(--color-accent)]"
-          disabled={readOnly || submitting}
+      <FreeCreationSessionSummary creations={creations} />
+      <div className="absolute inset-0 hidden md:block">
+        <FreeCreationInfiniteCanvas
+          projectName={projectName}
+          creations={creations}
+          uploads={uploads}
+          readOnly={readOnly}
+          actingId={actingId}
+          onCancel={(creationId) => void runCreationAction(creationId, "cancel")}
+          onRetry={(creationId) => void runCreationAction(creationId, "retry")}
+          onEdit={editFromCreation}
+          onReference={addReference}
+          onDeleteUpload={(referenceId) => void deleteUpload(referenceId)}
         />
+      </div>
 
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          <label className="text-[11px] text-[var(--color-text-muted)]">
-            <span className="mb-1 block">{t("free_creation_aspect_ratio")}</span>
-            <input
-              list="free-creation-ratios"
-              value={effectiveAspectRatio}
-              onChange={(event) => setAspectRatio(event.target.value)}
-              className="h-9 w-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-              disabled={readOnly || submitting}
-              aria-label={t("free_creation_aspect_ratio")}
-            />
-            <datalist id="free-creation-ratios">
-              {ratioOptions.map((ratio) => <option key={ratio} value={ratio} />)}
-            </datalist>
-          </label>
-          <label className="text-[11px] text-[var(--color-text-muted)]">
-            <span className="mb-1 block">{t("free_creation_model")}</span>
-            <select
-              value={selectedModel}
-              onChange={(event) => setModel(event.target.value)}
-              className="h-9 w-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-              disabled={readOnly || submitting}
-              aria-label={t("free_creation_model")}
-            >
-              <option value="auto">{t("free_creation_model_auto")}</option>
-              {modelOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-          </label>
-          <label className="text-[11px] text-[var(--color-text-muted)]">
-            <span className="mb-1 block">{t("free_creation_resolution")}</span>
-            <select
-              value={selectedResolution}
-              onChange={(event) => {
-                const nextResolution = event.target.value;
-                setResolution(nextResolution);
-                if (!usesVideo) {
-                  const pixels = IMAGE_RESOLUTION_PIXELS[nextResolution];
-                  if (pixels) setSize(`${pixels}x${pixels}`);
-                }
-              }}
-              className="h-9 w-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-              disabled={readOnly || submitting}
-              aria-label={t("free_creation_resolution")}
-            >
-              <option value="">{t("free_creation_resolution_auto")}</option>
-              {resolutionOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-          </label>
-          <label className="text-[11px] text-[var(--color-text-muted)]">
-            <span className="mb-1 block">{t("free_creation_quantity")}</span>
-            <select
-              value={outputType === "edit" ? "1" : quantity}
-              onChange={(event) => setQuantity(event.target.value)}
-              className="h-9 w-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-              disabled={readOnly || submitting || outputType === "edit"}
-              aria-label={t("free_creation_quantity")}
-            >
-              {[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-          </label>
-          {usesVideo ? (
-            <label className="text-[11px] text-[var(--color-text-muted)]">
-              <span className="mb-1 flex items-center justify-between gap-2">
-                <span>{t("free_creation_duration")}</span>
-                <strong className="font-medium text-[var(--color-text)]">{safeDuration}s</strong>
-              </span>
-              <input
-                type="range"
-                min={minimumDuration}
-                max={maximumDuration}
-                step={1}
-                value={safeDuration}
-                onChange={(event) => {
-                  const requested = event.currentTarget.valueAsNumber;
-                  const next = selectableDurationOptions.reduce(
-                    (closest, candidate) => (
-                      Math.abs(candidate - requested) < Math.abs(closest - requested)
-                        ? candidate
-                        : closest
-                    ),
-                    minimumDuration,
-                  );
-                  setDuration(String(next));
-                }}
-                className="home-duration-slider mt-1 h-2 w-full accent-[var(--color-accent)]"
-                disabled={readOnly || submitting}
-                aria-label={t("free_creation_duration")}
-                aria-valuemin={minimumDuration}
-                aria-valuemax={maximumDuration}
-                style={{
-                  background: `linear-gradient(90deg, var(--color-accent) 0 ${durationProgress}%, oklch(0.27 0.012 265) ${durationProgress}% 100%)`,
-                }}
-              />
-              <span className="mt-1 flex justify-between text-[9px] text-[var(--color-text-muted)]" aria-hidden="true">
-                <span>{minimumDuration}s</span>
-                <span>{maximumDuration}s</span>
-              </span>
-            </label>
-          ) : (
-            <label className="text-[11px] text-[var(--color-text-muted)]">
-              <span className="mb-1 block">{t("free_creation_size")}</span>
-              <input
-                value={size}
-                onChange={(event) => setSize(event.target.value)}
-                placeholder="1536x1536"
-                className="h-9 w-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
-                disabled={readOnly || submitting}
-                aria-label={t("free_creation_size")}
-              />
-            </label>
-          )}
+      <div className="absolute inset-0 overflow-y-auto px-3 pb-[330px] pt-3 md:hidden">
+        <div className="grid gap-3">
+          {uploads.map((upload) => (
+            <article key={upload.reference_id} className="overflow-hidden rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]">
+              <div className="flex h-10 items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-3 text-xs"><span className="truncate font-medium">{upload.original_filename}</span><span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{t("free_creation_reference")}</span></div>
+              {upload.media_type === "image" ? <img src={API.getFileUrl(projectName, upload.path)} alt={upload.original_filename} className="aspect-video w-full bg-black object-contain" /> : upload.media_type === "video" ? (
+                // eslint-disable-next-line jsx-a11y/media-has-caption -- uploaded references do not include caption tracks
+                <video src={API.getFileUrl(projectName, upload.path)} className="aspect-video w-full bg-black object-contain" aria-label={upload.original_filename} controls />
+              ) : null}
+              <div className="flex justify-end p-2"><button type="button" onClick={() => addReference({ type: "upload", reference_id: upload.reference_id, role: upload.media_type === "video" ? "reference_video" : upload.media_type === "audio" ? "reference_audio" : "reference_image" }, upload.original_filename)} className="focus-ring inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs text-[var(--color-text-muted)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button></div>
+            </article>
+          ))}
+          {mobileCreations.map((creation) => {
+            const isVideo = creation.media_type === "video" || creation.output_type === "video";
+            return (
+              <article key={creation.creation_id} className="overflow-hidden rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]">
+                <div className="flex h-10 items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-3 text-xs"><span className="font-medium">{t(`free_creation_${creation.output_type}`)}</span><span className="text-[10px] text-[var(--color-text-muted)]">{t(`free_creation_status_${creation.status}`)}</span></div>
+                {creation.status === "succeeded" && creation.media_path ? isVideo ? (
+                  // eslint-disable-next-line jsx-a11y/media-has-caption -- generated free videos do not carry caption tracks
+                  <video src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} className="aspect-video w-full bg-black object-contain" aria-label={creation.prompt ?? creation.creation_id} controls />
+                ) : <img src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} alt={creation.prompt ?? creation.creation_id} className="aspect-video w-full bg-black object-contain" /> : <div className="grid aspect-video place-items-center bg-black px-3 text-center text-xs text-[var(--color-text-muted)]">{creation.status === "failed" ? t("free_creation_failed") : t(`free_creation_status_${creation.status}`)}</div>}
+                <p className="line-clamp-2 px-3 py-2 text-xs leading-5 text-[var(--color-text-2)]">{creation.prompt || t("free_creation_prompt")}</p>
+                {creation.status === "succeeded" && creation.media_path ? <div className="flex justify-end gap-1 border-t border-[var(--color-hairline)] p-2"><button type="button" onClick={() => addReference({ type: "creation", creation_id: creation.creation_id, version: creation.version, role: isVideo ? "reference_video" : "reference_image" }, creation.prompt || t("free_creation"))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_add_reference")}><Link2 className="h-4 w-4" aria-hidden /></button><button type="button" onClick={() => editFromCreation(creation.creation_id)} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_use_as_parent")}><Pencil className="h-4 w-4" aria-hidden /></button><a href={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} download className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_download")}><Download className="h-4 w-4" aria-hidden /></a></div> : null}
+              </article>
+            );
+          })}
+          {uploads.length === 0 && mobileCreations.length === 0 ? <p className="py-20 text-center text-sm text-[var(--color-text-muted)]">{t("free_creation_empty")}</p> : null}
+        </div>
+      </div>
+
+      <section className="absolute bottom-3 left-1/2 z-30 w-[min(780px,calc(100vw-1.5rem))] -translate-x-1/2 rounded-lg border border-[var(--color-hairline)] bg-[var(--color-surface)]/96 p-3 shadow-lg backdrop-blur-md sm:bottom-4 sm:p-4">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          {!initialOutputType ? <div className="flex items-center gap-1 rounded-md bg-[var(--color-background)] p-1" role="tablist" aria-label={t("free_creation")}>
+            {([[
+              "image", Image, "free_creation_image",
+            ], ["video", Video, "free_creation_video"]] as const).map(([value, Icon, label]) => (
+              <button key={value} type="button" role="tab" aria-selected={!parentId && mediaType === value} onClick={() => changeMediaType(value)} disabled={readOnly || submitting} className={`focus-ring inline-flex h-8 items-center gap-1.5 rounded px-3 text-xs font-medium ${!parentId && mediaType === value ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}><Icon className="h-3.5 w-3.5" aria-hidden />{t(label)}</button>
+            ))}
+          </div> : <span className="text-xs font-medium text-[var(--color-text-2)]">{t(`free_creation_${mediaType}`)}</span>}
+          <span className="text-[11px] text-[var(--color-text-muted)]">{totalCreations}</span>
         </div>
 
-        {outputType === "edit" ? (
-          <label className="mt-2 block text-[11px] text-[var(--color-text-muted)]">
-            <span className="mb-1 block">{t("free_creation_edit")}</span>
-            <select
-              value={parentId}
-              onChange={(event) => setParentId(event.target.value)}
-              className="h-9 w-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-              disabled={readOnly || submitting}
-              aria-label={t("free_creation_edit")}
-            >
-              <option value="">{t("free_creation_empty")}</option>
-              {editableCreations.map((creation) => (
-                <option key={creation.creation_id} value={creation.creation_id}>
-                  {creation.prompt?.slice(0, 80) || creation.creation_id}
-                </option>
-              ))}
-            </select>
-          </label>
+        {selectedParent ? (
+          <div className="mb-2 flex items-center gap-2 rounded-md bg-[var(--color-accent-dim)] px-2.5 py-1.5 text-xs text-[var(--color-accent-2)]">
+            <Pencil className="h-3.5 w-3.5" aria-hidden />
+            <span className="min-w-0 flex-1 truncate">{t("free_creation_editing_result", { prompt: selectedParent.prompt || t("free_creation") })}</span>
+            <button type="button" onClick={clearEdit} className="focus-ring grid h-6 w-6 place-items-center rounded" aria-label={t("free_creation_cancel_edit")}><X className="h-3.5 w-3.5" aria-hidden /></button>
+          </div>
         ) : null}
 
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <label className="min-w-0 flex-1 text-[11px] text-[var(--color-text-muted)]">
-            <span className="mb-1 block">{t("free_creation_reference_paths")}</span>
-            <textarea
-              value={references}
-              onChange={(event) => setReferences(event.target.value)}
-              rows={1}
-              className="min-h-9 w-full resize-none border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 py-2 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-              disabled={readOnly || submitting}
-              aria-label={t("free_creation_reference_paths")}
-            />
-          </label>
-          <div className="flex items-center gap-3 sm:pl-3">
-            <p className="min-h-5 max-w-[280px] text-[11px] text-[var(--color-danger)]" role="alert">
-              {error ?? capabilityError}
-            </p>
-            <button
-              type="button"
-              onClick={() => void handleSubmit()}
-              disabled={readOnly || submitting || !prompt.trim() || !videoCapabilitiesReady || (outputType === "edit" && !parentId)}
-              className="inline-flex min-h-9 shrink-0 items-center gap-1.5 bg-[var(--color-accent)] px-3 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
-              {submitting ? t("free_creation_generating") : t("free_creation_submit")}
-            </button>
+        {references.length ? (
+          <div className="mb-2 flex max-h-16 flex-wrap gap-1.5 overflow-y-auto">
+            {references.map((reference) => (
+              <span key={claimKey(reference.claim)} className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-[var(--color-background)] px-2 py-1 text-[11px] text-[var(--color-text-2)]"><Paperclip className="h-3 w-3 shrink-0" aria-hidden /><span className="max-w-32 truncate">{reference.label}</span><select value={reference.claim.role ?? "reference_image"} onChange={(event) => setReferences((current) => current.map((item) => claimKey(item.claim) === claimKey(reference.claim) ? { ...item, claim: { ...item.claim, role: event.target.value as FreeCreationReferenceRole } } : item))} className="h-6 max-w-32 border border-[var(--color-hairline)] bg-[var(--color-surface-2)] px-1 text-[10px] text-[var(--color-text-2)]" aria-label={reference.label}>{VIDEO_REFERENCE_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}</select><button type="button" onClick={() => setReferences((current) => current.filter((item) => claimKey(item.claim) !== claimKey(reference.claim)))} className="focus-ring grid h-4 w-4 shrink-0 place-items-center rounded-full" aria-label={t("free_creation_remove_reference")}><X className="h-3 w-3" aria-hidden /></button></span>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="rounded-md border border-[var(--color-hairline)] bg-[var(--color-background)] transition-colors focus-within:border-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent-dim)]">
+          <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void handleSubmit(); } }} rows={2} maxLength={10000} placeholder={t("free_creation_prompt")} className="min-h-[68px] w-full resize-none bg-transparent px-3 py-2.5 text-sm leading-5 outline-none placeholder:text-[var(--color-text-muted)]" disabled={readOnly || submitting} />
+          <div className="flex items-center gap-1.5 border-t border-[var(--color-hairline)] px-2 py-2">
+            <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,audio/wav,audio/mpeg" className="sr-only" onChange={(event) => void uploadReferences(event.target.files)} />
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={readOnly || uploading || submitting} className="focus-ring grid h-8 w-8 shrink-0 place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)] disabled:opacity-50" aria-label={t("free_creation_upload_reference")} title={t("free_creation_upload_reference")}>{uploading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Plus className="h-4 w-4" aria-hidden />}</button>
+
+            <details className="group relative">
+              <summary className="focus-ring flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md px-2.5 text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Settings2 className="h-3.5 w-3.5" aria-hidden /><span>{effectiveMediaType === "video" ? t("free_creation_video_parameters") : t("free_creation_image_parameters")}</span><ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" aria-hidden /></summary>
+              <div className="absolute bottom-[calc(100%+8px)] left-0 z-[210] w-[min(600px,calc(100vw-3rem))] rounded-md border border-[var(--color-hairline)] p-3 shadow-2xl" style={{ background: "var(--color-surface-2)", opacity: 1 }}>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">{t("free_creation_model")}</span><select value={selectedModel} onChange={(event) => setModel(event.target.value)} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]"><option value="auto">{t("free_creation_model_auto")}</option>{modelOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+                  <label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">{t("free_creation_aspect_ratio")}</span><select value={effectiveAspectRatio} onChange={(event) => { const next = event.target.value; setAspectRatio(next); if (effectiveMediaType === "image" && !customSize) { const nextDimensions = dimensionsFor(selectedResolution, next); setImageWidth(nextDimensions.width); setImageHeight(nextDimensions.height); } }} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]">{ratioOptions.map((ratio) => <option key={ratio} value={ratio}>{ratio}</option>)}</select></label>
+                  <label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">{t("free_creation_resolution")}</span><select value={selectedResolution} onChange={(event) => { const next = event.target.value; setResolution(next); if (effectiveMediaType === "image") { const nextDimensions = dimensionsFor(next, effectiveAspectRatio); setImageWidth(nextDimensions.width); setImageHeight(nextDimensions.height); setCustomSize(false); } }} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]">{resolutionOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+                  {!parentId ? <label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">{t("free_creation_quantity")}</span><select value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]">{[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}</select></label> : null}
+                </div>
+                {effectiveMediaType === "video" && durationOptions.length ? (
+                  <div className="mt-3 border-t border-[var(--color-hairline)] pt-3">
+                    <div className="mb-2 flex items-center justify-between text-[11px]"><span className="text-[var(--color-text-muted)]">{t("free_creation_duration")}</span><span className="font-medium text-[var(--color-text)]">{safeDuration}s</span></div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={durationMaximum}
+                      step={1}
+                      value={safeDuration}
+                      onChange={(event) => {
+                        const requested = event.currentTarget.valueAsNumber;
+                        setDuration(durationOptions.reduce((closest, candidate) => Math.abs(candidate - requested) < Math.abs(closest - requested) ? candidate : closest, durationOptions[0] ?? requested));
+                      }}
+                      className="h-1.5 w-full appearance-none rounded-full accent-[var(--color-accent)]"
+                      aria-label={t("free_creation_duration")}
+                      aria-valuemin={durationMinimum}
+                      aria-valuetext={`${safeDuration}s`}
+                      style={{ background: `linear-gradient(90deg, oklch(0.34 0.006 265) 0 ${durationMinimumProgress}, var(--color-accent) ${durationMinimumProgress} ${durationProgress}, oklch(0.27 0.012 265) ${durationProgress} 100%)` }}
+                    />
+                    <div className="mt-1 flex justify-between text-[10px] text-[var(--color-text-muted)]">{durationTicks.map((value) => <span key={value}>{value}s</span>)}</div>
+                  </div>
+                ) : null}
+                {effectiveMediaType === "image" ? <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-end gap-2 border-t border-[var(--color-hairline)] pt-3"><label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">W</span><input type="number" min={64} value={imageWidth} onChange={(event) => { setImageWidth(Math.max(64, Number(event.target.value) || 64)); setCustomSize(true); }} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]" /></label><span className="pb-2 text-xs text-[var(--color-text-muted)]">x</span><label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">H</span><input type="number" min={64} value={imageHeight} onChange={(event) => { setImageHeight(Math.max(64, Number(event.target.value) || 64)); setCustomSize(true); }} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]" /></label></div> : null}
+              </div>
+            </details>
+
+            <div className="min-w-0 flex-1 truncate px-1 text-[11px] text-[var(--color-text-muted)]">{selectedModel === "auto" ? t("free_creation_model_auto") : selectedModel} · {effectiveAspectRatio}{selectedResolution ? ` · ${selectedResolution}` : ""}{effectiveMediaType === "video" ? ` · ${safeDuration}s` : ` · ${imageWidth}x${imageHeight}`}</div>
+            <button type="button" onClick={() => void handleSubmit()} disabled={!prompt.trim() || readOnly || submitting || !capabilitiesReady} className="focus-ring grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[var(--color-accent)] text-[oklch(0.15_0_0)] transition-colors hover:bg-[var(--color-accent-2)] disabled:cursor-not-allowed disabled:opacity-40" aria-label={t("free_creation_submit")} title={t("free_creation_submit")}>{submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}</button>
           </div>
         </div>
+
+        {capabilityError || error ? <p className="mt-2 text-xs text-[var(--color-danger)]" role="alert">{capabilityError || error}</p> : null}
       </section>
     </div>
   );

@@ -57,14 +57,14 @@ describe("HomeHeroComposer", () => {
     expect(screen.queryByRole("button", { name: t("home_image_settings") })).not.toBeInTheDocument();
   });
 
-  it("clamps the video duration slider to the supported 4 to 15 second range", async () => {
+  it("shows the disabled pre-minimum interval and clamps to model-supported durations", async () => {
     render(<HomeHeroComposer onCreated={vi.fn()} />);
 
     await waitFor(() => expect(API.getFreeCreationCapabilities).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: t("home_duration") }));
     const slider = screen.getByRole("slider", { name: t("home_duration") });
 
-    expect(slider).toHaveAttribute("min", "4");
+    expect(slider).toHaveAttribute("min", "0");
     expect(slider).toHaveAttribute("aria-valuemin", "4");
     expect(slider).toHaveValue("4");
     fireEvent.change(slider, { target: { value: "2" } });
@@ -93,15 +93,17 @@ describe("HomeHeroComposer", () => {
     const onCreated = vi.fn();
     render(<HomeHeroComposer onCreated={onCreated} />);
 
-    await waitFor(() => expect(API.getFreeCreationCapabilities).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: t("home_video_settings") }));
-    expect(await screen.findByRole("button", { name: "21:9" })).toBeInTheDocument();
+    const videoSettings = screen.getByRole("button", { name: t("home_video_settings") });
+    await waitFor(() => expect(videoSettings).toHaveTextContent("21:9"));
+    fireEvent.click(videoSettings);
+    expect(screen.getByRole("button", { name: /21:9/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "720P" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("aspect_ratio_1_1") })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: t("home_duration") }));
     const slider = screen.getByRole("slider", { name: t("home_duration") });
-    expect(slider).toHaveAttribute("min", "6");
+    expect(slider).toHaveAttribute("min", "0");
+    expect(slider).toHaveAttribute("aria-valuemin", "6");
     expect(slider).toHaveAttribute("max", "10");
 
     fireEvent.change(screen.getByLabelText(t("home_prompt_label")), {
@@ -119,6 +121,6 @@ describe("HomeHeroComposer", () => {
         duration_seconds: 6,
       }),
     });
-    expect(onCreated).toHaveBeenCalledWith("wide-city-at-night");
+    expect(onCreated).toHaveBeenCalledWith("wide-city-at-night", "video");
   });
 });
