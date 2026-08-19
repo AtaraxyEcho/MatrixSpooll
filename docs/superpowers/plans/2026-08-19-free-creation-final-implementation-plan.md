@@ -1,6 +1,6 @@
 # Free Creation: Final Implementation Baseline
 
-Status: execution baseline
+Status: implemented baseline
 Scope: `content_mode=free` only. Storyboard and reference-video project flows keep their existing layout, controls, and execution contracts.
 
 ## Product contract
@@ -35,6 +35,22 @@ The normalized request contains `output_type`, `prompt`, `model`, structured `re
 
 Artifact basis and manifest retain prompt, model, effective mode, resource identity, version, role, order, ratio, resolution, duration, quantity, and request id.
 
+## Storyboard lane
+
+Free projects can turn a prompt or uploaded text reference into an editable storyboard plan. Plans have optimistic revisions, soft deletion, ordered shots, and per-shot prompt, title, and duration fields. Image generation and video generation are admitted as separate batches: every shot is preflighted before any task is enqueued, and a failed enqueue compensates previously created tasks. Video batches use each shot image as an explicit `first_frame` reference and write the resulting creation id back to the shot.
+
+Storyboard planning does not call a text model in the baseline. The splitter creates an editable draft from the supplied text; later agent-assisted planning can use the same plan and revision contract without changing fixed workflow projects.
+
+## Voice and subtitle lanes
+
+Voice generation is an independent `free_audio` queue task. It resolves the configured audio backend and voice list, writes the generated WAV into the project free-creation reference library, emits a project change event, and renders as an audio canvas node. It does not masquerade as fixed-workflow narration TTS and does not create an episode artifact.
+
+Subtitle tracks are project-scoped records linked to a completed video creation. A track stores ordered cues and an optimistic revision, supports list/read/update/delete, and is kept separate from the video artifact so future timing editors or recognition providers can evolve without rewriting creation metadata.
+
+## Export and merge lane
+
+The existing ZIP export remains available for selected creations, a request, or all completed free creations. In addition, selected completed video cards can be merged in their canvas order through `POST /projects/{project_name}/free-creation-merge`. The endpoint only accepts manifest-backed video creations, uses FFmpeg with a bounded timeout, re-encodes to a broadly playable MP4, and streams the result with temporary-file cleanup. The same action is available from the top export menu and the selected-card context menu; image cards, uploads, unfinished tasks, and unregistered files are rejected without affecting their source records.
+
 ## Navigation and detail shell
 
 The project route resolves project metadata before selecting a layout. While metadata is pending, it renders a neutral workspace loading shell; it never mounts the standard project detail layout first. This removes the one-frame flash when entering a free project. The route uses a stable free-layout key per project.
@@ -59,14 +75,15 @@ Direct generation requests are not conflated with Agent SDK sessions. The canvas
 
 Agent access remains optional and project-scoped. Opening and closing it must preserve the session id and transcript; it must not reset to a new conversation on every render.
 
-## Delivery order
+## Delivery order and implementation status
 
-1. Sync this contract and add route gating for a flash-free free detail entry.
-2. Extract/align the shared home/detail composer and carry output lane plus request id through navigation.
-3. Add explicit resource roles, capability modes/slots/combinations, preflight error codes, and execution mapping.
-4. Add upload node selection, context actions, safe delete/hide, batch export, and canvas browser-event handling.
-5. Add the upper-left session summary and request history while preserving optional Agent SDK sessions.
-6. Run focused backend/frontend tests, type checks, lint, and a production build. Commit the complete change with a conventional commit message.
+1. [x] Sync this contract and add route gating for a flash-free free detail entry.
+2. [x] Extract/align the shared home/detail composer and carry output lane plus request id through navigation.
+3. [x] Add explicit resource roles, capability modes/slots/combinations, preflight error codes, and execution mapping.
+4. [x] Add upload node selection, context actions, safe delete/hide, batch export, and canvas browser-event handling.
+5. [x] Add the upper-left session summary and request history while preserving optional Agent SDK sessions.
+6. [x] Add editable storyboard plans, preflighted image/video batches, independent voice and subtitle lanes, and selected-video merge export.
+7. [x] Run focused backend/frontend tests, type checks, lint, and production-build checks; keep each implementation stage independently revertible.
 
 ## Acceptance checklist
 
@@ -79,4 +96,7 @@ Agent access remains optional and project-scoped. Opening and closing it must pr
 - Upload nodes can be selected, moved, hidden/deleted safely, referenced, and batch-exported.
 - Context menus and parameter popovers are opaque and are not clipped or transparent.
 - Session summary and request history are visible without pretending direct requests are Agent SDK transcripts.
+- Text or uploaded scripts can become editable storyboard shots, and selected shots can generate images and then videos as linked free creations.
+- Voice output appears as an audio canvas resource and can be referenced independently of fixed-workflow narration.
+- Completed videos can receive revisioned subtitle tracks and selected video clips can be merged into an MP4 in the requested order.
 - Existing storyboard and reference-video tests and workflows remain green.
