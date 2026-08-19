@@ -23,6 +23,12 @@ import {
 /** 启动失败的来源入口——决定故障卡片的重试重放哪一处输入。 */
 export type StartupFailureOrigin = "send" | "rewrite";
 
+export interface AssistantHandoff {
+  projectName: string;
+  content: string;
+  context?: string;
+}
+
 interface AssistantState {
   // Sessions
   sessions: SessionMeta[];
@@ -40,6 +46,7 @@ interface AssistantState {
 
   // Input
   input: string;
+  pendingHandoff: AssistantHandoff | null;
   sending: boolean;
   interrupting: boolean;
   error: string | null;
@@ -92,6 +99,8 @@ interface AssistantState {
   resetTimeline: () => void;
   setMessagesLoading: (loading: boolean) => void;
   setInput: (input: string) => void;
+  queueHandoff: (handoff: AssistantHandoff) => void;
+  consumeHandoff: (projectName: string) => AssistantHandoff | null;
   setSending: (sending: boolean) => void;
   setInterrupting: (interrupting: boolean) => void;
   setError: (error: string | null) => void;
@@ -159,6 +168,7 @@ export const useAssistantStore = create<AssistantState>((set, get) => {
     draftTurn: null,
     messagesLoading: false,
     input: "",
+    pendingHandoff: null,
     sending: false,
     interrupting: false,
     error: null,
@@ -257,6 +267,13 @@ export const useAssistantStore = create<AssistantState>((set, get) => {
 
     setMessagesLoading: (loading) => set({ messagesLoading: loading }),
     setInput: (input) => set({ input }),
+    queueHandoff: (handoff) => set({ pendingHandoff: handoff }),
+    consumeHandoff: (projectName) => {
+      const handoff = get().pendingHandoff;
+      if (!handoff || handoff.projectName !== projectName) return null;
+      set({ pendingHandoff: null });
+      return handoff;
+    },
     setSending: (sending) => set({ sending }),
     setInterrupting: (interrupting) => set({ interrupting }),
     setError: (error) => set({ error }),

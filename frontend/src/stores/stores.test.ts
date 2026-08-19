@@ -212,6 +212,7 @@ describe("stores", () => {
     assistant.setEntries([{ seq: 0, type: "user", content: [{ type: "text", text: "hi" }] }]);
     assistant.setMessagesLoading(true);
     assistant.setInput("hello");
+    assistant.queueHandoff({ projectName: "demo", content: "Create an opening" });
     assistant.setSending(true);
     assistant.setInterrupting(true);
     assistant.setError("err");
@@ -231,6 +232,9 @@ describe("stores", () => {
     expect(state.currentSessionId).toBe("s1");
     expect(state.turns).toHaveLength(1);
     expect(state.input).toBe("hello");
+    expect(assistant.consumeHandoff("other-project")).toBeNull();
+    expect(assistant.consumeHandoff("demo")?.content).toBe("Create an opening");
+    expect(useAssistantStore.getState().pendingHandoff).toBeNull();
     expect(state.sessionStatus).toBe("running");
     expect(state.skills).toHaveLength(1);
     expect(state.isDraftSession).toBe(true);
