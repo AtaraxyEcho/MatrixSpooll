@@ -1,260 +1,313 @@
-# Free Creation Canvas Enhancement Plan
+# Free Creation Storyboard Enhancement Plan
 
-Status: proposed implementation plan
+Status: revised implementation plan
 Scope: `content_mode=free` only
-Baseline: `3ac4f80 chore: checkpoint current frontend state`
+Rollback baseline: `3ac4f80 chore: checkpoint current frontend state`
 
-## 1. Product outcome
+## 1. Decision
 
-The free creation project should become a canvas-first video workspace with a
-complete, inspectable path from an idea or script to storyboard images, video
-clips, voiceover, captions, music, and a final export. Existing drama,
-narration, advertising, storyboard, and reference-video project flows must keep
-their current routes, controls, task types, and data contracts.
+The free canvas will gain one focused module: an ordered storyboard group that
+turns an idea or script into editable shots, storyboard images, and independent
+video clips.
 
-The existing direct composer remains the default path:
+This plan does not build a generic graph editor, a second fixed workflow, or a
+video editing timeline. Those would expand the interface before the product has
+stable use cases for them.
+
+The existing direct composer remains the default:
 
 ```text
 prompt -> direct image/video generation -> canvas result
 ```
 
-The enhancement adds an explicit storyboard path without changing that default:
+Storyboard creation is an explicit optional action:
 
 ```text
-script or idea -> shot plan -> storyboard images -> selected shot videos -> post-production -> export
+idea or script -> storyboard group -> storyboard images -> selected shot videos
 ```
 
-## 2. Current boundary
+## 2. Product principles
 
-The current free canvas already supports image, video, text/script, and audio
-uploads; explicit reference roles; direct t2v, first/last frame, reference
-image/video/audio generation; canvas selection and movement; dependency lines;
-request history; and ZIP export.
+1. Free creation remains independent from drama, narration, advertising, and
+   reference-video project layouts.
+2. Direct generation never silently changes into storyboard generation.
+3. A text model is optional for direct free creation. AI shot planning may
+   require a configured text model; without one, users can create and edit shots
+   manually.
+4. Canvas position is visual organization. Story order comes only from
+   `sequence_index`.
+5. A generated video clip is not a final edited video. Asset ZIP export remains
+   separate from any future composed-video export.
 
-The current system does not yet provide shot planning, shot ordering, selected
-shot video generation, local mask editing, generated voiceover, captions,
-music tracks, or timeline composition. These are new free-canvas capabilities,
-not changes to the fixed workflow.
+## 3. Reuse and isolation
 
-## 3. Domain model
+The free storyboard module may reuse these lower-level modules:
 
-### 3.1 Canvas nodes
+- `GenerationQueue` and `TaskSpec`;
+- provider capability resolution and preflight validation;
+- image and video generation implementations;
+- artifact manifest, versioning, cancellation, retry, and project events;
+- shared home/free composer controls.
 
-Keep creation and upload identities stable. Add a node metadata layer rather
-than changing the meaning of existing creation IDs.
+It must not call or depend on:
+
+- fixed workflow router endpoints;
+- episode script files or `get_storyboard_items()`;
+- fixed workflow `generation_mode` semantics;
+- episode storyboard artifact keys;
+- fixed workflow page state or sidebar modules.
+
+The existing fixed storyboard implementation expects a script schema, episode
+identity, and project generation route. Reusing it at the router or data-model
+level would couple free creation to concepts it intentionally does not have.
+
+## 4. Minimal domain model
+
+### 4.1 Storyboard group
+
+Persist only user-authored planning data:
 
 ```json
 {
-  "node_id": "c_...",
-  "node_kind": "creation | upload | storyboard_shot | audio | script | sequence",
-  "resource_id": "c_... or r_...",
-  "plan_id": "sp_...",
-  "shot_id": "shot_...",
-  "sequence_index": 2,
-  "duration_seconds": 5,
-  "position": {"x": 640, "y": 280}
-}
-```
-
-`node_kind` describes the canvas role. It must not replace
-`FreeCreation.output_type`, which continues to describe the generated media
-type (`image`, `video`, or `edit`).
-
-### 3.2 Relations
-
-Persist typed relations instead of inferring meaning from coordinates:
-
-```text
-uses             resource -> generation
-derived_from     version -> parent
-sequence_next    shot -> shot
-audio_for        audio -> video/sequence
-caption_for      caption -> video/sequence
-reference_for    resource -> generation
-```
-
-Existing parent and reference claims remain valid. The new relation layer is
-additive and can be rendered as the current dependency lines plus optional
-sequence arrows.
-
-### 3.3 Storyboard plan
-
-Store plans under the free workspace, for example
-`free_creation/storyboards/<plan_id>.json`:
-
-```json
-{
-  "plan_id": "sp_...",
-  "source": {"type": "upload", "reference_id": "r_..."},
-  "title": "Rain station sequence",
-  "status": "draft | generating | ready | failed",
+  "plan_id": "sp_abc",
+  "title": "Rain station",
+  "source": {
+    "type": "prompt | upload",
+    "reference_id": "r_optional"
+  },
   "shots": [
     {
-      "shot_id": "shot_...",
+      "shot_id": "shot_01",
       "sequence_index": 0,
       "title": "Station exterior",
-      "prompt": "...",
-      "duration_seconds": 5,
-      "image_creation_id": null,
-      "video_creation_id": null
+      "image_prompt": "...",
+      "video_prompt": "...",
+      "duration_seconds": 5
     }
-  ]
+  ],
+  "revision": 3,
+  "created_at": "...",
+  "updated_at": "..."
 }
 ```
 
-The plan owns ordering and shot metadata. Generated creations continue to own
-media, version, model, and artifact provenance.
+Do not persist `image_creation_id` or `video_creation_id` into the plan. That
+would require cross-file transactions between plan state and asynchronous task
+results.
 
-## 4. Backend API and task design
+Generated creations instead carry:
 
-Add free-specific routes under the existing free project router:
+```json
+{
+  "storyboard_plan_id": "sp_abc",
+  "storyboard_shot_id": "shot_01",
+  "storyboard_stage": "image | video",
+  "sequence_index": 0
+}
+```
 
-1. `POST /projects/{project}/free-creation-storyboards/plan`
-   - accepts a prompt or an uploaded text/script resource;
-   - returns a persisted draft plan;
-   - uses a deterministic fallback splitter when no text model is configured;
-   - never changes the default direct generation path.
-2. `GET /projects/{project}/free-creation-storyboards/{plan_id}`
-   - returns the plan, shot status, and linked creations.
-3. `PUT /projects/{project}/free-creation-storyboards/{plan_id}`
-   - updates shot prompt, title, duration, and order;
-   - validates unique sequence indexes and model duration constraints.
-4. `POST /projects/{project}/free-creation-storyboards/{plan_id}/generate-images`
-   - enqueues one image task per selected shot;
-   - writes `plan_id`, `shot_id`, and `sequence_index` into creation metadata.
-5. `POST /projects/{project}/free-creation-storyboards/{plan_id}/generate-videos`
-   - accepts an ordered shot selection;
-   - validates that each shot has a successful image;
-   - enqueues one video task per shot using the image as `first_frame` or
-     `reference_image` according to the selected mode.
-6. `POST /projects/{project}/free-creation-postproduction`
-   - is reserved for the later timeline phase;
-   - accepts ordered video, audio, caption, and music tracks;
-   - returns a queued final artifact rather than overloading ZIP export.
+The read model resolves the latest usable image/video creation for each shot.
+This keeps the plan as the source of truth for intent and creation metadata as
+the source of truth for generated media.
 
-New task types must remain in `free_creation_tasks.py` and reuse the existing
-generation queue and capability checks. They must not call fixed workflow
-routers or mutate episode/storyboard project files.
+### 4.2 No generic relation model
 
-## 5. Frontend interaction model
+The first release does not add a general-purpose `node_kind` registry or
+relations such as `sequence_next`, `audio_for`, and `caption_for`.
 
-### 5.1 Script to storyboard
+Existing creation references and `parent_creation_id` continue to describe
+generation provenance. Storyboard membership and `sequence_index` are enough to
+support the required workflow.
 
-Add a compact `Plan storyboard` action beside the shared composer attachment
-control. It opens a small plan surface with:
+## 5. Module interface
 
-- script or prompt source;
-- shot count preview;
-- editable shot titles and prompts;
-- duration per shot;
-- `Generate storyboard images` action.
+The backend seam is one free-storyboard module with a small interface:
 
-The normal composer continues to show only image/video generation lanes. The
-new plan action is explicit so a text upload never silently changes a direct
-video request into storyboard mode.
+```text
+create_or_update_plan(project, plan_draft) -> plan
+generate_images(project, plan_id, shot_ids, image_options) -> batch_result
+generate_videos(project, plan_id, shot_ids, video_options) -> batch_result
+```
 
-### 5.2 Canvas shot cards
+The module hides source extraction, validation, ordering, capability checks,
+task construction, partial enqueue compensation, and read-model assembly.
+Routers remain thin transport adapters.
 
-Storyboard cards should be visually distinct from ordinary creation cards while
-using the same surface tokens. Each card shows:
+Required routes:
 
-- shot number and title;
-- prompt summary;
-- image/video generation state;
-- duration;
-- actions: edit prompt, regenerate image, generate video, add to sequence.
+- `GET /projects/{project}/free-creation-storyboards`
+- `POST /projects/{project}/free-creation-storyboards`
+- `GET /projects/{project}/free-creation-storyboards/{plan_id}`
+- `PUT /projects/{project}/free-creation-storyboards/{plan_id}`
+- `POST /projects/{project}/free-creation-storyboards/{plan_id}/images`
+- `POST /projects/{project}/free-creation-storyboards/{plan_id}/videos`
 
-Dragging a shot updates `sequence_index` through an explicit reorder operation;
-free positioning remains available independently.
+Batch endpoints perform all validation before enqueue. The frontend must not
+loop over the ordinary creation endpoint, because that exposes compensation and
+partial-failure complexity to the caller.
 
-### 5.3 Batch generation
+## 6. Planning behavior
 
-When the marquee selection contains storyboard cards, the selection toolbar
-shows `Generate selected shots`. The action must:
+The composer shows a `Plan storyboard` command only when a prompt or explicitly
+selected text/script resource is available.
 
-- reject non-storyboard resources with an actionable message;
-- preserve visual order by `sequence_index`;
-- show per-shot queue status;
-- return video creations to the same canvas;
-- leave the existing ZIP export action unchanged.
+Opening the planner does not write data. The user first sees a local draft and
+chooses one of these paths:
 
-### 5.4 Audio and post-production
+- `Plan with AI`, available when a text model is configured;
+- `Import paragraphs as shots`, an explicit deterministic conversion;
+- `Add shots manually`, always available.
 
-The current upload/playback card remains valid. Later phases add explicit
-audio-producing actions and track cards:
+The system must not select the first uploaded text file automatically. The user
+chooses the source, and creating the plan requires an explicit save action.
 
-- voiceover generation from a prompt or script;
-- caption generation from a selected video/sequence;
-- music generation or upload;
-- track trimming and ordering;
-- final preview and video export.
+An AI plan is still a draft. Users can edit titles, image prompts, video prompts,
+durations, and order before generation.
 
-These actions should be separate from `reference_audio`, which remains a model
-input role for generation.
+## 7. Canvas behavior
 
-## 6. Delivery phases
+Generated storyboard creations use the existing creation card with a compact
+shot badge. No second card rendering system is required.
 
-### Phase A: storyboard foundation
+The canvas adds a contextual selection toolbar when all selected successful
+image creations belong to one storyboard plan:
 
-- Add storyboard plan persistence and API DTOs.
-- Add deterministic script splitting and editable shot plans.
-- Add frontend plan drawer and storyboard shot cards.
-- Add image generation for selected shots.
-- Extend metadata and artifact basis with plan/shot/order fields.
+- `Generate selected shots`;
+- `Move selection`;
+- `Hide selection`;
+- existing asset export.
 
-Acceptance: a script can produce an editable shot plan and multiple storyboard
-images on the free canvas. Direct prompt-only video generation remains unchanged.
+`Generate selected shots` submits shot IDs ordered by `sequence_index`, not by
+canvas coordinates or selection order.
 
-### Phase B: shot-to-video pipeline
+The first release does not add a timeline. Plan editing provides explicit up/down
+or drag reorder, and the canvas only reflects that order through shot badges and
+optional lightweight sequence lines.
 
-- Add selected-shot validation and ordered batch video requests.
-- Map each storyboard image to the selected video input role.
-- Add per-shot queue state and retry/cancel actions.
-- Add sequence relations and a lightweight sequence strip.
+## 8. Generation behavior
 
-Acceptance: selecting shots in any canvas position generates videos in sequence
-order and returns them linked to their source images.
+### 8.1 Storyboard images
 
-### Phase C: editing and multimodal relations
+The image batch endpoint:
 
-- Add mask/region edit requests for image cards.
-- Add explicit `derived_from`, `audio_for`, and `caption_for` relations.
-- Add generated voiceover nodes and script-to-voiceover actions.
+1. loads the plan and selected shots;
+2. validates unique shot IDs and complete image prompts;
+3. resolves image model capabilities once;
+4. constructs all `free_image` task specifications;
+5. validates the full batch before enqueue;
+6. enqueues with compensation if an unexpected partial failure occurs;
+7. returns a per-shot batch result.
 
-Acceptance: an image can be locally edited, a voiceover can be attached to a
-shot or sequence, and provenance remains visible after retries and versions.
+Each result is an ordinary free creation with storyboard metadata. Existing
+cancel, retry, version, preview, reference, and export behavior remains usable.
 
-### Phase D: post-production
+### 8.2 Selected shots to video
 
-- Add caption, copy, music, and timeline track models.
-- Add preview and final video composition task.
-- Add a dedicated final-video export action, separate from asset ZIP export.
+The video batch endpoint:
 
-Acceptance: a selected sequence can be previewed and exported as one video with
-video, voiceover, captions, and music tracks.
+1. resolves the latest successful storyboard image for every selected shot;
+2. rejects missing or incompatible images before enqueue;
+3. validates aspect ratio, resolution, duration, quantity, and input roles
+   against the selected video model;
+4. binds each image explicitly as `first_frame` by default;
+5. enqueues one `free_video` task per shot;
+6. returns per-shot status and stable errors.
 
-## 7. Compatibility and safety rules
+The output is a set of ordered video clips on the canvas. Automatic stitching,
+transitions, captions, and audio mixing are not part of this phase.
 
-- Gate every new route and task on `content_mode=free`.
-- Do not alter `generation_mode` semantics for existing projects.
-- Keep existing `free_creation` direct requests valid without a storyboard plan.
-- Reuse provider capability DTOs and preflight validation for every generated
-  shot; do not infer support from frontend controls.
-- Store resource IDs, versions, roles, and sequence indexes in artifact basis
-  and manifests. Never persist server paths in public requests.
-- Do not delete or silently reassign incompatible references when a model
-  changes.
-- Keep ZIP export and final-video export as separate operations.
+## 9. Audio scope
 
-## 8. Test strategy
+Current audio behavior remains:
 
-Backend tests should cover plan persistence, split limits, reorder conflicts,
-model capability failures, selected-shot validation, ordered enqueue, retry, and
-artifact provenance. Frontend tests should cover plan creation, shot editing,
-marquee filtering, sequence reorder, batch status, and preservation of the
-existing direct composer behavior.
+- upload and native preview;
+- canvas card;
+- explicit `reference_audio` binding when the model supports it.
 
-Run the focused backend tests, frontend typecheck/lint/Vitest, and a production
-build after each phase. The fixed workflow storyboard and reference-video test
-suites are regression gates for every phase.
+AI voiceover generation is deferred until the project defines speaker, voice,
+language, timing, and attachment rules. It should later be a separate free-audio
+module, not additional fields on the storyboard batch interface.
 
+## 10. Deferred features
+
+The following are deliberately excluded from this implementation:
+
+- local mask editing, inpainting, and cutout;
+- AI voiceover generation;
+- subtitle generation and caption tracks;
+- music generation and mixing;
+- a timeline editor;
+- automatic video stitching and transitions;
+- final composed-video export;
+- a generic canvas relation graph;
+- reverse video-to-script workflows.
+
+These remain candidate product increments after storyboard usage validates the
+required data and interaction model.
+
+## 11. Delivery plan
+
+### Step 0: remove experimental assumptions
+
+- Do not commit the current frontend-per-shot loop.
+- Remove automatic plan creation on panel open.
+- Remove automatic use of the first text upload.
+- Do not label queued images as ready.
+- Keep the rollback baseline and this plan as separate commits.
+
+### Step 1: plan CRUD and read model
+
+- Add revisioned plan persistence, list/get/create/update operations.
+- Add manual shot creation and explicit paragraph import.
+- Add optional AI planning behind text-model availability.
+- Add plan selection and editing UI.
+- Test revision conflicts, source selection, order validation, and reopening.
+
+### Step 2: storyboard image batch
+
+- Add the backend image batch interface.
+- Reuse free image execution and artifact handling.
+- Add storyboard metadata to creation basis and metadata.
+- Resolve live task state through existing project events and polling.
+- Render resulting images as shot-labelled creation cards.
+
+### Step 3: selected-shot video batch
+
+- Add a storyboard-aware canvas selection action.
+- Add backend preflight and ordered video batch enqueue.
+- Bind each source image explicitly as `first_frame`.
+- Preserve per-shot retry, cancellation, versions, and provenance.
+
+### Step 4: evaluate before expanding
+
+Use actual workflows to decide whether users need sequence preview, stitching,
+voiceover, captions, or local image editing next. Do not create their data model
+before that decision.
+
+## 12. Acceptance criteria
+
+- Existing direct image/video generation behaves exactly as before.
+- Existing fixed workflow tests and routes remain unchanged.
+- Opening and cancelling the planner creates no stored plan.
+- Users explicitly choose a prompt or script source.
+- A plan can be saved, reopened, edited, and reordered without generating media.
+- All shots are validated before an image batch is enqueued.
+- Storyboard image creations preserve plan, shot, stage, order, model, and
+  version provenance.
+- Only compatible successful storyboard images can be batch-generated as video.
+- Selected videos follow plan order regardless of canvas position.
+- Partial enqueue failures do not leave an unreported half-created batch.
+- Audio upload/reference behavior continues to work.
+- ZIP export remains an asset export and is not presented as a finished video.
+
+## 13. Test gates
+
+Backend tests cover plan revisions, explicit source handling, batch admission,
+partial enqueue compensation, capability errors, creation read-model assembly,
+and provenance. Frontend tests cover no-write-on-open, source selection, manual
+editing, reorder, batch selection filtering, per-shot status, and preservation of
+the direct composer.
+
+Before each implementation commit run focused backend tests, frontend lint,
+typecheck, Vitest, i18n consistency, and the fixed storyboard/reference-video
+regression suites. Run a production frontend build before the final commit.
