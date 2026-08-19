@@ -24,7 +24,7 @@ FreeOutputType = Literal["image", "video", "edit"]
 _IMAGE_REFERENCE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 _AUDIO_REFERENCE_SUFFIXES = frozenset({".wav", ".mp3"})
 _VIDEO_REFERENCE_SUFFIXES = frozenset({".mp4", ".mov"})
-_TEXT_REFERENCE_SUFFIXES = frozenset({".txt", ".text", ".md", ".markdown", ".rtf", ".doc", ".docx"})
+_TEXT_REFERENCE_SUFFIXES = frozenset({".txt", ".text", ".md", ".markdown", ".rtf", ".doc", ".docx", ".pdf", ".epub"})
 
 
 def creation_metadata_path(project_path: Path, creation_id: str) -> Path:
