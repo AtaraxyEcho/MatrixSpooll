@@ -422,6 +422,20 @@ def write_creation_request(project_path: Path, request_id: str, payload: dict[st
     atomic_write_json(path, {"request_id": request_id, **payload, "created_at": _now()})
 
 
+def list_creation_requests(project_path: Path, limit: int | None = None) -> list[dict[str, Any]]:
+    root = safe_join(_workspace_root(project_path), "requests")
+    if not root.is_dir():
+        return []
+    records: list[dict[str, Any]] = []
+    for path in sorted(root.glob("q_*.json"), key=lambda item: item.stat().st_mtime_ns, reverse=True):
+        record = load_json_or_none(path)
+        if isinstance(record, dict) and isinstance(record.get("request_id"), str):
+            records.append(record)
+            if limit is not None and len(records) >= limit:
+                break
+    return records
+
+
 def build_creation_export(
     project_path: Path,
     *,
@@ -496,6 +510,7 @@ __all__ = [
     "delete_reference_upload",
     "detach_reference_upload",
     "extract_reference_text",
+    "list_creation_requests",
     "list_reference_uploads",
     "load_canvas_state",
     "load_storyboard_plan",

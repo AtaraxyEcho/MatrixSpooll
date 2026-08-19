@@ -10,6 +10,7 @@ from lib.artifact_manifest import ArtifactKey, ProjectArtifactManifestAdapter
 from lib.version_manager import VersionManager
 from server.routers.free_creations import (
     FreeCreationRequest,
+    _free_creation_request_summary,
     _free_request_payload,
     _preflight_free_creation,
     _record_batch_compensation,
@@ -31,6 +32,7 @@ from server.services.free_creation_tasks import (
 from server.services.free_creation_workspace import (
     build_creation_export,
     create_storyboard_plan,
+    list_creation_requests,
     load_canvas_state,
     load_storyboard_plan,
     read_reference_preview,
@@ -39,9 +41,66 @@ from server.services.free_creation_workspace import (
     save_reference_upload,
     save_storyboard_plan,
     split_storyboard_text,
+    write_creation_request,
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_free_creation_request_read_model_aggregates_batch_status() -> None:
+    request_id = "q_0123456789abcdef0123"
+    first_id = "c_0123456789abcdef0123"
+    second_id = "c_0123456789abcdef0124"
+    summary = _free_creation_request_summary(
+        {
+            "request_id": request_id,
+            "prompt": "A quiet station at night",
+            "output_type": "video",
+            "effective_mode": "reference_image",
+            "model": "ark/seedance",
+            "reference_claims": [
+                {"type": "upload", "reference_id": "r_0123456789abcdef0123", "role": "reference_image"}
+            ],
+            "quantity": 2,
+            "creation_ids": [first_id, second_id],
+            "created_at": "2026-08-19T10:00:00+00:00",
+        },
+        {
+            first_id: {
+                "creation_id": first_id,
+                "status": "succeeded",
+                "updated_at": "2026-08-19T10:01:00+00:00",
+            },
+            second_id: {
+                "creation_id": second_id,
+                "status": "failed",
+                "updated_at": "2026-08-19T10:02:00+00:00",
+            },
+        },
+    )
+
+    assert summary["status"] == "partial"
+    assert summary["result_count"] == 1
+    assert summary["reference_count"] == 1
+    assert summary["effective_mode"] == "reference_image"
+    assert summary["updated_at"] == "2026-08-19T10:02:00+00:00"
+
+
+def test_creation_requests_are_read_from_the_request_record_store(tmp_path: Path) -> None:
+    write_creation_request(
+        tmp_path,
+        "q_0123456789abcdef0123",
+        {"prompt": "First request", "creation_ids": ["c_0123456789abcdef0123"]},
+    )
+    write_creation_request(
+        tmp_path,
+        "q_0123456789abcdef0124",
+        {"prompt": "Second request", "creation_ids": ["c_0123456789abcdef0124"]},
+    )
+
+    records = list_creation_requests(tmp_path)
+    assert {item["prompt"] for item in records} == {"First request", "Second request"}
+    assert len(list_creation_requests(tmp_path, limit=1)) == 1
 
 
 def test_storyboard_splitter_preserves_short_sentences_and_caps_shots() -> None:
