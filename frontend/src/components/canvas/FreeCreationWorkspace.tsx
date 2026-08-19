@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
   Bot,
+  Captions,
   Clapperboard,
   Download,
   FileText,
@@ -36,6 +37,8 @@ import { FreeCreationInfiniteCanvas } from "./FreeCreationInfiniteCanvas";
 import { FreeCreationPreviewDialog, type FreeCreationPreviewTarget } from "./FreeCreationPreviewDialog";
 import { FreeCreationSessionSummary } from "./FreeCreationSessionSummary";
 import { FreeCreationStoryboardPanel } from "./FreeCreationStoryboardPanel";
+import { FreeCreationVoicePanel } from "./FreeCreationVoicePanel";
+import { FreeCreationSubtitlePanel } from "./FreeCreationSubtitlePanel";
 import { AgentCopilot } from "@/components/copilot/AgentCopilot";
 import {
   AgentParameterControl,
@@ -165,6 +168,8 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
   const [error, setError] = useState<string | null>(null);
   const [previewTarget, setPreviewTarget] = useState<FreeCreationPreviewTarget | null>(null);
   const [storyboardOpen, setStoryboardOpen] = useState(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [subtitleOpen, setSubtitleOpen] = useState(false);
   const refreshToken = useFreeCreationStore((state) => state.refreshToken);
   const { candidates, reload: reloadCandidates } = useModelCandidates();
 
@@ -794,6 +799,8 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
               ) : null}
             </div>
             <button type="button" onClick={() => setStoryboardOpen(true)} disabled={readOnly || submitting || (!prompt.trim() && !storyboardSourceReferenceId)} className="focus-ring inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-[var(--color-hairline-strong)] px-2.5 text-[11px] font-medium text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.06)] disabled:cursor-not-allowed disabled:opacity-40" aria-label={t("free_creation_storyboard_plan")} title={t("free_creation_storyboard_plan")}><Clapperboard className="h-3.5 w-3.5 text-[var(--color-accent-2)]" aria-hidden /><span className="hidden sm:inline">{t("free_creation_storyboard_plan")}</span></button>
+            <button type="button" onClick={() => setVoiceOpen(true)} disabled={readOnly || submitting} className="focus-ring inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-[var(--color-hairline-strong)] px-2.5 text-[11px] font-medium text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.06)] disabled:cursor-not-allowed disabled:opacity-40" aria-label={t("free_creation_voice_action")} title={t("free_creation_voice_action")}><AudioLines className="h-3.5 w-3.5 text-[var(--color-accent-2)]" aria-hidden /><span className="hidden sm:inline">{t("free_creation_voice_action")}</span></button>
+            <button type="button" onClick={() => setSubtitleOpen(true)} disabled={readOnly || submitting || !creations.some((item) => item.status === "succeeded" && (item.media_type === "video" || item.output_type === "video"))} className="focus-ring inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-[var(--color-hairline-strong)] px-2.5 text-[11px] font-medium text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.06)] disabled:cursor-not-allowed disabled:opacity-40" aria-label={t("free_creation_subtitle_action")} title={t("free_creation_subtitle_action")}><Captions className="h-3.5 w-3.5 text-[var(--color-accent-2)]" aria-hidden /><span className="hidden sm:inline">{t("free_creation_subtitle_action")}</span></button>
           </div>
         </div>
 
@@ -832,6 +839,19 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
         aspectRatio={effectiveAspectRatio}
         resolution={effectiveMediaType === "image" ? selectedResolution : undefined}
         onClose={() => setStoryboardOpen(false)}
+        onCreated={() => void loadCreations()}
+      />
+      <FreeCreationVoicePanel
+        projectName={projectName}
+        open={voiceOpen}
+        onClose={() => setVoiceOpen(false)}
+        onCreated={() => void API.listFreeCreationReferences(projectName).then(({ references: next }) => setUploads(next))}
+      />
+      <FreeCreationSubtitlePanel
+        projectName={projectName}
+        open={subtitleOpen}
+        creations={creations}
+        onClose={() => setSubtitleOpen(false)}
         onCreated={() => void loadCreations()}
       />
     </div>

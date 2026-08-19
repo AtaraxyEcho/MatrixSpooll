@@ -154,3 +154,18 @@ export interface FreeStoryboardBatchResult {
   task_ids: string[];
   creation_ids: string[];
 }
+
+export interface FreeSubtitleCue {
+  start_seconds: number;
+  end_seconds: number;
+  text: string;
+}
+
+export interface FreeSubtitleTrack {
+  subtitle_id: string;
+  creation_id: string;
+  revision: number;
+  cues: FreeSubtitleCue[];
+  created_at: string;
+  updated_at: string;
+}

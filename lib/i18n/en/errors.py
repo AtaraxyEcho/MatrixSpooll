@@ -448,4 +448,9 @@ MESSAGES = {
     "free_creation_storyboard_shot_not_found": "The storyboard shot does not exist",
     "free_creation_storyboard_conflict": "This storyboard changed elsewhere. Reload it before saving",
     "free_creation_storyboard_image_required": "Generate a storyboard image for every selected shot first",
+    "free_creation_audio_unavailable": "Voice generation is not configured for this project",
+    "free_creation_voice_unsupported": "The selected voice is not supported by the current audio backend",
+    "free_creation_subtitle_video_required": "Subtitles can only be attached to a completed video",
+    "free_creation_subtitle_not_found": "Subtitle track '{id}' does not exist",
+    "free_creation_subtitle_conflict": "This subtitle track changed elsewhere. Reload it before saving",
 }

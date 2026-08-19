@@ -38,23 +38,33 @@ from server.services.free_creation_workspace import (
     MAX_STORYBOARD_SHOTS,
     build_creation_export,
     create_storyboard_plan,
+    create_subtitle_track,
     delete_reference_upload,
     delete_storyboard_plan,
+    delete_subtitle_track,
     detach_reference_upload,
     list_creation_requests,
     list_reference_uploads,
     list_storyboard_plans,
+    list_subtitle_tracks,
     load_canvas_state,
     load_storyboard_plan,
+    load_subtitle_track,
     new_request_id,
     read_reference_preview,
     resolve_reference_claims,
     save_canvas_state,
     save_reference_upload,
     save_storyboard_plan,
+    save_subtitle_track,
     write_creation_request,
 )
-from server.services.generation_context import ImageLaneRequest, VideoLaneRequest, resolve_generation_context
+from server.services.generation_context import (
+    AudioLaneRequest,
+    ImageLaneRequest,
+    VideoLaneRequest,
+    resolve_generation_context,
+)
 
 router = APIRouter()
 entry_router = APIRouter()
@@ -262,6 +272,50 @@ class StoryboardBatchRequest(BaseModel):
         if self.output_type == "image" and self.duration_seconds is not None:
             raise ValueError("duration_seconds is only supported for video")
         return self
+
+
+class FreeVoiceRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=12000)
+    voice: str | None = Field(default=None, max_length=120)
+
+    @field_validator("text")
+    @classmethod
+    def normalize_voice_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text must not be blank")
+        return value
+
+
+class FreeSubtitleCue(BaseModel):
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+    text: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> FreeSubtitleCue:
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("subtitle cue end must be after start")
+        return self
+
+
+class FreeSubtitleCreateRequest(BaseModel):
+    creation_id: str = Field(pattern=r"^c_[a-f0-9]{20}$")
+    text: str = Field(min_length=1, max_length=12000)
+    duration_seconds: float = Field(gt=0, le=3600)
+
+    @field_validator("text")
+    @classmethod
+    def normalize_subtitle_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text must not be blank")
+        return value
+
+
+class FreeSubtitleUpdateRequest(BaseModel):
+    cues: list[FreeSubtitleCue] = Field(min_length=1, max_length=500)
+    expected_revision: int | None = Field(default=None, ge=1)
 
 
 def _free_creation_request_status(creations: Sequence[dict[str, Any]]) -> str:
@@ -1106,6 +1160,44 @@ async def list_free_creation_requests(
     return {"requests": page, "next_cursor": next_cursor, "total": len(summaries)}
 
 
+@router.post("/projects/{project_name}/free-creation-voice")
+async def create_free_creation_voice(project_name: str, req: FreeVoiceRequest, user: CurrentUser):
+    project, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    try:
+        ctx = await resolve_generation_context(
+            project_name,
+            None,
+            project=project,
+            project_path=project_path,
+            user_id=user.id,
+            audio=AudioLaneRequest(),
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise BadRequestError("free_creation_audio_unavailable") from exc
+    voice = req.voice.strip() if req.voice else ctx.audio.narration_voice
+    if voice not in {item.id for item in ctx.audio.voices}:
+        raise BadRequestError("free_creation_voice_unsupported", voice=voice)
+    resource_id = new_creation_id()
+    spec = TaskSpec.from_request(
+        task_type="free_audio",
+        media_type="audio",
+        resource_id=resource_id,
+        prompt=req.text,
+        extra_payload={"text": req.text, "voice": voice},
+        source="webui",
+    )
+    result = await get_generation_queue().enqueue_task(
+        project_name=project_name,
+        task_type=spec.task_type,
+        media_type=spec.media_type,
+        resource_id=spec.resource_id,
+        payload=spec.payload,
+        source=spec.source,
+        user_id=user.id,
+    )
+    return {"success": True, "task_id": result["task_id"], "voice": voice, "resource_id": resource_id}
+
+
 @router.post("/projects/{project_name}/free-creation-storyboards/plan")
 async def create_free_storyboard_plan(project_name: str, req: StoryboardPlanRequest):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
@@ -1358,6 +1450,67 @@ async def generate_free_storyboard_batch(
         "task_ids": task_ids,
         "creation_ids": list(creation_by_shot.values()),
     }
+
+
+@router.post("/projects/{project_name}/free-creation-subtitles")
+async def create_free_creation_subtitles(project_name: str, req: FreeSubtitleCreateRequest):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    creation = await asyncio.to_thread(load_creation_metadata, project_path, req.creation_id)
+    if not isinstance(creation, dict) or creation.get("status") != "succeeded":
+        raise NotFoundError("free_creation_not_found", id=req.creation_id)
+    if creation.get("media_type") != "video":
+        raise BadRequestError("free_creation_subtitle_video_required")
+    track = await asyncio.to_thread(
+        create_subtitle_track,
+        project_path,
+        creation_id=req.creation_id,
+        text=req.text,
+        duration_seconds=req.duration_seconds,
+    )
+    return {"success": True, "track": track}
+
+
+@router.get("/projects/{project_name}/free-creation-subtitles")
+async def list_free_creation_subtitles(project_name: str, creation_id: str | None = Query(default=None)):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    return {"tracks": await asyncio.to_thread(list_subtitle_tracks, project_path, creation_id)}
+
+
+@router.get("/projects/{project_name}/free-creation-subtitles/{subtitle_id}")
+async def get_free_creation_subtitle(project_name: str, subtitle_id: str):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    track = await asyncio.to_thread(load_subtitle_track, project_path, subtitle_id)
+    if track is None:
+        raise NotFoundError("free_creation_subtitle_not_found", id=subtitle_id)
+    return {"track": track}
+
+
+@router.put("/projects/{project_name}/free-creation-subtitles/{subtitle_id}")
+async def update_free_creation_subtitle(project_name: str, subtitle_id: str, req: FreeSubtitleUpdateRequest):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    track = await asyncio.to_thread(load_subtitle_track, project_path, subtitle_id)
+    if track is None:
+        raise NotFoundError("free_creation_subtitle_not_found", id=subtitle_id)
+    try:
+        updated = await asyncio.to_thread(
+            save_subtitle_track,
+            project_path,
+            {**track, "cues": [cue.model_dump() for cue in req.cues]},
+            expected_revision=req.expected_revision,
+        )
+    except RuntimeError as exc:
+        raise ConflictError("free_creation_subtitle_conflict") from exc
+    return {"success": True, "track": updated}
+
+
+@router.delete("/projects/{project_name}/free-creation-subtitles/{subtitle_id}")
+async def delete_free_creation_subtitle(project_name: str, subtitle_id: str):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    try:
+        await asyncio.to_thread(delete_subtitle_track, project_path, subtitle_id)
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_subtitle_not_found", id=subtitle_id) from exc
+    return {"success": True}
 
 
 @router.get("/projects/{project_name}/free-creation-canvas")
