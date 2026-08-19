@@ -45,6 +45,21 @@ const fullImageTurn: Turn = {
   })),
 };
 
+class ImmediateFileReader {
+  onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+
+  readAsDataURL(file: File) {
+    const encoded = file.name === "paste.png" ? "cGFzdGVkLWltYWdl" : "bmV3LWltYWdl";
+    queueMicrotask(() => {
+      this.onload?.({
+        target: { result: `data:${file.type};base64,${encoded}` },
+      } as unknown as ProgressEvent<FileReader>);
+    });
+  }
+}
+
 describe("MessageRow", () => {
   it("renders the edit entry on an editable user message", () => {
     render(<MessageRow turn={userTurn} editable />);
@@ -122,44 +137,56 @@ describe("MessageRow", () => {
   });
 
   it("adds an image in the editor and includes it in the rewrite payload", async () => {
+    const originalFileReader = globalThis.FileReader;
+    vi.stubGlobal("FileReader", ImmediateFileReader);
     const onSubmitEdit = vi.fn();
-    render(<MessageRow turn={imageTurn} editable editing onSubmitEdit={onSubmitEdit} />);
+    try {
+      render(<MessageRow turn={imageTurn} editable editing onSubmitEdit={onSubmitEdit} />);
 
-    const added = new File(["new-image"], "new.png", { type: "image/png" });
-    fireEvent.change(screen.getByLabelText("上传附件图片"), { target: { files: [added] } });
+      const added = new File(["new-image"], "new.png", { type: "image/png" });
+      fireEvent.change(screen.getByLabelText("上传附件图片"), { target: { files: [added] } });
 
-    await waitFor(() => {
-      expect(screen.getByRole("img", { name: "编辑中的附件 2/2" })).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByRole("button", { name: "重新发送" }));
+      await waitFor(() => {
+        expect(screen.getByRole("img", { name: "编辑中的附件 2/2" })).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: "重新发送" }));
 
-    expect(onSubmitEdit).toHaveBeenCalledWith("u-2", "按这张图改人设", [
-      { data: "AAAA", media_type: "image/png" },
-      { data: "bmV3LWltYWdl", media_type: "image/png" },
-    ]);
+      expect(onSubmitEdit).toHaveBeenCalledWith("u-2", "按这张图改人设", [
+        { data: "AAAA", media_type: "image/png" },
+        { data: "bmV3LWltYWdl", media_type: "image/png" },
+      ]);
+    } finally {
+      vi.stubGlobal("FileReader", originalFileReader);
+    }
   });
 
   it("adds a pasted image and includes it in the rewrite payload", async () => {
+    const originalFileReader = globalThis.FileReader;
+    vi.stubGlobal("FileReader", ImmediateFileReader);
     const onSubmitEdit = vi.fn();
-    render(<MessageRow turn={userTurn} editable editing onSubmitEdit={onSubmitEdit} />);
+    try {
+      render(<MessageRow turn={userTurn} editable editing onSubmitEdit={onSubmitEdit} />);
 
-    const pasted = new File(["pasted-image"], "paste.png", { type: "image/png" });
-    const defaultWasPrevented = fireEvent.paste(screen.getByLabelText("改写消息内容"), {
-      clipboardData: {
-        items: [{ type: "image/png", getAsFile: () => pasted }],
-      },
-    });
+      const pasted = new File(["pasted-image"], "paste.png", { type: "image/png" });
+      const defaultWasPrevented = fireEvent.paste(screen.getByLabelText("改写消息内容"), {
+        clipboardData: {
+          items: [{ type: "image/png", getAsFile: () => pasted }],
+        },
+      });
 
-    expect(defaultWasPrevented).toBe(false);
+      expect(defaultWasPrevented).toBe(false);
 
-    await waitFor(() => {
-      expect(screen.getByRole("img", { name: "编辑中的附件 1/1" })).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByRole("button", { name: "重新发送" }));
+      await waitFor(() => {
+        expect(screen.getByRole("img", { name: "编辑中的附件 1/1" })).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: "重新发送" }));
 
-    expect(onSubmitEdit).toHaveBeenCalledWith("u-1", "只改第 3 集", [
-      { data: "cGFzdGVkLWltYWdl", media_type: "image/png" },
-    ]);
+      expect(onSubmitEdit).toHaveBeenCalledWith("u-1", "只改第 3 集", [
+        { data: "cGFzdGVkLWltYWdl", media_type: "image/png" },
+      ]);
+    } finally {
+      vi.stubGlobal("FileReader", originalFileReader);
+    }
   });
 
   it("keeps the browser's default paste behavior for text-only clipboard data", () => {

@@ -327,6 +327,8 @@ export default {
   'project_overview_regenerated': 'Đã tạo lại tổng quan dự án',
   'project_sync_failed': 'Đồng bộ thay đổi dự án thất bại: {{message}}',
   'project_load_failed': 'Tải dự án thất bại: {{message}}',
+  'project_open_failed': 'Không thể mở dự án',
+  'project_load_unknown': 'Máy chủ không trả về dữ liệu dự án.',
   'synopsis': 'Tóm tắt',
   'genre': 'Thể loại',
   'theme': 'Chủ đề',

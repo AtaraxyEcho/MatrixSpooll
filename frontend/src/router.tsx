@@ -1,9 +1,9 @@
 // router.tsx — Route definitions for the studio layout
 
-import { useEffect, useRef } from "react";
-import { Route, Switch, Redirect, useParams } from "wouter";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Route, Switch, Redirect, useLocation, useParams } from "wouter";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Loader2, RefreshCw } from "lucide-react";
 import { FreeCreationLayout, StudioLayout } from "@/components/layout";
 import { FreeCreationWorkspace } from "@/components/canvas/FreeCreationWorkspace";
 import { StudioCanvasRouter } from "@/components/canvas/StudioCanvasRouter";
@@ -112,6 +112,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 function StudioWorkspace() {
   const params = useParams<{ projectName: string }>();
   const projectName = params.projectName ?? null;
+  const [, navigate] = useLocation();
   const handoffMode = (() => {
     const params = new URLSearchParams(window.location.search);
     const mode = params.get("mode");
@@ -126,7 +127,8 @@ function StudioWorkspace() {
     setCurrentProject,
     setProjectDetailLoading,
   } = useProjectsStore();
-  const { t } = useTranslation("onboarding");
+  const { t } = useTranslation(["onboarding", "dashboard", "common"]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   // 把 t 通过 ref 暴露给首屏加载的 onError 回调，避免切语言触发 t 重建 → effect
   // 依赖跟着重建 → 真实项目整条加载重跑（下方 effect 依赖里刻意不含 t，理由见下）。
   const tRef = useRef(t);
@@ -134,9 +136,31 @@ function StudioWorkspace() {
     tRef.current = t;
   }, [t]);
 
+  const loadProject = useCallback(() => {
+    if (!projectName || isDemoProject(projectName)) return;
+    setProjectDetailLoading(true);
+    void useProjectsStore
+      .getState()
+      .refreshProject(projectName, {
+        onError: (err) => {
+          const message = errMsg(err);
+          setLoadError(message);
+          useAppStore.getState().pushToast(
+            tRef.current("dashboard:project_load_failed", { message }),
+            "error",
+          );
+        },
+      })
+      .then((result) => {
+        // "cancelled" 代表本轮未同步（项目已被切走、取消域已轮换），loading 状态交由
+        // 接管的新一轮自行结算，此处不动共享状态。
+        if (result === "cancelled") return;
+        setProjectDetailLoading(false);
+      });
+  }, [projectName, setProjectDetailLoading]);
+
   // 项目生命周期：清空上一个项目的 assistant 状态，再按项目类型取数据。
-  // 依赖里不含 `t` —— 界面语言变化只该重灌演示常量（见下一个 effect），不该让真实项目
-  // 整条加载重跑（会先清空 store 闪一次空态，还会连带清掉助手会话状态）。
+  // 依赖里不含 `t`，切换语言不应重跑真实项目加载或清空助手会话。
   useEffect(() => {
     if (!projectName) return;
 
@@ -147,8 +171,6 @@ function StudioWorkspace() {
     assistantState.setSessionStatus(null);
     assistantState.setIsDraftSession(false);
 
-    // 引导演示项目在磁盘上并不存在：数据直接来自前端常量，不发请求，并在这段生命周期内
-    // 锁死写请求。数据本身由下一个 effect 灌入。
     if (isDemoProject(projectName)) {
       setApiReadOnly(true);
       setProjectDetailLoading(false);
@@ -158,37 +180,20 @@ function StudioWorkspace() {
       };
     }
 
-    // 进真实项目一律解锁，不让上一次演示的闸门残留下来
     setApiReadOnly(false);
-    setProjectDetailLoading(true);
-    // 先落地项目名（数据置空）：refreshProject 的写入门槛要求 currentProjectName 已等于
-    // 目标项目，否则响应落地时会被判成「非当前项目」而丢弃（见 projects-store.ts
-    // isCurrentProject 的注释）。这一步同时轮换取消域，上一个项目的在途请求随之作废，
-    // 首屏加载与 refreshProject 的其余调用方共用同一取消域。
+    // refreshProject 只接受当前项目的响应，因此先写入项目身份并清空旧详情。
     setCurrentProject(projectName, null);
-    void useProjectsStore
-      .getState()
-      .refreshProject(projectName, {
-        onError: (err) =>
-          useAppStore.getState().pushToast(tRef.current("dashboard:project_load_failed", { message: errMsg(err) }), "error"),
-      })
-      .then((result) => {
-        // "cancelled" 代表本轮未同步（项目已被切走、取消域已轮换），loading 状态交由
-        // 接管的新一轮自行结算，此处不动共享状态。
-        if (result === "cancelled") return;
-        setProjectDetailLoading(false);
-      });
+    loadProject();
 
     return () => {
       setCurrentProject(null, null);
     };
-  }, [projectName, setCurrentProject, setProjectDetailLoading]);
+  }, [loadProject, projectName, setCurrentProject, setProjectDetailLoading]);
 
   const workspaceLoading =
     !projectName ||
     currentProjectName !== projectName ||
-    projectDetailLoading ||
-    !currentProjectData;
+    projectDetailLoading;
 
   // 演示数据随界面语言走：`t` 换身份时重灌一遍常量，只影响演示项目
   useEffect(() => {
@@ -201,8 +206,48 @@ function StudioWorkspace() {
       <div className="flex h-screen flex-col bg-[var(--color-background)] text-[var(--color-text)]" data-testid="project-workspace-loading">
         <div className="h-14 border-b border-[var(--color-hairline)] bg-[var(--color-surface)]" />
         <div className="flex min-h-0 flex-1 items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-[var(--color-text-muted)]" aria-label="Loading project" />
+          <Loader2 className="h-5 w-5 motion-safe:animate-spin text-[var(--color-text-muted)]" aria-label={t("common:loading")} />
         </div>
+      </div>
+    );
+  }
+
+  if (!currentProjectData) {
+    return (
+      <div className="flex h-screen flex-col bg-[var(--color-background)] text-[var(--color-text)]" data-testid="project-workspace-error">
+        <div className="h-14 border-b border-[var(--color-hairline)] bg-[var(--color-surface)]" />
+        <main className="flex min-h-0 flex-1 items-center justify-center px-6 py-12">
+          <section className="w-full max-w-md text-center" role="alert">
+            <div className="mx-auto grid h-10 w-10 place-items-center rounded-lg bg-[oklch(0.62_0.18_25_/_0.12)] text-[var(--color-danger)]">
+              <AlertCircle className="h-5 w-5" aria-hidden />
+            </div>
+            <h1 className="mt-4 text-base font-semibold">{t("dashboard:project_open_failed")}</h1>
+            <p className="mt-2 text-sm leading-6 text-[var(--color-text-2)]">
+              {t("dashboard:project_load_failed", { message: loadError ?? t("dashboard:project_load_unknown") })}
+            </p>
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => navigate("~/app/projects")}
+                className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-[var(--color-hairline-strong)] px-3 text-xs font-medium text-[var(--color-text-2)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+                {t("dashboard:all_projects")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLoadError(null);
+                  loadProject();
+                }}
+                className="focus-ring inline-flex h-9 items-center gap-2 rounded-md bg-[var(--color-accent)] px-3 text-xs font-semibold text-[oklch(0.12_0_0)] hover:bg-[var(--color-accent-2)]"
+              >
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+                {t("common:retry")}
+              </button>
+            </div>
+          </section>
+        </main>
       </div>
     );
   }
