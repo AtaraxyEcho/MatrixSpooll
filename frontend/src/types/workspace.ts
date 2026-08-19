@@ -26,6 +26,7 @@ export interface ProjectChange {
     | "overview"
     | "draft"
     | "grid"
+    | "free_creation"
     // task 不是项目实体，而是任务终态的刷新信号（important=false / focus=null）：
     // 只用来重拉任务列表与受影响画布，不进通知与聚焦跳转。
     | "task";

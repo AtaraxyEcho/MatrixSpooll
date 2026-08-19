@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -36,9 +37,11 @@ from server.services.free_creation_workspace import (
     MAX_REFERENCE_BYTES,
     build_creation_export,
     delete_reference_upload,
+    detach_reference_upload,
     list_reference_uploads,
     load_canvas_state,
     new_request_id,
+    read_reference_preview,
     resolve_reference_claims,
     save_canvas_state,
     save_reference_upload,
@@ -65,6 +68,7 @@ CreationId = Annotated[str, PathParam(pattern=r"^c_[a-f0-9]{20}$")]
 _IMAGE_REFERENCE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 _AUDIO_REFERENCE_SUFFIXES = frozenset({".wav", ".mp3"})
 _VIDEO_REFERENCE_SUFFIXES = frozenset({".mp4", ".mov"})
+_TEXT_REFERENCE_SUFFIXES = frozenset({".txt", ".text", ".md", ".markdown", ".rtf", ".doc", ".docx"})
 
 
 class FreeCreationReference(BaseModel):
@@ -205,8 +209,13 @@ def _load_free_project(project_name: str) -> tuple[dict, Path]:
     return project, pm.get_project_path(project_name)
 
 
-def _validate_references(project_path: Path, references: list[str], media_type: Literal["image", "video"]) -> None:
-    for reference in references:
+def _validate_references(
+    project_path: Path,
+    references: list[str],
+    media_type: Literal["image", "video"],
+    claims: Sequence[str | FreeCreationReference | dict[str, Any]] | None = None,
+) -> None:
+    for index, reference in enumerate(references):
         if not reference.strip():
             raise BadRequestError("free_creation_reference_invalid")
         try:
@@ -215,11 +224,19 @@ def _validate_references(project_path: Path, references: list[str], media_type: 
             raise BadRequestError("free_creation_reference_invalid") from exc
         if not path.is_file():
             raise NotFoundError("file_not_found", path=reference)
-        allowed_suffixes = (
-            _IMAGE_REFERENCE_SUFFIXES | _AUDIO_REFERENCE_SUFFIXES | _VIDEO_REFERENCE_SUFFIXES
-            if media_type == "video"
-            else _IMAGE_REFERENCE_SUFFIXES
+        allowed_suffixes = _IMAGE_REFERENCE_SUFFIXES
+        claim = claims[index] if claims and index < len(claims) else None
+        claim_role = (
+            claim.role
+            if isinstance(claim, FreeCreationReference)
+            else claim.get("role")
+            if isinstance(claim, dict)
+            else None
         )
+        if claim_role == "prompt_context":
+            allowed_suffixes |= _TEXT_REFERENCE_SUFFIXES
+        if media_type == "video":
+            allowed_suffixes |= _AUDIO_REFERENCE_SUFFIXES | _VIDEO_REFERENCE_SUFFIXES
         if path.suffix.lower() not in allowed_suffixes:
             raise BadRequestError("free_creation_reference_type_unsupported", type=path.suffix.lower() or "unknown")
 
@@ -244,6 +261,7 @@ def _validate_reference_roles(
             "reference_image": _IMAGE_REFERENCE_SUFFIXES,
             "reference_video": _VIDEO_REFERENCE_SUFFIXES,
             "reference_audio": _AUDIO_REFERENCE_SUFFIXES,
+            "prompt_context": _TEXT_REFERENCE_SUFFIXES,
         }.get(role)
         if accepted is not None and suffix not in accepted:
             raise BadRequestError("free_creation_reference_type_unsupported", type=suffix or "unknown")
@@ -399,6 +417,13 @@ async def _preflight_free_creation(
             reference_names = capability_payload["references"]
             image_count = sum(Path(item).suffix.lower() in _IMAGE_REFERENCE_SUFFIXES for item in reference_names)
             video_count = sum(Path(item).suffix.lower() in _VIDEO_REFERENCE_SUFFIXES for item in reference_names)
+            audio_count = sum(Path(item).suffix.lower() in _AUDIO_REFERENCE_SUFFIXES for item in reference_names)
+            if image_count == 0 and video_count == 0 and not getattr(ctx.video, "text_to_video", True):
+                raise VideoCapabilityError(
+                    "video_capability_missing_t2v",
+                    provider=ctx.video.provider_model.provider_id,
+                    model=ctx.video.backend_model,
+                )
             supported = (
                 ctx.video.supported_durations_with_reference_video
                 if video_count and ctx.video.supported_durations_with_reference_video
@@ -454,6 +479,20 @@ async def _preflight_free_creation(
                         model=ctx.video.backend_model,
                         limit=ctx.video.max_reference_videos,
                         count=video_count,
+                    )
+            if audio_count:
+                if ctx.video.max_reference_audio_count <= 0:
+                    raise VideoCapabilityError(
+                        "video_reference_audio_unsupported",
+                        provider=ctx.video.provider_model.provider_id,
+                        model=ctx.video.backend_model,
+                    )
+                if audio_count > ctx.video.max_reference_audio_count:
+                    raise VideoCapabilityError(
+                        "video_reference_audio_exceeded",
+                        model=ctx.video.backend_model,
+                        limit=ctx.video.max_reference_audio_count,
+                        count=audio_count,
                     )
             if (
                 ctx.video.max_reference_media_count is not None
@@ -534,7 +573,13 @@ async def get_free_creation_capabilities(
                 default_resolution = await resolver.resolve_resolution(project, resolved.provider_id, resolved.model_id)
                 if default_resolution:
                     resolutions = [default_resolution]
-            modes = ["t2v"]
+            modes = ["t2v"] if caps.get("text_to_video", True) else []
+            if reference_kind == "none" and "t2v" not in modes:
+                raise VideoCapabilityError(
+                    "video_capability_missing_t2v",
+                    provider=resolved.provider_id,
+                    model=resolved.model_id,
+                )
             input_slots: list[dict[str, Any]] = []
             if caps.get("first_frame"):
                 modes.append("first_frame")
@@ -560,6 +605,19 @@ async def get_free_creation_capabilities(
                         "max_count": int(caps["max_reference_videos"]),
                     }
                 )
+            max_reference_audio_count = int(caps.get("max_reference_audio_count") or 0)
+            if max_reference_audio_count > 0:
+                modes.append("reference_audio")
+                input_slots.append(
+                    {
+                        "role": "reference_audio",
+                        "accepted_types": ["audio"],
+                        "max_count": max_reference_audio_count,
+                    }
+                )
+            combinations = [["first_frame", "last_frame"], ["reference_image"], ["reference_video"]]
+            if max_reference_audio_count > 0:
+                combinations.append(["reference_audio"])
             return {
                 "output_type": "video",
                 "model": f"{resolved.provider_id}/{resolved.model_id}",
@@ -572,10 +630,12 @@ async def get_free_creation_capabilities(
                 ),
                 "max_reference_images": caps.get("max_reference_images"),
                 "max_reference_videos": caps.get("max_reference_videos"),
+                "max_reference_audio_count": max_reference_audio_count,
                 "max_reference_media_count": caps.get("max_reference_media_count"),
+                "text_to_video": caps.get("text_to_video", True),
                 "modes": modes,
                 "input_slots": input_slots,
-                "combinations": [["first_frame", "last_frame"], ["reference_image"], ["reference_video"]],
+                "combinations": combinations,
                 "quantity": {"min": 1, "max": 4},
             }
         resolved = await resolver.resolve_image_backend(project, payload, capability="t2i")
@@ -647,7 +707,7 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
         if parent_path is None or not parent_path.is_file():
             raise NotFoundError("free_creation_parent_not_found", id=execution_req.parent_creation_id)
 
-    await asyncio.to_thread(_validate_references, project_path, resolved_references, media_type)
+    await asyncio.to_thread(_validate_references, project_path, resolved_references, media_type, reference_claims)
     _validate_reference_roles(req.references, resolved_references, media_type)
     if media_type == "image" and execution_req.duration_seconds is not None:
         raise BadRequestError("request_invalid")
@@ -843,6 +903,15 @@ async def get_free_creation_references(project_name: str):
     return {"references": await asyncio.to_thread(list_reference_uploads, project_path)}
 
 
+@router.get("/projects/{project_name}/free-creation-references/{reference_id}/preview")
+async def preview_free_creation_reference(project_name: str, reference_id: str):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    try:
+        return await asyncio.to_thread(read_reference_preview, project_path, reference_id)
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_reference_not_found") from exc
+
+
 @router.post("/projects/{project_name}/free-creation-references")
 async def upload_free_creation_reference(project_name: str, file: UploadFile = File(...)):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
@@ -874,6 +943,16 @@ async def remove_free_creation_reference(project_name: str, reference_id: str):
         raise NotFoundError("free_creation_reference_not_found") from exc
     except RuntimeError as exc:
         raise ConflictError("request_invalid") from exc
+    return {"success": True}
+
+
+@router.post("/projects/{project_name}/free-creation-references/{reference_id}/detach")
+async def detach_free_creation_reference(project_name: str, reference_id: str):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    try:
+        await asyncio.to_thread(detach_reference_upload, project_path, reference_id)
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_reference_not_found") from exc
     return {"success": True}
 
 
@@ -1004,7 +1083,9 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
             raise NotFoundError("free_creation_parent_not_found", id=parent_id)
         parent_media_path = parent_media
     request_references = [item for item in references if item != parent_media_path]
-    await asyncio.to_thread(_validate_references, project_path, request_references, media_type)
+    stored_claims = creation.get("reference_claims")
+    validation_claims = stored_claims if isinstance(stored_claims, list) else None
+    await asyncio.to_thread(_validate_references, project_path, request_references, media_type, validation_claims)
     retry_request = FreeCreationRequest(
         output_type=output_type,
         prompt=prompt,

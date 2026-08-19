@@ -1385,6 +1385,7 @@ class ConfigResolver:
             max_reference_media_count = caps.max_reference_media_count
             supported_aspect_ratios = caps.supported_aspect_ratios
             supported_durations_with_reference_video = caps.supported_durations_with_reference_video
+            text_to_video = caps.text_to_video
             first_frame = caps.first_frame
             last_frame = caps.last_frame
             reference_audio_mode = caps.reference_audio_mode
@@ -1429,6 +1430,7 @@ class ConfigResolver:
             max_reference_media_count = builtin_caps.max_reference_media_count
             supported_aspect_ratios = builtin_caps.supported_aspect_ratios
             supported_durations_with_reference_video = builtin_caps.supported_durations_with_reference_video
+            text_to_video = builtin_caps.text_to_video
             first_frame = builtin_caps.first_frame
             last_frame = builtin_caps.last_frame
             reference_audio_mode = builtin_caps.reference_audio_mode
@@ -1486,6 +1488,7 @@ class ConfigResolver:
             "model": model_id,
             "supported_durations": supported_durations,
             "supported_durations_with_reference_video": list(supported_durations_with_reference_video or []),
+            "text_to_video": text_to_video,
             "max_duration": max_duration,
             "max_reference_images": max_reference_images,
             "max_reference_videos": max_reference_videos,

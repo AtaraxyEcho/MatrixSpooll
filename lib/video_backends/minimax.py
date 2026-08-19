@@ -203,9 +203,10 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
         adaptive，图生视频示例即用它），故声明 first_frame_ratio_adaptive_only。
         """
         if model == _S2V:
-            return VideoCapabilities(first_frame=False, max_reference_images=1)
+            return VideoCapabilities(text_to_video=False, first_frame=False, max_reference_images=1)
         if _is_h3_model(model):
             return VideoCapabilities(
+                text_to_video=True,
                 first_frame=True,
                 last_frame=True,
                 max_reference_images=_H3_MAX_REFERENCE_IMAGES,
@@ -216,7 +217,7 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
                 max_prompt_chars=_H3_MAX_PROMPT_CHARS,
                 first_frame_ratio_adaptive_only=True,
             )
-        return VideoCapabilities(first_frame=True)
+        return VideoCapabilities(text_to_video=_supports_text_to_video(model), first_frame=True)
 
     @property
     def video_capabilities(self) -> VideoCapabilities:

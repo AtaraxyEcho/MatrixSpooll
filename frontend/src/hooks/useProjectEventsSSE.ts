@@ -6,6 +6,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useProjectsStore } from "@/stores/projects-store";
 import { useCostStore } from "@/stores/cost-store";
 import { useTasksStore } from "@/stores/tasks-store";
+import { useFreeCreationStore } from "@/stores/free-creation-store";
 import { errMsg } from "@/utils/async";
 import type {
   ProjectChange,
@@ -254,6 +255,9 @@ export function useProjectEventsSSE(projectName?: string | null): void {
           // 因此丢失本该发生的自动导航与高亮。
           const taskChanges = payload.changes.filter(isTaskChange);
           const entityChanges = payload.changes.filter((c) => !isTaskChange(c));
+          if (entityChanges.some((change) => change.entity_type === "free_creation")) {
+            useFreeCreationStore.getState().invalidateCreations();
+          }
 
           // 提取并更新 asset fingerprints（零延迟，立即写入 store）
           const mergedFingerprints: Record<string, number> = {};

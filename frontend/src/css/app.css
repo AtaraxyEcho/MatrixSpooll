@@ -72,6 +72,12 @@ body {
     min-height: var(--app-topbar-height);
 }
 
+.app-lobby-topbar--list {
+    /* The dedicated project list header shares the full-width list surface. */
+    max-width: none;
+    padding-inline: 24px;
+}
+
 .app-lobby-topbar__search {
     min-width: 0;
     width: 100%;
@@ -90,6 +96,9 @@ body {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 16px;
+    /* Settings owns a full-width sidebar, so its header should share that edge. */
+    max-width: none;
+    padding-inline: 24px;
 }
 
 .app-settings-topbar__leading {
@@ -103,6 +112,9 @@ body {
     display: flex;
     align-items: center;
     gap: 20px;
+    /* Keep project settings aligned with its full-width settings surface. */
+    max-width: none;
+    padding-inline: 24px;
 }
 
 .app-library-topbar {
@@ -172,7 +184,8 @@ body {
 
 .app-project-list__grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 360px));
+    justify-content: start;
     gap: 16px;
     padding-top: 24px;
 }
@@ -227,7 +240,8 @@ body {
 }
 
 .home-hero-composer:has(.home-param-popover) {
-    z-index: 30;
+    /* Keep expanded controls above the filter rail but below the sticky app header. */
+    z-index: 25;
 }
 
 .home-composer-shell {
@@ -445,6 +459,14 @@ body {
     background: oklch(0.16 0.012 265 / 0.98);
     padding: 6px;
     box-shadow: 0 8px 12px -8px oklch(0 0 0 / 0.82);
+}
+
+/* The free canvas composer is anchored to the viewport bottom, so its
+   parameter panels must remain inside the visible canvas. */
+.free-creation-composer .home-param-popover {
+    top: auto;
+    bottom: calc(100% + 8px);
+    z-index: 80;
 }
 
 .home-param-control--right .home-param-popover {
@@ -759,6 +781,10 @@ body {
         gap: 10px;
     }
 
+    .app-lobby-topbar--list {
+        padding-inline: 16px;
+    }
+
 }
 
 @media (max-width: 760px) {
@@ -780,6 +806,10 @@ body {
         grid-template-rows: var(--app-topbar-height) 42px;
         gap: 0 10px;
         padding-block: 0 8px;
+    }
+
+    .app-lobby-topbar--list {
+        padding-inline: 16px;
     }
 
     .app-lobby-topbar__search {
@@ -829,13 +859,22 @@ body {
         --app-topbar-inline-padding: 12px;
     }
 
+    .app-lobby-topbar--list {
+        padding-inline: 12px;
+    }
+
     .app-settings-topbar {
         gap: 8px;
+        padding-inline: 16px;
     }
 
     .app-settings-topbar__leading,
     .app-project-settings-topbar {
         gap: 10px;
+    }
+
+    .app-project-settings-topbar {
+        padding-inline: 16px;
     }
 
     .app-workspace-topbar__usage {

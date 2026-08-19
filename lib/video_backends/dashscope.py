@@ -330,17 +330,18 @@ def _normalize_wan27_alias(family_suffix: str) -> str:
 # 按 model id 派发能力声明。happyhorse-r2v 仅 reference_image（无 first_frame）；
 # wan2.7-r2v 额外支持首帧与参考音色。
 _MODEL_PROFILES: dict[str, VideoCapabilities] = {
-    "happyhorse-1.1-t2v": VideoCapabilities(first_frame=False),
-    "happyhorse-1.1-i2v": VideoCapabilities(first_frame=True),
-    "happyhorse-1.1-r2v": VideoCapabilities(first_frame=False, max_reference_images=9),
-    "happyhorse-1.0-t2v": VideoCapabilities(first_frame=False),
-    "happyhorse-1.0-i2v": VideoCapabilities(first_frame=True),
-    "happyhorse-1.0-r2v": VideoCapabilities(first_frame=False, max_reference_images=9),
-    "wan2.7-t2v": VideoCapabilities(first_frame=False, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS),
-    "wan2.7-i2v": VideoCapabilities(first_frame=True, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS),
+    "happyhorse-1.1-t2v": VideoCapabilities(text_to_video=True, first_frame=False),
+    "happyhorse-1.1-i2v": VideoCapabilities(text_to_video=False, first_frame=True),
+    "happyhorse-1.1-r2v": VideoCapabilities(text_to_video=False, first_frame=False, max_reference_images=9),
+    "happyhorse-1.0-t2v": VideoCapabilities(text_to_video=True, first_frame=False),
+    "happyhorse-1.0-i2v": VideoCapabilities(text_to_video=False, first_frame=True),
+    "happyhorse-1.0-r2v": VideoCapabilities(text_to_video=False, first_frame=False, max_reference_images=9),
+    "wan2.7-t2v": VideoCapabilities(text_to_video=True, first_frame=False, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS),
+    "wan2.7-i2v": VideoCapabilities(text_to_video=False, first_frame=True, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS),
     # 带首帧的参考生视频是 wan2.7-r2v 的官方形态；参考视频须先上传到临时 OSS，
     # _build_media 只接收已解析的 oss:// 地址，不把本地视频编码为 data URI。
     "wan2.7-r2v": VideoCapabilities(
+        text_to_video=False,
         first_frame=True,
         max_reference_images=_WAN27_R2V_MAX_REFERENCE,
         max_reference_videos=_WAN27_R2V_MAX_REFERENCE,
@@ -357,6 +358,7 @@ _MODEL_PROFILES: dict[str, VideoCapabilities] = {
     # wan3.0 的参考音频是 media 数组里的独立条目（不像 2.7 挂在参考素材项上），故不声明
     # reference_audio_per_image，改由 max_reference_audio_total_seconds 约束总量。
     _WAN3_MODEL_KEY: VideoCapabilities(
+        text_to_video=True,
         first_frame=True,
         last_frame=True,
         max_reference_images=_WAN3_MAX_REFERENCE_IMAGES,

@@ -31,6 +31,7 @@ from server.services.free_creation_tasks import (
 from server.services.free_creation_workspace import (
     build_creation_export,
     load_canvas_state,
+    read_reference_preview,
     resolve_reference_claims,
     save_canvas_state,
     save_reference_upload,
@@ -298,6 +299,12 @@ def test_reference_validation_is_media_aware_and_path_safe(tmp_path: Path) -> No
         ["uploads/frame.png", "uploads/voice.wav", "uploads/clip.mp4", "uploads/clip.mov"],
         "video",
     )
+    _validate_references(
+        project_path,
+        ["uploads/notes.txt"],
+        "video",
+        [{"type": "upload", "reference_id": "r_0123456789abcdef0123", "role": "prompt_context"}],
+    )
 
     with pytest.raises(BadRequestError):
         _validate_references(project_path, ["uploads/voice.wav"], "image")
@@ -305,6 +312,19 @@ def test_reference_validation_is_media_aware_and_path_safe(tmp_path: Path) -> No
         _validate_references(project_path, ["uploads/notes.txt"], "video")
     with pytest.raises(BadRequestError):
         _validate_references(project_path, ["../outside.png"], "image")
+
+
+def test_text_reference_uploads_are_stored_and_previewed(tmp_path: Path) -> None:
+    reference = save_reference_upload(
+        tmp_path,
+        original_filename="scene.md",
+        content=b"# Scene\n\nA quiet room.",
+    )
+
+    assert reference["media_type"] == "text"
+    preview = read_reference_preview(tmp_path, reference["reference_id"])
+    assert preview["supported"] is True
+    assert preview["text"] == "# Scene\n\nA quiet room."
 
 
 def test_record_enqueued_metadata_preserves_fast_terminal_result(tmp_path: Path) -> None:

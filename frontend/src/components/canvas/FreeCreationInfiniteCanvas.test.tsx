@@ -4,7 +4,7 @@ import { API } from "@/api";
 import { FreeCreationInfiniteCanvas } from "@/components/canvas/FreeCreationInfiniteCanvas";
 import i18n from "@/i18n";
 import { useFreeCreationStore } from "@/stores/free-creation-store";
-import type { FreeCreation } from "@/types";
+import type { FreeCreation, FreeCreationUpload } from "@/types";
 
 const t = i18n.getFixedT("zh", "dashboard");
 const creation: FreeCreation = {
@@ -33,6 +33,26 @@ function renderCanvas(creations: FreeCreation[] = [creation]) {
     />,
   );
 }
+
+const textUpload: FreeCreationUpload = {
+  reference_id: "r_0123456789abcdef0123",
+  type: "upload",
+  original_filename: "scene.md",
+  media_type: "text",
+  path: "uploads/free_creation/r_0123456789abcdef0123.md",
+  size_bytes: 42,
+  created_at: "2026-08-19T00:00:00Z",
+};
+
+const audioUpload: FreeCreationUpload = {
+  reference_id: "r_abcdef0123456789abcdef",
+  type: "upload",
+  original_filename: "voiceover.mp3",
+  media_type: "audio",
+  path: "uploads/free_creation/r_abcdef0123456789abcdef.mp3",
+  size_bytes: 128,
+  created_at: "2026-08-19T00:00:00Z",
+};
 
 describe("FreeCreationInfiniteCanvas", () => {
   beforeEach(() => {
@@ -138,5 +158,64 @@ describe("FreeCreationInfiniteCanvas", () => {
     expect(screen.queryByRole("menuitem", { name: t("free_creation_use_as_parent") })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: t("free_creation_add_reference") })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: t("free_creation_hide_from_canvas") })).toBeInTheDocument();
+  });
+
+  it("uses Ctrl/Cmd-click for references and double-click for previews", async () => {
+    const onReference = vi.fn();
+    const onPreview = vi.fn();
+    render(
+      <FreeCreationInfiniteCanvas
+        projectName="demo"
+        creations={[]}
+        uploads={[textUpload]}
+        readOnly={false}
+        actingId={null}
+        onCancel={vi.fn()}
+        onRetry={vi.fn()}
+        onEdit={vi.fn()}
+        onReference={onReference}
+        onPreview={onPreview}
+      />,
+    );
+
+    const card = await waitFor(() => screen.getByText(textUpload.original_filename).closest("article"));
+    const media = card?.querySelector<HTMLElement>('[role="button"]');
+    expect(media).toBeTruthy();
+    fireEvent.click(media!);
+    expect(onReference).not.toHaveBeenCalled();
+    fireEvent.click(media!, { ctrlKey: true });
+    expect(onReference).toHaveBeenCalledWith(
+      { type: "upload", reference_id: textUpload.reference_id, role: "prompt_context" },
+      textUpload.original_filename,
+    );
+    fireEvent.doubleClick(card!);
+    expect(onPreview).toHaveBeenCalledWith({ kind: "upload", upload: textUpload });
+  });
+
+  it("renders voiceover uploads with native playback and an explicit reference action", async () => {
+    const onReference = vi.fn();
+    render(
+      <FreeCreationInfiniteCanvas
+        projectName="demo"
+        creations={[]}
+        uploads={[audioUpload]}
+        readOnly={false}
+        actingId={null}
+        onCancel={vi.fn()}
+        onRetry={vi.fn()}
+        onEdit={vi.fn()}
+        onReference={onReference}
+      />,
+    );
+
+    const card = await waitFor(() => screen.getByText(audioUpload.original_filename).closest("article"));
+    const audio = card?.querySelector("audio");
+    expect(audio).toBeInTheDocument();
+    expect(audio).toHaveAttribute("src", expect.stringContaining(audioUpload.path));
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_add_reference") }));
+    expect(onReference).toHaveBeenCalledWith(
+      { type: "upload", reference_id: audioUpload.reference_id, role: "reference_audio" },
+      audioUpload.original_filename,
+    );
   });
 });

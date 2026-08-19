@@ -1,5 +1,6 @@
 export type FreeCreationOutputType = "image" | "video" | "edit";
 export type FreeCreationMediaType = "image" | "video";
+export type FreeCreationUploadMediaType = "image" | "video" | "audio" | "text";
 export type FreeCreationReferenceRole =
   | "first_frame"
   | "last_frame"
@@ -7,6 +8,13 @@ export type FreeCreationReferenceRole =
   | "reference_video"
   | "reference_audio"
   | "prompt_context";
+
+export function freeCreationUploadRole(mediaType: FreeCreationUploadMediaType): FreeCreationReferenceRole {
+  if (mediaType === "video") return "reference_video";
+  if (mediaType === "audio") return "reference_audio";
+  if (mediaType === "text") return "prompt_context";
+  return "reference_image";
+}
 
 export type FreeCreationReferenceClaim =
   | { type: "upload"; reference_id: string; role?: FreeCreationReferenceRole }
@@ -16,7 +24,7 @@ export interface FreeCreationUpload {
   reference_id: string;
   type: "upload";
   original_filename: string;
-  media_type: "image" | "video" | "audio";
+  media_type: FreeCreationUploadMediaType;
   path: string;
   size_bytes: number;
   created_at: string;
@@ -64,7 +72,9 @@ export interface FreeCreationCapabilities {
   durations: number[];
   max_reference_images: number | null;
   max_reference_videos: number | null;
+  max_reference_audio_count?: number | null;
   max_reference_media_count: number | null;
+  text_to_video?: boolean;
   modes?: string[];
   input_slots?: Array<{ role: FreeCreationReferenceRole; accepted_types: string[]; max_count: number }>;
   combinations?: string[][];

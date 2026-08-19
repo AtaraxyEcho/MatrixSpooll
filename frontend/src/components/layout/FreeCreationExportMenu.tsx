@@ -80,7 +80,13 @@ export function FreeCreationExportMenu({ projectName, disabled = false }: FreeCr
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 top-[calc(100%+6px)] z-50 min-w-56 rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)] p-1 shadow-lg"
+          className="absolute right-0 top-[calc(100%+6px)] z-[80] min-w-56 rounded-md border border-[var(--color-hairline-strong)] p-1 text-[var(--color-text)] shadow-2xl"
+          style={{
+            background: "oklch(0.20 0.011 265 / 0.98)",
+            opacity: 1,
+            backdropFilter: "blur(18px) saturate(1.15)",
+            WebkitBackdropFilter: "blur(18px) saturate(1.15)",
+          }}
         >
           <button
             type="button"

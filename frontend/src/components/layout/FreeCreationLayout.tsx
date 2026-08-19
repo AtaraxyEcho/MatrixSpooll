@@ -49,7 +49,7 @@ export function FreeCreationLayout({ children }: FreeCreationLayoutProps) {
     <div className="flex h-screen flex-col" style={{ color: "var(--color-text)" }}>
       <TaskFailureListener projectName={sseProjectName} />
       <ScriptGenerationNoticeListener />
-      <GlobalHeader onNavigateBack={() => setLocation("~/app/projects")} />
+      <GlobalHeader variant="free" onNavigateBack={() => setLocation("~/app/projects")} />
       {demoMode ? <DemoReadOnlyBanner /> : null}
       <MigrationRepairBanner />
       <main
@@ -63,7 +63,7 @@ export function FreeCreationLayout({ children }: FreeCreationLayoutProps) {
       <button
         type="button"
         onClick={toggleAssistantPanel}
-        className={`fixed right-4 top-28 grid h-10 w-10 place-items-center rounded-xl transition-all ${UI_LAYERS.workspaceFloating} ${
+        className={`fixed right-4 top-[132px] grid h-10 w-10 place-items-center rounded-lg transition-all ${UI_LAYERS.workspaceFloating} ${
           assistantOpen ? "pointer-events-none scale-0 opacity-0" : "scale-100 opacity-100"
         }`}
         style={{

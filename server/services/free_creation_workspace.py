@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import tempfile
 import uuid
 import zipfile
@@ -18,8 +20,13 @@ from lib.path_safety import safe_join
 ReferenceType = Literal["upload", "creation"]
 ExportScope = Literal["selected", "request", "all"]
 
-_REFERENCE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov", ".wav", ".mp3"})
+_TEXT_REFERENCE_EXTENSIONS = frozenset({".txt", ".text", ".md", ".markdown", ".rtf", ".doc", ".docx"})
+_REFERENCE_EXTENSIONS = (
+    frozenset({".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov", ".wav", ".mp3"}) | _TEXT_REFERENCE_EXTENSIONS
+)
 MAX_REFERENCE_BYTES = 100 * 1024 * 1024
+MAX_REFERENCE_PREVIEW_CHARS = 120_000
+MAX_PLAIN_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024
 
 
 def _now() -> str:
@@ -114,6 +121,8 @@ def save_reference_upload(project_path: Path, *, original_filename: str, content
         if extension in {".mp4", ".mov"}
         else "audio"
         if extension in {".wav", ".mp3"}
+        else "text"
+        if extension in _TEXT_REFERENCE_EXTENSIONS
         else "image",
         "path": relative_path,
         "size_bytes": len(content),
@@ -132,6 +141,72 @@ def save_reference_upload(project_path: Path, *, original_filename: str, content
     return record
 
 
+def extract_reference_text(path: Path) -> str | None:
+    suffix = path.suffix.lower()
+    if suffix not in _TEXT_REFERENCE_EXTENSIONS:
+        return None
+    if suffix == ".docx":
+        try:
+            from lib.source_loader.docx import DocxExtractor
+
+            return DocxExtractor().extract(path).text
+        except Exception:  # noqa: BLE001
+            return None
+    if suffix == ".doc":
+        antiword = shutil.which("antiword")
+        if not antiword:
+            return None
+        try:
+            result = subprocess.run(
+                [antiword, str(path)],
+                capture_output=True,
+                check=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return result.stdout
+    try:
+        with path.open("rb") as handle:
+            content = handle.read(MAX_PLAIN_TEXT_PREVIEW_BYTES + 1)
+    except OSError:
+        return None
+    return content.decode("utf-8-sig", errors="replace")
+
+
+def read_reference_preview(project_path: Path, reference_id: str) -> dict[str, Any]:
+    """Return a bounded text preview for an uploaded script/context file."""
+
+    record_path = _reference_record_path(project_path, reference_id)
+    record = load_json_or_none(record_path)
+    if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+        raise FileNotFoundError(reference_id)
+    if record.get("detached_at"):
+        raise FileNotFoundError(reference_id)
+    path = safe_join(project_path, str(record["path"]))
+    if not path.is_file():
+        raise FileNotFoundError(reference_id)
+    text = extract_reference_text(path)
+    if text is None:
+        return {
+            "reference_id": reference_id,
+            "original_filename": record.get("original_filename", path.name),
+            "media_type": record.get("media_type", "text"),
+            "supported": False,
+        }
+    truncated = len(text) > MAX_REFERENCE_PREVIEW_CHARS
+    return {
+        "reference_id": reference_id,
+        "original_filename": record.get("original_filename", path.name),
+        "media_type": record.get("media_type", "text"),
+        "supported": True,
+        "text": text[:MAX_REFERENCE_PREVIEW_CHARS],
+        "truncated": truncated,
+    }
+
+
 def list_reference_uploads(project_path: Path) -> list[dict[str, Any]]:
     root = safe_join(_workspace_root(project_path), "references")
     if not root.is_dir():
@@ -139,9 +214,21 @@ def list_reference_uploads(project_path: Path) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for path in sorted(root.glob("r_*.json"), key=lambda item: item.stat().st_mtime_ns, reverse=True):
         record = load_json_or_none(path)
-        if isinstance(record, dict) and isinstance(record.get("reference_id"), str):
+        if isinstance(record, dict) and isinstance(record.get("reference_id"), str) and not record.get("detached_at"):
             records.append(record)
     return records
+
+
+def detach_reference_upload(project_path: Path, reference_id: str) -> None:
+    """Remove an upload from the active workspace without breaking provenance."""
+
+    record_path = _reference_record_path(project_path, reference_id)
+    record = load_json_or_none(record_path)
+    if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+        raise FileNotFoundError(reference_id)
+    with project_metadata_lock(project_path):
+        record["detached_at"] = _now()
+        atomic_write_json(record_path, record)
 
 
 def delete_reference_upload(project_path: Path, reference_id: str) -> None:
@@ -298,13 +385,17 @@ def build_creation_export(
 
 __all__ = [
     "MAX_REFERENCE_BYTES",
+    "MAX_REFERENCE_PREVIEW_CHARS",
     "build_creation_export",
     "default_canvas_state",
     "delete_reference_upload",
+    "detach_reference_upload",
+    "extract_reference_text",
     "list_reference_uploads",
     "load_canvas_state",
     "new_request_id",
     "resolve_reference_claims",
+    "read_reference_preview",
     "save_canvas_state",
     "save_reference_upload",
     "write_creation_request",

@@ -17,12 +17,14 @@ from lib.json_io import atomic_write_json, load_json_or_none
 from lib.path_safety import safe_join
 from lib.project_manager import get_project_manager
 from lib.version_manager import VersionManager
+from server.services.free_creation_workspace import extract_reference_text
 from server.services.generation_context import ImageLaneRequest, VideoLaneRequest, resolve_generation_context
 
 FreeOutputType = Literal["image", "video", "edit"]
 _IMAGE_REFERENCE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 _AUDIO_REFERENCE_SUFFIXES = frozenset({".wav", ".mp3"})
 _VIDEO_REFERENCE_SUFFIXES = frozenset({".mp4", ".mov"})
+_TEXT_REFERENCE_SUFFIXES = frozenset({".txt", ".text", ".md", ".markdown", ".rtf", ".doc", ".docx"})
 
 
 def creation_metadata_path(project_path: Path, creation_id: str) -> Path:
@@ -233,6 +235,23 @@ def _reference_paths(project_path: Path, payload: dict[str, Any]) -> list[Path]:
     return paths
 
 
+def _prompt_with_reference_context(prompt: str, references: list[Path]) -> str:
+    context_blocks: list[str] = []
+    remaining = 48_000
+    for path in references:
+        if path.suffix.lower() not in _TEXT_REFERENCE_SUFFIXES or remaining <= 0:
+            continue
+        text = extract_reference_text(path)
+        if not text or not text.strip():
+            continue
+        bounded = text.strip()[:remaining]
+        context_blocks.append(f"[{path.name}]\n{bounded}")
+        remaining -= len(bounded)
+    if not context_blocks:
+        return prompt
+    return f"{prompt}\n\nProject reference context:\n\n{chr(10).join(context_blocks)}"
+
+
 async def execute_free_image_task(
     project_name: str,
     resource_id: str,
@@ -253,19 +272,21 @@ async def execute_free_image_task(
     if not prompt:
         raise ValueError("prompt is required")
     references = await asyncio.to_thread(_reference_paths, project_path, payload)
+    generation_prompt = await asyncio.to_thread(_prompt_with_reference_context, prompt, references)
+    image_references = [path for path in references if path.suffix.lower() in _IMAGE_REFERENCE_SUFFIXES]
     ctx = await resolve_generation_context(
         project_name,
         payload,
         project=project,
         project_path=project_path,
         user_id=user_id,
-        image=ImageLaneRequest(capability="i2i" if references else "t2i"),
+        image=ImageLaneRequest(capability="i2i" if image_references else "t2i"),
     )
     output_path, version = await ctx.generator.generate_image_async(
-        prompt=prompt,
+        prompt=generation_prompt,
         resource_type="free_images",
         resource_id=resource_id,
-        reference_images=references,
+        reference_images=image_references,
         aspect_ratio=str(payload.get("aspect_ratio") or project.get("aspect_ratio") or "9:16"),
         image_size=payload.get("size") or payload.get("resolution") or ctx.image.resolution,
         task_id=task_id,
@@ -347,6 +368,7 @@ async def execute_free_video_task(
             reference_videos.append(path)
         elif path.suffix.lower() in _AUDIO_REFERENCE_SUFFIXES:
             reference_audio.append(path)
+    generation_prompt = await asyncio.to_thread(_prompt_with_reference_context, prompt, references)
     ctx = await resolve_generation_context(
         project_name,
         payload,
@@ -363,7 +385,7 @@ async def execute_free_video_task(
             actual_provider_id=ctx.video.provider_model.provider_id,
         )
     output_path, version, _video_ref, _video_uri = await ctx.generator.generate_video_async(
-        prompt=prompt,
+        prompt=generation_prompt,
         resource_type="free_videos",
         resource_id=resource_id,
         start_image=start_image,
