@@ -430,7 +430,7 @@ function TopBar({
         ) : (
           <div className="min-w-0 flex items-center gap-2.5">
             <img
-              src="/android-chrome-192x192.png"
+              src="/logo.jpg"
               alt={BRAND.name}
               className="h-8 w-8 rounded-lg"
             />

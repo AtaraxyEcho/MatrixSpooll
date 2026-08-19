@@ -46,7 +46,7 @@ const ICON_LOADERS: Record<string, IconLoader> = {
 /** iconKey → 本地静态资源(用于 lobehub 未收录的品牌). */
 const STATIC_ICON_SRC: Record<string, string> = {
   // Keep the legacy provider key readable while serving the current product mark.
-  ArcReel: "/matrixspooll-mark.svg",
+  ArcReel: "/logo.jpg",
 };
 
 interface Props {

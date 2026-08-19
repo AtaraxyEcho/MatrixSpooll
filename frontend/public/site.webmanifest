@@ -3,27 +3,27 @@
     "short_name": "MatrixSpooll",
     "icons": [
         {
-            "src": "/matrixspooll-mark.svg",
+            "src": "/logo.jpg",
             "sizes": "any",
-            "type": "image/svg+xml",
+            "type": "image/jpeg",
             "purpose": "any"
         },
         {
-            "src": "/matrixspooll-mark.svg",
+            "src": "/logo.jpg",
             "sizes": "any",
-            "type": "image/svg+xml",
+            "type": "image/jpeg",
             "purpose": "any"
         },
         {
-            "src": "/matrixspooll-mark.svg",
+            "src": "/logo.jpg",
             "sizes": "any",
-            "type": "image/svg+xml",
+            "type": "image/jpeg",
             "purpose": "maskable"
         },
         {
-            "src": "/matrixspooll-mark.svg",
+            "src": "/logo.jpg",
             "sizes": "any",
-            "type": "image/svg+xml",
+            "type": "image/jpeg",
             "purpose": "maskable"
         }
     ],
