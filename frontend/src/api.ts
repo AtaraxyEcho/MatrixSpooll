@@ -74,6 +74,8 @@ import type {
   FreeStoryboardPlan,
   FreeStoryboardShot,
   FreeStoryboardBatchResult,
+  FreeSubtitleTrack,
+  FreeSubtitleCue,
 } from "@/types";
 import type { GenerationRoute } from "@/utils/generation-mode";
 import type { GridCapability, GridGeneration } from "@/types/grid";
@@ -1017,6 +1019,52 @@ class API {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  }
+
+  static async createFreeCreationVoice(
+    projectName: string,
+    payload: { text: string; voice?: string },
+  ): Promise<{ success: boolean; task_id: string; voice: string; resource_id: string }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-voice`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  static async createFreeSubtitleTrack(
+    projectName: string,
+    payload: { creation_id: string; text: string; duration_seconds: number },
+  ): Promise<{ success: boolean; track: FreeSubtitleTrack }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-subtitles`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  static async listFreeSubtitleTracks(
+    projectName: string,
+    creationId?: string,
+  ): Promise<{ tracks: FreeSubtitleTrack[] }> {
+    const query = creationId ? `?creation_id=${encodeURIComponent(creationId)}` : "";
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-subtitles${query}`);
+  }
+
+  static async updateFreeSubtitleTrack(
+    projectName: string,
+    subtitleId: string,
+    payload: { cues: FreeSubtitleCue[]; expected_revision?: number },
+  ): Promise<{ success: boolean; track: FreeSubtitleTrack }> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/free-creation-subtitles/${encodeURIComponent(subtitleId)}`,
+      { method: "PUT", body: JSON.stringify(payload) },
+    );
+  }
+
+  static async deleteFreeSubtitleTrack(projectName: string, subtitleId: string): Promise<{ success: boolean }> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/free-creation-subtitles/${encodeURIComponent(subtitleId)}`,
+      { method: "DELETE" },
+    );
   }
 
   static async listFreeStoryboardPlans(

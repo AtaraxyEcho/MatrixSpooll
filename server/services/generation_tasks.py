@@ -3558,6 +3558,26 @@ async def _execute_free_creation_task_proxy(
         raise
 
 
+async def _execute_free_audio_task_proxy(
+    project_name: str,
+    resource_id: str,
+    payload: dict[str, Any],
+    *,
+    user_id: str,
+    task_id: str | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    from server.services.free_creation_tasks import execute_free_audio_task
+
+    return await execute_free_audio_task(
+        project_name,
+        resource_id,
+        payload,
+        user_id=user_id,
+        task_id=task_id,
+    )
+
+
 _TASK_EXECUTORS = {
     "storyboard": execute_storyboard_task,
     "video": execute_video_task,
@@ -3579,6 +3599,7 @@ _TASK_EXECUTORS = {
     "free_edit": lambda project_name, resource_id, payload, **kwargs: _execute_free_creation_task_proxy(
         "free_edit", project_name, resource_id, payload, **kwargs
     ),
+    "free_audio": _execute_free_audio_task_proxy,
 }
 
 

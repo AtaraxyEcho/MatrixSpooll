@@ -44,6 +44,10 @@ def new_storyboard_plan_id() -> str:
     return f"sp_{uuid.uuid4().hex[:20]}"
 
 
+def new_subtitle_id() -> str:
+    return f"sub_{uuid.uuid4().hex[:20]}"
+
+
 def new_reference_id() -> str:
     return f"r_{uuid.uuid4().hex[:20]}"
 
@@ -70,6 +74,14 @@ def _storyboard_root(project_path: Path) -> Path:
 
 def _storyboard_plan_path(project_path: Path, plan_id: str) -> Path:
     return safe_join(_storyboard_root(project_path), f"{plan_id}.json")
+
+
+def _subtitle_root(project_path: Path) -> Path:
+    return safe_join(_workspace_root(project_path), "subtitles")
+
+
+def _subtitle_path(project_path: Path, subtitle_id: str) -> Path:
+    return safe_join(_subtitle_root(project_path), f"{subtitle_id}.json")
 
 
 def split_storyboard_text(text: str, *, max_shots: int = MAX_STORYBOARD_SHOTS) -> list[str]:
@@ -187,6 +199,83 @@ def delete_storyboard_plan(project_path: Path, plan_id: str) -> None:
         current["deleted_at"] = _now()
         current["updated_at"] = current["deleted_at"]
         atomic_write_json(path, current)
+
+
+def create_subtitle_track(
+    project_path: Path,
+    *,
+    creation_id: str,
+    text: str,
+    duration_seconds: float,
+) -> dict[str, Any]:
+    normalized = text.strip()
+    if not normalized or duration_seconds <= 0:
+        raise ValueError("subtitle text and duration are required")
+    track = {
+        "subtitle_id": new_subtitle_id(),
+        "creation_id": creation_id,
+        "revision": 1,
+        "cues": [{"start_seconds": 0.0, "end_seconds": duration_seconds, "text": normalized}],
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+    with project_metadata_lock(project_path):
+        path = _subtitle_path(project_path, str(track["subtitle_id"]))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, track)
+    return track
+
+
+def list_subtitle_tracks(project_path: Path, creation_id: str | None = None) -> list[dict[str, Any]]:
+    root = _subtitle_root(project_path)
+    if not root.is_dir():
+        return []
+    tracks: list[dict[str, Any]] = []
+    for path in sorted(root.glob("sub_*.json"), key=lambda item: item.stat().st_mtime_ns, reverse=True):
+        track = load_json_or_none(path)
+        if not isinstance(track, dict) or track.get("deleted_at"):
+            continue
+        if creation_id is None or track.get("creation_id") == creation_id:
+            tracks.append(track)
+    return tracks
+
+
+def load_subtitle_track(project_path: Path, subtitle_id: str) -> dict[str, Any] | None:
+    track = load_json_or_none(_subtitle_path(project_path, subtitle_id))
+    return track if isinstance(track, dict) and not track.get("deleted_at") else None
+
+
+def save_subtitle_track(
+    project_path: Path,
+    track: dict[str, Any],
+    *,
+    expected_revision: int | None = None,
+) -> dict[str, Any]:
+    subtitle_id = track.get("subtitle_id")
+    if not isinstance(subtitle_id, str):
+        raise ValueError("subtitle id is required")
+    with project_metadata_lock(project_path):
+        path = _subtitle_path(project_path, subtitle_id)
+        current = load_json_or_none(path)
+        if not isinstance(current, dict) or current.get("deleted_at"):
+            raise FileNotFoundError(subtitle_id)
+        revision = max(1, int(current.get("revision") or 1))
+        if expected_revision is not None and expected_revision != revision:
+            raise RuntimeError("free creation subtitle revision conflict")
+        updated = {**track, "revision": revision + 1, "updated_at": _now()}
+        atomic_write_json(path, updated)
+    return updated
+
+
+def delete_subtitle_track(project_path: Path, subtitle_id: str) -> None:
+    with project_metadata_lock(project_path):
+        path = _subtitle_path(project_path, subtitle_id)
+        track = load_json_or_none(path)
+        if not isinstance(track, dict) or track.get("deleted_at"):
+            raise FileNotFoundError(subtitle_id)
+        track["deleted_at"] = _now()
+        track["updated_at"] = track["deleted_at"]
+        atomic_write_json(path, track)
 
 
 def default_canvas_state() -> dict[str, Any]:
@@ -546,6 +635,7 @@ __all__ = [
     "MAX_STORYBOARD_SHOTS",
     "build_creation_export",
     "create_storyboard_plan",
+    "create_subtitle_track",
     "delete_storyboard_plan",
     "default_canvas_state",
     "delete_reference_upload",
@@ -554,8 +644,10 @@ __all__ = [
     "list_creation_requests",
     "list_reference_uploads",
     "list_storyboard_plans",
+    "list_subtitle_tracks",
     "load_canvas_state",
     "load_storyboard_plan",
+    "load_subtitle_track",
     "new_request_id",
     "new_storyboard_plan_id",
     "resolve_reference_claims",
@@ -563,6 +655,8 @@ __all__ = [
     "save_canvas_state",
     "save_reference_upload",
     "save_storyboard_plan",
+    "save_subtitle_track",
+    "delete_subtitle_track",
     "split_storyboard_text",
     "write_creation_request",
 ]

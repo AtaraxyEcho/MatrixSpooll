@@ -15,10 +15,16 @@ from lib.formal_write import project_metadata_lock
 from lib.generation_queue import DispatchProviderChanged, free_video_capability, get_generation_queue
 from lib.json_io import atomic_write_json, load_json_or_none
 from lib.path_safety import safe_join
+from lib.project_change_hints import emit_project_change_batch
 from lib.project_manager import get_project_manager
 from lib.version_manager import VersionManager
-from server.services.free_creation_workspace import extract_reference_text
-from server.services.generation_context import ImageLaneRequest, VideoLaneRequest, resolve_generation_context
+from server.services.free_creation_workspace import extract_reference_text, save_reference_upload
+from server.services.generation_context import (
+    AudioLaneRequest,
+    ImageLaneRequest,
+    VideoLaneRequest,
+    resolve_generation_context,
+)
 
 FreeOutputType = Literal["image", "video", "edit"]
 _IMAGE_REFERENCE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
@@ -346,6 +352,76 @@ async def execute_free_image_task(
     if commit_result:
         await _commit_generated_free_creation(project_path, metadata, task_id)
     return metadata
+
+
+async def execute_free_audio_task(
+    project_name: str,
+    resource_id: str,
+    payload: dict[str, Any],
+    *,
+    user_id: str,
+    task_id: str | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    """Generate a voice asset and expose it as a project-scoped canvas reference."""
+
+    pm = get_project_manager()
+    project = await asyncio.to_thread(pm.load_project, project_name)
+    project_path = pm.get_project_path(project_name)
+    if project.get("content_mode") != "free":
+        raise ValueError("free creation tasks require a free content mode project")
+    text = str(payload.get("text") or payload.get("prompt") or "").strip()
+    if not text:
+        raise ValueError("voice text is required")
+    ctx = await resolve_generation_context(
+        project_name,
+        payload,
+        project=project,
+        project_path=project_path,
+        user_id=user_id,
+        audio=AudioLaneRequest(),
+    )
+    requested_voice = str(payload.get("voice") or "").strip()
+    voice = requested_voice or ctx.audio.narration_voice
+    if requested_voice and requested_voice not in {item.id for item in ctx.audio.voices}:
+        raise ValueError("voice is not supported by the selected audio backend")
+    speed = ctx.audio.narration_speed
+    output_path, _version = await ctx.generator.generate_audio_async(
+        text=text,
+        resource_id=resource_id,
+        voice=voice,
+        speed=speed,
+        task_id=task_id,
+        source="free_creation",
+    )
+    record = await asyncio.to_thread(
+        save_reference_upload,
+        project_path,
+        original_filename=f"{resource_id}.wav",
+        content=await asyncio.to_thread(output_path.read_bytes),
+    )
+    emit_project_change_batch(
+        project_name,
+        [
+            {
+                "entity_type": "free_creation_reference",
+                "action": "created",
+                "entity_id": record["reference_id"],
+                "label": record["original_filename"],
+                "focus": None,
+                "important": False,
+            }
+        ],
+        source="worker",
+    )
+    return {
+        "reference_id": record["reference_id"],
+        "file_path": record["path"],
+        "media_type": "audio",
+        "voice": voice,
+        "text": text,
+        "task_id": task_id,
+    }
 
 
 async def execute_free_video_task(

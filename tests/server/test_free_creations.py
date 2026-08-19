@@ -33,16 +33,20 @@ from server.services.free_creation_tasks import (
 from server.services.free_creation_workspace import (
     build_creation_export,
     create_storyboard_plan,
+    create_subtitle_track,
     delete_storyboard_plan,
+    delete_subtitle_track,
     list_creation_requests,
     list_storyboard_plans,
     load_canvas_state,
     load_storyboard_plan,
+    load_subtitle_track,
     read_reference_preview,
     resolve_reference_claims,
     save_canvas_state,
     save_reference_upload,
     save_storyboard_plan,
+    save_subtitle_track,
     split_storyboard_text,
     write_creation_request,
 )
@@ -152,6 +156,32 @@ def test_storyboard_plan_tracks_source_revision_and_soft_delete(tmp_path: Path) 
     delete_storyboard_plan(tmp_path, plan["plan_id"])
     assert load_storyboard_plan(tmp_path, plan["plan_id"]) is None
     assert list_storyboard_plans(tmp_path) == []
+
+
+def test_subtitle_track_persists_cues_with_optimistic_revision_and_soft_delete(tmp_path: Path) -> None:
+    creation_id = "c_0123456789abcdef0123"
+    track = create_subtitle_track(
+        tmp_path,
+        creation_id=creation_id,
+        text="A quiet station at night",
+        duration_seconds=8,
+    )
+    assert track["subtitle_id"].startswith("sub_")
+    assert track["revision"] == 1
+    assert track["cues"] == [{"start_seconds": 0.0, "end_seconds": 8, "text": "A quiet station at night"}]
+
+    updated = save_subtitle_track(
+        tmp_path,
+        {**track, "cues": [{"start_seconds": 1.0, "end_seconds": 4.0, "text": "The train arrives."}]},
+        expected_revision=1,
+    )
+    assert updated["revision"] == 2
+    assert load_subtitle_track(tmp_path, track["subtitle_id"]) == updated
+    with pytest.raises(RuntimeError, match="revision conflict"):
+        save_subtitle_track(tmp_path, {**updated, "cues": []}, expected_revision=1)
+
+    delete_subtitle_track(tmp_path, track["subtitle_id"])
+    assert load_subtitle_track(tmp_path, track["subtitle_id"]) is None
 
 
 def test_free_creation_request_validates_mode_specific_fields() -> None:
