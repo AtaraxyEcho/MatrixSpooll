@@ -170,6 +170,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
   const [storyboardOpen, setStoryboardOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [subtitleOpen, setSubtitleOpen] = useState(false);
+  const [merging, setMerging] = useState(false);
   const refreshToken = useFreeCreationStore((state) => state.refreshToken);
   const { candidates, reload: reloadCandidates } = useModelCandidates();
 
@@ -579,6 +580,27 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
     };
   };
 
+  const mergeCreationVideos = async (creationIds: string[]) => {
+    if (readOnly || merging || creationIds.length < 2) return;
+    setMerging(true);
+    try {
+      const blob = await API.mergeFreeCreationVideos(projectName, creationIds);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${projectName}-merged.mp4`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      useAppStore.getState().pushToast(t("free_creation_merge_started"), "success");
+    } catch (mergeError) {
+      useAppStore.getState().pushToast(t("free_creation_merge_failed", { message: errMsg(mergeError) }), "error");
+    } finally {
+      setMerging(false);
+    }
+  };
+
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-background)] text-[var(--color-text)]">
       {composerMode === "agent" ? (
@@ -607,6 +629,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
           onPreview={setPreviewTarget}
           onDetachUpload={(referenceId) => void detachUpload(referenceId)}
           onDeleteUpload={(referenceId) => void deleteUpload(referenceId)}
+          onMerge={(creationIds) => void mergeCreationVideos(creationIds)}
         />
       </div>
 

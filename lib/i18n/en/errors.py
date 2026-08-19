@@ -453,4 +453,7 @@ MESSAGES = {
     "free_creation_subtitle_video_required": "Subtitles can only be attached to a completed video",
     "free_creation_subtitle_not_found": "Subtitle track '{id}' does not exist",
     "free_creation_subtitle_conflict": "This subtitle track changed elsewhere. Reload it before saving",
+    "free_creation_merge_input_not_found": "One of the selected video clips does not exist or is unavailable",
+    "free_creation_merge_invalid": "Select at least two completed video clips to merge",
+    "free_creation_merge_unavailable": "Video merging is unavailable because FFmpeg is not configured or the clips could not be combined",
 }

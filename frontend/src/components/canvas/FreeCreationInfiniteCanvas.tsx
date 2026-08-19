@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
+  Clapperboard,
   Download,
   Eye,
   EyeOff,
@@ -49,6 +50,7 @@ interface FreeCreationInfiniteCanvasProps {
   onPreview?: (target: FreeCreationPreviewTarget) => void;
   onDetachUpload?: (referenceId: string) => void;
   onDeleteUpload?: (referenceId: string) => void;
+  onMerge?: (creationIds: string[]) => void;
 }
 
 type PointerOperation =
@@ -102,6 +104,7 @@ export function FreeCreationInfiniteCanvas({
   onPreview,
   onDetachUpload,
   onDeleteUpload,
+  onMerge,
 }: FreeCreationInfiniteCanvasProps) {
   const { t } = useTranslation("dashboard");
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -145,6 +148,15 @@ export function FreeCreationInfiniteCanvas({
     [orderedCreations, uploads],
   );
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedMergeIds = useMemo(() => {
+    if (selectedIds.length < 2) return [];
+    const selectedCreations = selectedIds
+      .map((id) => creations.find((creation) => creation.creation_id === id))
+      .filter((creation): creation is FreeCreation => Boolean(creation));
+    if (selectedCreations.length !== selectedIds.length) return [];
+    if (selectedCreations.some((creation) => creation.status !== "succeeded" || (creation.media_type !== "video" && creation.output_type !== "video"))) return [];
+    return selectedCreations.map((creation) => creation.creation_id);
+  }, [creations, selectedIds]);
 
   const publishSelection = useCallback((ids: string[]) => {
     setSelectedIds(ids);
@@ -498,7 +510,7 @@ export function FreeCreationInfiniteCanvas({
             role: freeCreationUploadRole(upload.media_type),
           };
           return (
-              <article key={upload.reference_id} ref={(node) => { if (node) nodeRefs.current.set(upload.reference_id, node); else nodeRefs.current.delete(upload.reference_id); }} data-canvas-node="true" data-canvas-id={upload.reference_id} className={`absolute overflow-hidden rounded-md border-2 bg-[var(--color-surface-2)] shadow-[0_16px_30px_-18px_oklch(0_0_0_/_0.95)] ${selected ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent-dim)]" : "border-[var(--color-hairline-strong)]"} ${hidden ? "opacity-55" : ""}`} style={{ left: position.x, top: position.y, width: NODE_WIDTH, height: 238 }} onPointerDown={(event) => { if (event.button === 0 && (event.ctrlKey || event.metaKey)) { event.preventDefault(); return; } if (event.button === 0 && !event.shiftKey) publishSelection([upload.reference_id]); else if (event.button === 0 && event.shiftKey) publishSelection(selected ? selectedIds.filter((id) => id !== upload.reference_id) : [...selectedIds, upload.reference_id]); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onPreview?.({ kind: "upload", upload }); }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (readOnly) return; publishSelection([upload.reference_id]); const rect = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "upload", nodeId: upload.reference_id, x: Math.min(event.clientX - (rect?.left ?? 0), (rect?.width ?? 260) - 190), y: Math.min(event.clientY - (rect?.top ?? 0), (rect?.height ?? 200) - 150) }); }}>
+              <article key={upload.reference_id} ref={(node) => { if (node) nodeRefs.current.set(upload.reference_id, node); else nodeRefs.current.delete(upload.reference_id); }} data-canvas-node="true" data-canvas-id={upload.reference_id} className={`absolute overflow-hidden rounded-md border-2 bg-[var(--color-surface-2)] shadow-[0_16px_30px_-18px_oklch(0_0_0_/_0.95)] ${selected ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent-dim)]" : "border-[var(--color-hairline-strong)]"} ${hidden ? "opacity-55" : ""}`} style={{ left: position.x, top: position.y, width: NODE_WIDTH, height: 238 }} onPointerDown={(event) => { if (event.button === 0 && (event.ctrlKey || event.metaKey)) { event.preventDefault(); return; } if (event.button === 0 && !event.shiftKey) publishSelection([upload.reference_id]); else if (event.button === 0 && event.shiftKey) publishSelection(selected ? selectedIds.filter((id) => id !== upload.reference_id) : [...selectedIds, upload.reference_id]); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onPreview?.({ kind: "upload", upload }); }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (readOnly) return; if (!selectedSet.has(upload.reference_id)) publishSelection([upload.reference_id]); const rect = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "upload", nodeId: upload.reference_id, x: Math.min(event.clientX - (rect?.left ?? 0), (rect?.width ?? 260) - 190), y: Math.min(event.clientY - (rect?.top ?? 0), (rect?.height ?? 200) - 150) }); }}>
               <div className="flex h-10 items-center justify-between border-b border-[var(--color-hairline)] px-3 text-xs font-medium text-[var(--color-text-2)]" onPointerDown={(event) => beginUploadDrag(event, upload.reference_id)}><span className="truncate">{upload.original_filename}</span><span className="text-[10px] text-[var(--color-text-muted)]">{t("free_creation_reference")}</span></div>
               <div role={upload.media_type === "audio" ? undefined : "button"} tabIndex={upload.media_type === "audio" ? undefined : 0} className="block h-[154px] w-full bg-black" onClick={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} onKeyDown={upload.media_type === "audio" ? undefined : (event) => handleReferenceShortcut(event, claim, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
                 {upload.media_type === "image" ? <img src={API.getFileUrl(projectName, upload.path)} alt={upload.original_filename} className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
@@ -534,7 +546,7 @@ export function FreeCreationInfiniteCanvas({
                 else if (event.button === 0 && event.shiftKey) publishSelection(selected ? selectedIds.filter((id) => id !== creation.creation_id) : [...selectedIds, creation.creation_id]);
               }}
               onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); if (creation.status === "succeeded" && creation.media_path) onPreview?.({ kind: "creation", creation }); }}
-              onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (readOnly) return; publishSelection([creation.creation_id]); const rect = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "creation", nodeId: creation.creation_id, x: Math.min(event.clientX - (rect?.left ?? 0), (rect?.width ?? 260) - 190), y: Math.min(event.clientY - (rect?.top ?? 0), (rect?.height ?? 200) - 150) }); }}
+              onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (readOnly) return; if (!selectedSet.has(creation.creation_id)) publishSelection([creation.creation_id]); const rect = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "creation", nodeId: creation.creation_id, x: Math.min(event.clientX - (rect?.left ?? 0), (rect?.width ?? 260) - 190), y: Math.min(event.clientY - (rect?.top ?? 0), (rect?.height ?? 200) - 150) }); }}
             >
               <div className="flex h-10 items-center justify-between gap-2 border-b border-[var(--color-hairline)] px-3" onPointerDown={(event) => beginNodeDrag(event, creation.creation_id)}>
                 <span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] font-semibold text-[var(--color-text)]"><span className="truncate">{t(`free_creation_${creation.output_type}`)}</span>{creation.sequence_index !== null && creation.sequence_index !== undefined ? <span className="shrink-0 rounded bg-[var(--color-accent-dim)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--color-accent-2)]">{t("free_creation_storyboard_shot_badge", { index: creation.sequence_index + 1 })}</span> : null}</span>
@@ -557,6 +569,7 @@ export function FreeCreationInfiniteCanvas({
       {(activeContextCreation || activeContextUpload) && contextMenu ? (
         <div className="absolute z-[200] min-w-44 rounded-md border border-[var(--color-hairline)] p-1 shadow-2xl" style={{ left: Math.max(4, contextMenu.x), top: Math.max(4, contextMenu.y), background: "var(--color-surface-2)", opacity: 1 }} role="menu">
           {activeContextCreation ? <>
+            {onMerge && selectedMergeIds.length >= 2 && selectedMergeIds.includes(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => { onMerge(selectedMergeIds); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Clapperboard className="h-3.5 w-3.5" aria-hidden />{t("free_creation_merge_selected")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onEdit(activeContextCreation.creation_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Pencil className="h-3.5 w-3.5" aria-hidden />{t("free_creation_use_as_parent")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onPreview?.({ kind: "creation", creation: activeContextCreation }); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_preview")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onReference({ type: "creation", creation_id: activeContextCreation.creation_id, version: activeContextCreation.version, role: activeContextCreation.media_type === "video" || activeContextCreation.output_type === "video" ? "reference_video" : "reference_image" }, activeContextCreation.prompt || t("free_creation")); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button> : null}

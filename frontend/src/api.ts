@@ -1203,6 +1203,20 @@ class API {
     return response.blob();
   }
 
+  static async mergeFreeCreationVideos(
+    projectName: string,
+    creationIds: string[],
+  ): Promise<Blob> {
+    const url = `/projects/${encodeURIComponent(projectName)}/free-creation-merge`;
+    const response = await fetch(`${API_BASE}${url}`, withAuth(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ creation_ids: creationIds }),
+    }));
+    await throwIfNotOk(response, `HTTP ${response.status}`);
+    return response.blob();
+  }
+
   static async cancelFreeCreation(
     projectName: string,
     creationId: string,

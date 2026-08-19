@@ -160,6 +160,49 @@ describe("FreeCreationInfiniteCanvas", () => {
     expect(screen.getByRole("menuitem", { name: t("free_creation_hide_from_canvas") })).toBeInTheDocument();
   });
 
+  it("keeps a multi-selection on right click and exposes video merge", async () => {
+    const first: FreeCreation = {
+      ...creation,
+      creation_id: "c_0123456789abcdef0123",
+      output_type: "video",
+      media_type: "video",
+      prompt: "first clip",
+    };
+    const second: FreeCreation = {
+      ...creation,
+      creation_id: "c_0123456789abcdef0124",
+      output_type: "video",
+      media_type: "video",
+      prompt: "second clip",
+    };
+    const onMerge = vi.fn();
+    const { container } = render(
+      <FreeCreationInfiniteCanvas
+        projectName="demo"
+        creations={[first, second]}
+        uploads={[]}
+        readOnly={false}
+        actingId={null}
+        onCancel={vi.fn()}
+        onRetry={vi.fn()}
+        onEdit={vi.fn()}
+        onReference={vi.fn()}
+        onMerge={onMerge}
+      />,
+    );
+    const firstCard = await waitFor(() => container.querySelector<HTMLElement>(`[data-canvas-id='${first.creation_id}']`));
+    const secondCard = container.querySelector<HTMLElement>(`[data-canvas-id='${second.creation_id}']`);
+    expect(firstCard).toBeInTheDocument();
+    expect(secondCard).toBeInTheDocument();
+    fireEvent.pointerDown(firstCard!, { button: 0, pointerId: 20, clientX: 100, clientY: 100 });
+    fireEvent.pointerDown(secondCard!, { button: 0, pointerId: 21, shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.contextMenu(secondCard!, { clientX: 120, clientY: 120 });
+
+    const mergeAction = await screen.findByRole("menuitem", { name: t("free_creation_merge_selected") });
+    fireEvent.click(mergeAction);
+    expect(onMerge).toHaveBeenCalledWith([first.creation_id, second.creation_id]);
+  });
+
   it("uses Ctrl/Cmd-click for references and double-click for previews", async () => {
     const onReference = vi.fn();
     const onPreview = vi.fn();

@@ -21,6 +21,7 @@ from server.routers.free_creations import (
     get_free_creation_capabilities,
 )
 from server.services import free_creation_tasks as free_creation_tasks_module
+from server.services.free_creation_merge import resolve_merge_video_paths
 from server.services.free_creation_tasks import (
     commit_free_creation_state,
     discard_free_creation_result,
@@ -751,3 +752,33 @@ def test_free_creation_export_uses_only_manifested_results(tmp_path: Path) -> No
             assert "manifest.json" in bundle.namelist()
     finally:
         archive.unlink(missing_ok=True)
+
+
+def test_free_creation_merge_resolves_only_manifested_videos_in_requested_order(tmp_path: Path) -> None:
+    creations: list[dict] = []
+    for index, creation_id in enumerate(("c_0123456789abcdef0123", "c_0123456789abcdef0124")):
+        media = tmp_path / "creations" / f"{creation_id}.mp4"
+        media.parent.mkdir(parents=True, exist_ok=True)
+        media.write_bytes(f"video-{index}".encode())
+        creation = {
+            "creation_id": creation_id,
+            "status": "succeeded",
+            "output_type": "video",
+            "media_type": "video",
+            "media_path": f"creations/{creation_id}.mp4",
+        }
+        register_free_creation_artifact(tmp_path, creation)
+        creations.append(creation)
+
+    paths = resolve_merge_video_paths(
+        tmp_path,
+        [creations[1]["creation_id"], creations[0]["creation_id"]],
+        creations,
+    )
+    assert paths == [
+        tmp_path / "creations" / "c_0123456789abcdef0124.mp4",
+        tmp_path / "creations" / "c_0123456789abcdef0123.mp4",
+    ]
+
+    with pytest.raises(ValueError, match="at least two"):
+        resolve_merge_video_paths(tmp_path, [creations[0]["creation_id"]], creations)
