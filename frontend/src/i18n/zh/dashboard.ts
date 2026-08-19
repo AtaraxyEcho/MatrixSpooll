@@ -342,6 +342,8 @@ export default {
   'project_overview_regenerated': '项目概述已重新生成',
   'project_sync_failed': '同步项目变更失败: {{message}}',
   'project_load_failed': '加载项目失败: {{message}}',
+  'project_open_failed': '无法打开项目',
+  'project_load_unknown': '服务器未返回项目数据。',
   'synopsis': '故事梗概',
   'genre': '题材',
   'theme': '主题',

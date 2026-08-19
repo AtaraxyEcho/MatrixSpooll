@@ -341,6 +341,8 @@ export default {
   'project_overview_regenerated': 'Project overview regenerated',
   'project_sync_failed': 'Failed to sync project changes: {{message}}',
   'project_load_failed': 'Failed to load project: {{message}}',
+  'project_open_failed': 'Project could not be opened',
+  'project_load_unknown': 'The server did not return project data.',
   'synopsis': 'Synopsis',
   'genre': 'Genre',
   'theme': 'Theme',

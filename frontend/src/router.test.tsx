@@ -296,12 +296,14 @@ describe("AppRoutes", () => {
     expect(seenTitles).not.toContain("A-迟到数据");
   });
 
-  it("keeps project name when loading project details fails", async () => {
+  it("keeps project identity and shows a retryable error when loading project details fails", async () => {
     vi.spyOn(API, "getProject").mockRejectedValue(new Error("network"));
 
     renderAt("/app/projects/fail-demo");
 
-    expect(await screen.findByTestId("studio-layout")).toBeInTheDocument();
+    expect(await screen.findByTestId("project-workspace-error")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "所有项目" })).toBeInTheDocument();
     await waitFor(() => {
       const projectState = useProjectsStore.getState();
       expect(projectState.currentProjectName).toBe("fail-demo");
