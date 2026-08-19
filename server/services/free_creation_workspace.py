@@ -119,7 +119,8 @@ def create_storyboard_plan(
     plan = {
         "plan_id": new_storyboard_plan_id(),
         "title": title.strip() or "Untitled storyboard",
-        "source": source,
+        "source": source or {"type": "prompt", "text": text},
+        "revision": 1,
         "status": "draft",
         "shots": shots,
         "created_at": _now(),
@@ -134,19 +135,58 @@ def create_storyboard_plan(
 
 def load_storyboard_plan(project_path: Path, plan_id: str) -> dict[str, Any] | None:
     payload = load_json_or_none(_storyboard_plan_path(project_path, plan_id))
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict) or payload.get("deleted_at"):
+        return None
+    return {**payload, "revision": max(1, int(payload.get("revision") or 1))}
 
 
-def save_storyboard_plan(project_path: Path, plan: dict[str, Any]) -> dict[str, Any]:
+def list_storyboard_plans(project_path: Path, limit: int | None = None) -> list[dict[str, Any]]:
+    root = _storyboard_root(project_path)
+    if not root.is_dir():
+        return []
+    records: list[dict[str, Any]] = []
+    for path in sorted(root.glob("sp_*.json"), key=lambda item: item.stat().st_mtime_ns, reverse=True):
+        payload = load_json_or_none(path)
+        if not isinstance(payload, dict) or payload.get("deleted_at") or not isinstance(payload.get("plan_id"), str):
+            continue
+        records.append({**payload, "revision": max(1, int(payload.get("revision") or 1))})
+        if limit is not None and len(records) >= limit:
+            break
+    return records
+
+
+def save_storyboard_plan(
+    project_path: Path,
+    plan: dict[str, Any],
+    *,
+    expected_revision: int | None = None,
+) -> dict[str, Any]:
     plan_id = plan.get("plan_id")
     if not isinstance(plan_id, str):
         raise ValueError("storyboard plan id is required")
-    updated = {**plan, "updated_at": _now()}
     with project_metadata_lock(project_path):
         path = _storyboard_plan_path(project_path, plan_id)
+        current = load_json_or_none(path)
+        if not isinstance(current, dict) or current.get("deleted_at"):
+            raise FileNotFoundError(plan_id)
+        revision = max(1, int(current.get("revision") or 1))
+        if expected_revision is not None and expected_revision != revision:
+            raise RuntimeError("free creation storyboard revision conflict")
+        updated = {**plan, "revision": revision + 1, "updated_at": _now()}
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(path, updated)
     return updated
+
+
+def delete_storyboard_plan(project_path: Path, plan_id: str) -> None:
+    with project_metadata_lock(project_path):
+        path = _storyboard_plan_path(project_path, plan_id)
+        current = load_json_or_none(path)
+        if not isinstance(current, dict) or current.get("deleted_at"):
+            raise FileNotFoundError(plan_id)
+        current["deleted_at"] = _now()
+        current["updated_at"] = current["deleted_at"]
+        atomic_write_json(path, current)
 
 
 def default_canvas_state() -> dict[str, Any]:
@@ -506,12 +546,14 @@ __all__ = [
     "MAX_STORYBOARD_SHOTS",
     "build_creation_export",
     "create_storyboard_plan",
+    "delete_storyboard_plan",
     "default_canvas_state",
     "delete_reference_upload",
     "detach_reference_upload",
     "extract_reference_text",
     "list_creation_requests",
     "list_reference_uploads",
+    "list_storyboard_plans",
     "load_canvas_state",
     "load_storyboard_plan",
     "new_request_id",

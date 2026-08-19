@@ -1018,6 +1018,15 @@ class API {
     });
   }
 
+  static async listFreeStoryboardPlans(
+    projectName: string,
+    limit = 50,
+  ): Promise<{ plans: FreeStoryboardPlan[] }> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/free-creation-storyboards?limit=${limit}`,
+    );
+  }
+
   static async getFreeStoryboardPlan(
     projectName: string,
     planId: string,
@@ -1030,11 +1039,21 @@ class API {
   static async updateFreeStoryboardPlan(
     projectName: string,
     planId: string,
-    payload: { title: string; shots: FreeStoryboardShot[] },
+    payload: { title: string; shots: FreeStoryboardShot[]; expected_revision?: number },
   ): Promise<{ success: boolean; plan: FreeStoryboardPlan }> {
     return this.request(
       `/projects/${encodeURIComponent(projectName)}/free-creation-storyboards/${encodeURIComponent(planId)}`,
       { method: "PUT", body: JSON.stringify(payload) },
+    );
+  }
+
+  static async deleteFreeStoryboardPlan(
+    projectName: string,
+    planId: string,
+  ): Promise<{ success: boolean }> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/free-creation-storyboards/${encodeURIComponent(planId)}`,
+      { method: "DELETE" },
     );
   }
 

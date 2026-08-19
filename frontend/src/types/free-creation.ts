@@ -139,7 +139,8 @@ export interface FreeStoryboardShot {
 export interface FreeStoryboardPlan {
   plan_id: string;
   title: string;
-  source?: { type: "upload"; reference_id: string } | null;
+  source?: { type: "upload"; reference_id: string } | { type: "prompt"; text: string } | null;
+  revision: number;
   status: "draft" | "generating" | "ready" | "failed";
   shots: FreeStoryboardShot[];
   created_at: string;

@@ -446,4 +446,5 @@ MESSAGES = {
     "free_creation_storyboard_not_found": "Storyboard plan '{id}' does not exist",
     "free_creation_storyboard_order_invalid": "Storyboard shot order is invalid",
     "free_creation_storyboard_shot_not_found": "The storyboard shot does not exist",
+    "free_creation_storyboard_conflict": "This storyboard changed elsewhere. Reload it before saving",
 }
