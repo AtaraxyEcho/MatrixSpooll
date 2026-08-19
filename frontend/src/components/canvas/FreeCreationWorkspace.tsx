@@ -11,6 +11,7 @@ import {
   Pencil,
   Plus,
   Send,
+  Settings2,
   Video,
   X,
 } from "lucide-react";
@@ -37,6 +38,8 @@ import { FreeCreationSessionSummary } from "./FreeCreationSessionSummary";
 import {
   DurationControl,
   ImageParameterControl,
+  HomeSelect,
+  modelLabel,
   VideoParameterControl,
 } from "@/components/pages/HomeHeroComposer";
 
@@ -484,17 +487,21 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
         <div className="rounded-md border border-[var(--color-hairline)] bg-[var(--color-background)] transition-colors focus-within:border-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent-dim)]">
           <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void handleSubmit(); } }} rows={2} maxLength={10000} placeholder={t("free_creation_prompt")} className="min-h-[68px] w-full resize-none bg-transparent px-3 py-2.5 text-sm leading-5 outline-none placeholder:text-[var(--color-text-muted)]" disabled={readOnly || submitting} />
           <div className="flex items-center gap-1.5 border-t border-[var(--color-hairline)] px-2 py-2">
-            <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,audio/wav,audio/mpeg,text/plain,text/markdown,application/rtf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.txt,.text,.md,.markdown,.rtf,.doc,.docx" className="sr-only" onChange={(event) => void uploadReferences(event.target.files)} />
+            <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,audio/wav,audio/mpeg,text/plain,text/markdown,application/rtf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,application/epub+zip,.txt,.text,.md,.markdown,.rtf,.doc,.docx,.pdf,.epub" className="sr-only" onChange={(event) => void uploadReferences(event.target.files)} />
             <button type="button" onClick={() => fileInputRef.current?.click()} disabled={readOnly || uploading || submitting} className="focus-ring grid h-8 w-8 shrink-0 place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)] disabled:opacity-50" aria-label={t("free_creation_upload_reference")} title={t("free_creation_upload_reference")}>{uploading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Plus className="h-4 w-4" aria-hidden />}</button>
 
-            <div className="flex min-w-0 items-center gap-1.5">
-              <label className="min-w-28 text-[10px] text-[var(--color-text-muted)]">
-                <span className="sr-only">{t("free_creation_model")}</span>
-                <select value={selectedModel} onChange={(event) => setModel(event.target.value)} className="focus-ring h-8 max-w-36 rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-[11px] text-[var(--color-text)]">
-                  <option value="auto">{t("free_creation_model_auto")}</option>
-                  {modelOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                </select>
-              </label>
+            <div className="flex min-w-0 items-end gap-1.5">
+              <HomeSelect
+                label={t("home_model")}
+                value={selectedModel}
+                icon={Settings2}
+                className="home-model-control free-creation-model-control"
+                options={[
+                  { value: "auto", label: t("home_model_auto") },
+                  ...modelOptions.map((option) => ({ value: option, label: modelLabel(option, t("home_model_auto")) })),
+                ]}
+                onChange={setModel}
+              />
               {effectiveMediaType === "image" ? (
                 <ImageParameterControl
                   label={t("home_image_settings")}
@@ -585,7 +592,6 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
               ) : null}
             </div>
 
-            <div className="min-w-0 flex-1 truncate px-1 text-[11px] text-[var(--color-text-muted)]">{selectedModel === "auto" ? t("free_creation_model_auto") : selectedModel} · {effectiveAspectRatio}{selectedResolution ? ` · ${selectedResolution}` : ""}{effectiveMediaType === "video" ? ` · ${safeDuration}s` : ` · ${imageWidth}x${imageHeight}`}</div>
             <button type="button" onClick={() => void handleSubmit()} disabled={!prompt.trim() || readOnly || submitting || !capabilitiesReady} className="focus-ring grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[var(--color-accent)] text-[oklch(0.15_0_0)] transition-colors hover:bg-[var(--color-accent-2)] disabled:cursor-not-allowed disabled:opacity-40" aria-label={t("free_creation_submit")} title={t("free_creation_submit")}>{submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}</button>
           </div>
         </div>

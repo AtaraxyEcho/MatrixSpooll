@@ -20,7 +20,7 @@ from lib.path_safety import safe_join
 ReferenceType = Literal["upload", "creation"]
 ExportScope = Literal["selected", "request", "all"]
 
-_TEXT_REFERENCE_EXTENSIONS = frozenset({".txt", ".text", ".md", ".markdown", ".rtf", ".doc", ".docx"})
+_TEXT_REFERENCE_EXTENSIONS = frozenset({".txt", ".text", ".md", ".markdown", ".rtf", ".doc", ".docx", ".pdf", ".epub"})
 _REFERENCE_EXTENSIONS = (
     frozenset({".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov", ".wav", ".mp3"}) | _TEXT_REFERENCE_EXTENSIONS
 )
@@ -150,6 +150,17 @@ def extract_reference_text(path: Path) -> str | None:
             from lib.source_loader.docx import DocxExtractor
 
             return DocxExtractor().extract(path).text
+        except Exception:  # noqa: BLE001
+            return None
+    if suffix in {".pdf", ".epub"}:
+        try:
+            if suffix == ".pdf":
+                from lib.source_loader.pdf import PdfOxideExtractor
+
+                return PdfOxideExtractor().extract(path).text
+            from lib.source_loader.epub import EpubExtractor
+
+            return EpubExtractor().extract(path).text
         except Exception:  # noqa: BLE001
             return None
     if suffix == ".doc":

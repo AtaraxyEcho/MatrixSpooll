@@ -56,7 +56,7 @@ function shortProjectTitle(prompt: string): string {
   return withoutPunctuation.slice(0, 32) || "Untitled creation";
 }
 
-function modelLabel(model: string, autoLabel: string): string {
+export function modelLabel(model: string, autoLabel: string): string {
   if (model === "auto") return autoLabel;
   const [, name] = model.split("/");
   return name || model;
@@ -110,7 +110,7 @@ interface HomeSelectProps<T extends HomeSelectValue> {
   className?: string;
 }
 
-function HomeSelect<T extends HomeSelectValue>({
+export function HomeSelect<T extends HomeSelectValue>({
   label,
   value,
   options,

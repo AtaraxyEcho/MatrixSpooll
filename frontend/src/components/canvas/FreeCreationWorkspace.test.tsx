@@ -56,10 +56,9 @@ describe("FreeCreationWorkspace", () => {
     render(<FreeCreationWorkspace projectName="demo" />);
 
     fireEvent.click(screen.getByRole("tab", { name: t("free_creation_image") }));
-    await screen.findByRole("option", { name: "ark/image-model" });
-    fireEvent.change(await screen.findByLabelText(t("free_creation_model")), {
-      target: { value: "ark/image-model" },
-    });
+    const imageModel = await screen.findByRole("button", { name: t("free_creation_model") });
+    fireEvent.click(imageModel);
+    fireEvent.click(await screen.findByRole("option", { name: "image-model" }));
     fireEvent.change(screen.getByLabelText(t("free_creation_resolution")), {
       target: { value: "2k" },
     });
@@ -133,11 +132,9 @@ describe("FreeCreationWorkspace", () => {
 
     const editButtons = await screen.findAllByRole("button", { name: t("free_creation_use_as_parent") });
     fireEvent.click(editButtons[0]);
-    const videoModel = screen.getByLabelText(t("free_creation_model"));
-    await waitFor(() => expect(screen.getByRole("option", { name: "ark/video-model" })).toBeInTheDocument());
-    fireEvent.change(videoModel, {
-      target: { value: "ark/video-model" },
-    });
+    const videoModel = screen.getByRole("button", { name: t("free_creation_model") });
+    fireEvent.click(videoModel);
+    fireEvent.click(await screen.findByRole("option", { name: "video-model" }));
     fireEvent.change(screen.getByPlaceholderText(t("free_creation_prompt")), {
       target: { value: "make the camera movement slower" },
     });

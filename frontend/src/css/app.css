@@ -293,6 +293,21 @@ body {
     flex-basis: 176px;
 }
 
+.free-creation-model-control {
+    width: 148px;
+    flex-basis: 148px;
+}
+
+.free-creation-model-control .home-param-label {
+    margin-bottom: 4px;
+}
+
+.free-creation-model-control .home-param-trigger {
+    min-height: 36px;
+    border-radius: 8px;
+    padding: 6px 8px;
+}
+
 .home-generation-parameters {
     width: max-content;
     max-width: 100%;
