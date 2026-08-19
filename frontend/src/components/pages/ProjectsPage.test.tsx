@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { memoryLocation } from "wouter/memory-location";
 import { API } from "@/api";
+import i18n from "@/i18n";
 import { useAppStore } from "@/stores/app-store";
 import { useProjectsStore } from "@/stores/projects-store";
 import { ProjectsPage } from "@/components/pages/ProjectsPage";
+
+const t = i18n.getFixedT("zh", "dashboard");
 
 vi.mock("@/components/pages/CreateProjectModal", () => ({
   CreateProjectModal: () => <div data-testid="create-project-modal">Create Project Modal</div>,
@@ -79,11 +82,12 @@ describe("ProjectsPage", () => {
     });
 
     const { location } = renderPage();
-    fireEvent.click(await screen.findByRole("tab", { name: "图片生成" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "创作提示词" }), {
+    fireEvent.click(await screen.findByRole("button", { name: t("free_creation_mode") }));
+    fireEvent.click(screen.getByRole("option", { name: t("free_creation_mode_image") }));
+    fireEvent.change(screen.getByRole("textbox", { name: t("home_prompt_label") }), {
       target: { value: "纸飞机穿过云层" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "立即生成" }));
+    fireEvent.click(screen.getByRole("button", { name: t("home_generate") }));
 
     await waitFor(() => expect(createProject).toHaveBeenCalledTimes(1));
     expect(createProject).toHaveBeenCalledWith({
@@ -97,7 +101,7 @@ describe("ProjectsPage", () => {
         quantity: 1,
       }),
     });
-    expect(location.history?.at(-1)).toBe("/app/projects/paper-plane");
+    expect(location.history?.at(-1)).toBe("/app/projects/paper-plane?mode=image");
   });
 
   it("renders project cards when data exists", async () => {

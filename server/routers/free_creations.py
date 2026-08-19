@@ -35,16 +35,20 @@ from server.services.free_creation_tasks import (
 )
 from server.services.free_creation_workspace import (
     MAX_REFERENCE_BYTES,
+    MAX_STORYBOARD_SHOTS,
     build_creation_export,
+    create_storyboard_plan,
     delete_reference_upload,
     detach_reference_upload,
     list_reference_uploads,
     load_canvas_state,
+    load_storyboard_plan,
     new_request_id,
     read_reference_preview,
     resolve_reference_claims,
     save_canvas_state,
     save_reference_upload,
+    save_storyboard_plan,
     write_creation_request,
 )
 from server.services.generation_context import ImageLaneRequest, VideoLaneRequest, resolve_generation_context
@@ -99,6 +103,9 @@ class FreeCreationRequest(BaseModel):
     duration_seconds: int | None = Field(default=None, gt=0)
     parent_creation_id: str | None = Field(default=None, pattern=r"^c_[a-f0-9]{20}$")
     prompt_mode: PromptMode = "original"
+    storyboard_plan_id: str | None = Field(default=None, pattern=r"^sp_[a-f0-9]{20}$")
+    storyboard_shot_id: str | None = Field(default=None, min_length=1, max_length=80)
+    sequence_index: int | None = Field(default=None, ge=0, le=100)
 
     @field_validator("prompt")
     @classmethod
@@ -129,6 +136,11 @@ class FreeCreationRequest(BaseModel):
             raise ValueError("size is only supported for image or edit")
         if self.output_type == "edit" and self.quantity != 1:
             raise ValueError("quantity is only supported for image or video")
+        storyboard_fields = (self.storyboard_plan_id, self.storyboard_shot_id, self.sequence_index)
+        if any(value is not None for value in storyboard_fields) and not all(
+            value is not None for value in storyboard_fields
+        ):
+            raise ValueError("storyboard metadata must be complete")
         return self
 
 
@@ -197,6 +209,32 @@ class FreeCreationExportRequest(BaseModel):
         if self.scope == "request" and not self.request_id:
             raise ValueError("request_id is required for request export")
         return self
+
+
+class StoryboardPlanRequest(BaseModel):
+    prompt: str | None = Field(default=None, max_length=10000)
+    reference_id: str | None = Field(default=None, pattern=r"^r_[a-f0-9]{20}$")
+    title: str = Field(default="", max_length=200)
+    max_shots: int = Field(default=MAX_STORYBOARD_SHOTS, ge=1, le=MAX_STORYBOARD_SHOTS)
+
+    @model_validator(mode="after")
+    def validate_source(self) -> StoryboardPlanRequest:
+        if not (self.prompt and self.prompt.strip()) and not self.reference_id:
+            raise ValueError("storyboard prompt or reference is required")
+        return self
+
+
+class StoryboardShotUpdate(BaseModel):
+    shot_id: str = Field(min_length=1, max_length=80)
+    sequence_index: int = Field(ge=0, le=100)
+    title: str = Field(min_length=1, max_length=200)
+    prompt: str = Field(min_length=1, max_length=10000)
+    duration_seconds: int = Field(default=5, ge=1, le=120)
+
+
+class StoryboardPlanUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    shots: list[StoryboardShotUpdate] = Field(min_length=1, max_length=MAX_STORYBOARD_SHOTS)
 
 
 def _load_free_project(project_name: str) -> tuple[dict, Path]:
@@ -358,6 +396,9 @@ def _free_request_payload(req: FreeCreationRequest, media_type: Literal["image",
         "duration_seconds": req.duration_seconds,
         "parent_creation_id": req.parent_creation_id,
         "prompt_mode": req.prompt_mode,
+        "storyboard_plan_id": req.storyboard_plan_id,
+        "storyboard_shot_id": req.storyboard_shot_id,
+        "sequence_index": req.sequence_index,
     }
     if req.model:
         provider, separator, model = req.model.partition("/")
@@ -659,6 +700,14 @@ async def get_free_creation_capabilities(
 @router.post("/projects/{project_name}/creations")
 async def create_free_creation(project_name: str, req: FreeCreationRequest, user: CurrentUser):
     project, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    storyboard_plan: dict[str, Any] | None = None
+    if req.storyboard_plan_id:
+        storyboard_plan = await asyncio.to_thread(load_storyboard_plan, project_path, req.storyboard_plan_id)
+        if storyboard_plan is None:
+            raise NotFoundError("free_creation_storyboard_not_found", id=req.storyboard_plan_id)
+        shot_ids = {item.get("shot_id") for item in storyboard_plan.get("shots", []) if isinstance(item, dict)}
+        if req.storyboard_shot_id not in shot_ids:
+            raise BadRequestError("free_creation_storyboard_shot_not_found")
     public_references = [
         item if isinstance(item, str) else item.model_dump(exclude_none=True) for item in req.references
     ]
@@ -775,6 +824,9 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
                 "model": request_payload.get("model"),
                 "duration_seconds": request_payload.get("duration_seconds"),
                 "parent_creation_id": execution_req.parent_creation_id,
+                "storyboard_plan_id": execution_req.storyboard_plan_id,
+                "storyboard_shot_id": execution_req.storyboard_shot_id,
+                "sequence_index": execution_req.sequence_index,
             }
             enqueued.append({"creation_id": creation_id, "task_id": task_id, "metadata": metadata})
             await asyncio.to_thread(
@@ -801,6 +853,9 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
                 "prompt": execution_req.prompt,
                 "reference_claims": reference_claims,
                 "duration_seconds": request_payload.get("duration_seconds"),
+                "storyboard_plan_id": execution_req.storyboard_plan_id,
+                "storyboard_shot_id": execution_req.storyboard_shot_id,
+                "sequence_index": execution_req.sequence_index,
                 "creation_ids": [item["creation_id"] for item in enqueued],
             },
         )
@@ -871,6 +926,77 @@ async def list_free_creations(
     page = creations[start : start + limit]
     next_cursor = page[-1].get("creation_id") if start + limit < len(creations) and page else None
     return {"creations": page, "next_cursor": next_cursor, "total": len(creations)}
+
+
+@router.post("/projects/{project_name}/free-creation-storyboards/plan")
+async def create_free_storyboard_plan(project_name: str, req: StoryboardPlanRequest):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    source: dict[str, Any] | None = None
+    text = req.prompt.strip() if req.prompt else ""
+    if req.reference_id:
+        references = await asyncio.to_thread(list_reference_uploads, project_path)
+        record = next((item for item in references if item.get("reference_id") == req.reference_id), None)
+        if not record or record.get("media_type") != "text":
+            raise BadRequestError("free_creation_storyboard_source_invalid")
+        try:
+            preview = await asyncio.to_thread(read_reference_preview, project_path, req.reference_id)
+        except FileNotFoundError as exc:
+            raise NotFoundError("free_creation_reference_not_found") from exc
+        text = str(preview.get("text") or "").strip()
+        source = {"type": "upload", "reference_id": req.reference_id}
+    try:
+        plan = await asyncio.to_thread(
+            create_storyboard_plan,
+            project_path,
+            title=req.title or (text.splitlines()[0][:80] if text else "Storyboard"),
+            source=source,
+            text=text,
+            max_shots=req.max_shots,
+        )
+    except ValueError as exc:
+        raise BadRequestError("free_creation_storyboard_source_invalid") from exc
+    return {"success": True, "plan": plan}
+
+
+@router.get("/projects/{project_name}/free-creation-storyboards/{plan_id}")
+async def get_free_storyboard_plan(project_name: str, plan_id: str):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    plan = await asyncio.to_thread(load_storyboard_plan, project_path, plan_id)
+    if plan is None:
+        raise NotFoundError("free_creation_storyboard_not_found", id=plan_id)
+    return {"plan": plan}
+
+
+@router.put("/projects/{project_name}/free-creation-storyboards/{plan_id}")
+async def update_free_storyboard_plan(project_name: str, plan_id: str, req: StoryboardPlanUpdate):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    plan = await asyncio.to_thread(load_storyboard_plan, project_path, plan_id)
+    if plan is None:
+        raise NotFoundError("free_creation_storyboard_not_found", id=plan_id)
+    shot_ids = [shot.shot_id for shot in req.shots]
+    sequence_indexes = [shot.sequence_index for shot in req.shots]
+    if len(set(shot_ids)) != len(shot_ids) or len(set(sequence_indexes)) != len(sequence_indexes):
+        raise BadRequestError("free_creation_storyboard_order_invalid")
+    old_shots = {
+        item.get("shot_id"): item
+        for item in plan.get("shots", [])
+        if isinstance(item, dict) and isinstance(item.get("shot_id"), str)
+    }
+    shots = []
+    for shot in req.shots:
+        existing = old_shots.get(shot.shot_id, {})
+        shots.append(
+            {
+                **existing,
+                **shot.model_dump(),
+            }
+        )
+    updated = await asyncio.to_thread(
+        save_storyboard_plan,
+        project_path,
+        {**plan, "title": req.title, "shots": sorted(shots, key=lambda item: item["sequence_index"])},
+    )
+    return {"success": True, "plan": updated}
 
 
 @router.get("/projects/{project_name}/free-creation-canvas")
@@ -1096,6 +1222,9 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
         model=creation.get("model"),
         duration_seconds=creation.get("duration_seconds"),
         parent_creation_id=creation.get("parent_creation_id"),
+        storyboard_plan_id=creation.get("storyboard_plan_id"),
+        storyboard_shot_id=creation.get("storyboard_shot_id"),
+        sequence_index=creation.get("sequence_index"),
     )
     request_payload = await _preflight_free_creation(
         project_name,

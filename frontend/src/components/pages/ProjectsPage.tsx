@@ -1065,9 +1065,9 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
 
       {mode === "home" ? (
         <HomeHeroComposer
-          onCreated={(projectName, outputType) => {
+          onCreated={(projectName, composerMode) => {
             void fetchProjects();
-            navigate(`/app/projects/${projectName}?output=${outputType}`);
+            navigate(`/app/projects/${projectName}?mode=${composerMode}`);
           }}
         />
       ) : null}

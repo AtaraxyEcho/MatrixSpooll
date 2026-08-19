@@ -1,18 +1,24 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  Bot,
   Check,
   ChevronDown,
   Clock3,
   Copy,
   Crop,
+  FileText,
   Image as ImageIcon,
   Loader2,
   Maximize2,
   Monitor,
+  Plus,
+  Search,
   Settings2,
+  SlidersHorizontal,
   Sparkles,
   Video,
   WandSparkles,
+  X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { API } from "@/api";
@@ -20,14 +26,19 @@ import { ASPECT_RATIO_OPTIONS } from "@/components/shared/AspectRatioPicker";
 import type {
   CreateFreeCreationRequest,
   FreeCreationCapabilities,
+  FreeCreationReferenceClaim,
+  FreeCreationReferenceRole,
 } from "@/types";
 import { errMsg } from "@/utils/async";
 import { useAppStore } from "@/stores/app-store";
+import { useAssistantStore } from "@/stores/assistant-store";
 
 interface HomeHeroComposerProps {
-  onCreated: (projectName: string, outputType: "image" | "video") => void;
+  onCreated: (projectName: string, mode: HomeComposerMode) => void;
 }
 
+type HomeComposerMode = "agent" | "image" | "video";
+export type AgentGenerationPreference = "image" | "video";
 type ModelOptions = { image: string[]; video: string[] };
 type CapabilityResult = {
   key: string;
@@ -45,6 +56,8 @@ const IMAGE_RESOLUTION_PIXELS: Record<(typeof IMAGE_RESOLUTIONS)[number], number
 const QUANTITIES = [1, 2, 3, 4] as const;
 const MIN_IMAGE_DIMENSION = 256;
 const MAX_IMAGE_DIMENSION = 4096;
+const MAX_HOME_REFERENCES = 9;
+const HOME_REFERENCE_ACCEPT = "image/png,image/jpeg,image/webp,video/mp4,video/quicktime,audio/wav,audio/mpeg,text/plain,text/markdown,application/pdf,.txt,.md,.markdown,.pdf";
 
 function unique(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
@@ -58,8 +71,8 @@ function shortProjectTitle(prompt: string): string {
 
 export function modelLabel(model: string, autoLabel: string): string {
   if (model === "auto") return autoLabel;
-  const [, name] = model.split("/");
-  return name || model;
+  const separator = model.indexOf("/");
+  return separator >= 0 ? model.slice(separator + 1) : model;
 }
 
 function dimensionsForPreset(resolution: string, ratio: string) {
@@ -109,6 +122,18 @@ interface HomeSelectProps<T extends HomeSelectValue> {
   align?: "left" | "right";
   className?: string;
   hint?: string;
+  hideLabel?: boolean;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  emptyLabel?: string;
+  placement?: "auto" | "top";
+}
+
+function referenceRoleForFile(file: File): FreeCreationReferenceRole {
+  if (file.type.startsWith("video/")) return "reference_video";
+  if (file.type.startsWith("audio/")) return "reference_audio";
+  if (file.type.startsWith("text/") || /\.(?:txt|md|markdown|pdf)$/i.test(file.name)) return "prompt_context";
+  return "reference_image";
 }
 
 export function HomeSelect<T extends HomeSelectValue>({
@@ -120,10 +145,18 @@ export function HomeSelect<T extends HomeSelectValue>({
   align = "left",
   className = "",
   hint,
+  hideLabel = false,
+  searchable = false,
+  searchPlaceholder,
+  emptyLabel,
+  placement = "auto",
 }: HomeSelectProps<T>) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [popoverLayout, setPopoverLayout] = useState<{ left: number; width: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const pendingFocusIndexRef = useRef<number | null>(null);
   const typeaheadRef = useRef("");
@@ -132,6 +165,38 @@ export function HomeSelect<T extends HomeSelectValue>({
   const hintId = useId();
   const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));
   const selectedOption = options[selectedIndex] ?? options[0];
+  const visibleOptions = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    if (!normalized) return options;
+    return options.filter((option) => `${option.label} ${String(option.value)}`.toLocaleLowerCase().includes(normalized));
+  }, [options, query]);
+  const visibleSelectedIndex = Math.max(0, visibleOptions.findIndex((option) => option.value === value));
+  const longestOptionLength = useMemo(
+    () => Math.max(...options.map((option) => option.label.length), label.length),
+    [label, options],
+  );
+
+  useLayoutEffect(() => {
+    if (!open || !searchable || !triggerRef.current) {
+      setPopoverLayout(null);
+      return;
+    }
+    const updateLayout = () => {
+      const triggerRect = triggerRef.current?.getBoundingClientRect();
+      if (!triggerRect) return;
+      const viewportPadding = 16;
+      const preferredWidth = Math.max(420, longestOptionLength * 8 + 72);
+      const width = Math.min(preferredWidth, window.innerWidth - viewportPadding * 2);
+      const absoluteLeft = Math.min(
+        Math.max(viewportPadding, triggerRect.left),
+        Math.max(viewportPadding, window.innerWidth - viewportPadding - width),
+      );
+      setPopoverLayout({ left: absoluteLeft - triggerRect.left, width });
+    };
+    updateLayout();
+    window.addEventListener("resize", updateLayout);
+    return () => window.removeEventListener("resize", updateLayout);
+  }, [longestOptionLength, open, searchable]);
 
   const clearTypeahead = () => {
     typeaheadRef.current = "";
@@ -174,14 +239,16 @@ export function HomeSelect<T extends HomeSelectValue>({
   }, [open]);
 
   useEffect(() => {
-    if (open) optionRefs.current[selectedIndex]?.focus();
-  }, [open, selectedIndex]);
+    if (!open) return;
+    if (searchable) searchRef.current?.focus();
+    else optionRefs.current[selectedIndex]?.focus();
+  }, [open, searchable, selectedIndex]);
 
   useEffect(() => {
-    if (!open || pendingFocusIndexRef.current === null) return;
+    if (!open || searchable || pendingFocusIndexRef.current === null) return;
     optionRefs.current[pendingFocusIndexRef.current]?.focus();
     pendingFocusIndexRef.current = null;
-  }, [open]);
+  }, [open, searchable]);
 
   useEffect(() => () => {
     if (typeaheadTimerRef.current) clearTimeout(typeaheadTimerRef.current);
@@ -190,23 +257,25 @@ export function HomeSelect<T extends HomeSelectValue>({
   const selectOption = (nextValue: T) => {
     onChange(nextValue);
     setOpen(false);
+    setQuery("");
     clearTypeahead();
     triggerRef.current?.focus();
   };
 
   const moveFocus = (index: number) => {
-    optionRefs.current[(index + options.length) % options.length]?.focus();
+    if (!visibleOptions.length) return;
+    optionRefs.current[(index + visibleOptions.length) % visibleOptions.length]?.focus();
   };
 
   return (
     <div
       ref={rootRef}
-      className={`home-param-control${align === "right" ? " home-param-control--right" : ""}${className ? ` ${className}` : ""}`}
+      className={`home-param-control${align === "right" ? " home-param-control--right" : ""}${placement === "top" ? " home-param-control--top" : ""}${className ? ` ${className}` : ""}`}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
       }}
     >
-      <span className="home-param-label">{label}</span>
+      <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
         ref={triggerRef}
         type="button"
@@ -214,9 +283,12 @@ export function HomeSelect<T extends HomeSelectValue>({
         aria-label={label}
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
-        aria-haspopup="listbox"
+        aria-haspopup={searchable ? "dialog" : "listbox"}
         aria-describedby={hint ? hintId : undefined}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => setOpen((current) => {
+          if (current) setQuery("");
+          return !current;
+        })}
         onKeyDown={(event) => {
           if (event.key.length === 1 && event.key !== " " && !event.altKey && !event.ctrlKey && !event.metaKey) {
             event.preventDefault();
@@ -237,51 +309,91 @@ export function HomeSelect<T extends HomeSelectValue>({
         />
       </button>
       {open ? (
-        <div id={listboxId} className="home-param-popover" role="listbox" aria-label={label}>
-          {options.map((option, index) => {
-            const selected = option.value === value;
-            return (
-              <button
-                key={String(option.value)}
-                ref={(element) => {
-                  optionRefs.current[index] = element;
-                }}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                className="home-param-option"
-                onClick={() => selectOption(option.value)}
+        <div
+          id={listboxId}
+          className="home-param-popover"
+          role={searchable ? "dialog" : "listbox"}
+          aria-label={label}
+          style={searchable && popoverLayout ? {
+            left: popoverLayout.left,
+            width: popoverLayout.width,
+          } : undefined}
+        >
+          {searchable ? (
+            <label className="home-param-search">
+              <Search className="h-3.5 w-3.5" aria-hidden />
+              <input
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key.length === 1 && event.key !== " " && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                  if (event.key === "ArrowDown") {
                     event.preventDefault();
-                    focusByTypeahead(event.key);
-                  } else if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    moveFocus(index + 1);
-                  } else if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    moveFocus(index - 1);
-                  } else if (event.key === "Home") {
-                    event.preventDefault();
-                    moveFocus(0);
-                  } else if (event.key === "End") {
-                    event.preventDefault();
-                    moveFocus(options.length - 1);
-                  } else if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    selectOption(option.value);
+                    optionRefs.current[visibleSelectedIndex]?.focus();
                   } else if (event.key === "Escape") {
                     event.preventDefault();
                     setOpen(false);
+                    setQuery("");
                     triggerRef.current?.focus();
                   }
                 }}
-              >
-                <span className="truncate">{option.label}</span>
-                {selected ? <Check className="home-param-option__check" aria-hidden /> : null}
-              </button>
-            );
-          })}
+                placeholder={searchPlaceholder}
+                aria-label={searchPlaceholder || label}
+              />
+            </label>
+          ) : null}
+          <div
+            className="home-param-options"
+            role={searchable ? "listbox" : undefined}
+            aria-label={searchable ? label : undefined}
+          >
+            {visibleOptions.map((option, index) => {
+              const selected = option.value === value;
+              return (
+                <button
+                  key={String(option.value)}
+                  ref={(element) => {
+                    optionRefs.current[index] = element;
+                  }}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  className="home-param-option"
+                  onClick={() => selectOption(option.value)}
+                  onKeyDown={(event) => {
+                    if (event.key.length === 1 && event.key !== " " && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                      event.preventDefault();
+                      focusByTypeahead(event.key);
+                    } else if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      moveFocus(index + 1);
+                    } else if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      moveFocus(index - 1);
+                    } else if (event.key === "Home") {
+                      event.preventDefault();
+                      moveFocus(0);
+                    } else if (event.key === "End") {
+                      event.preventDefault();
+                      moveFocus(visibleOptions.length - 1);
+                    } else if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      selectOption(option.value);
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      setOpen(false);
+                      triggerRef.current?.focus();
+                    }
+                  }}
+                >
+                  <span className={searchable ? "home-param-option__label" : "truncate"}>{option.label}</span>
+                  {selected ? <Check className="home-param-option__check" aria-hidden /> : null}
+                </button>
+              );
+            })}
+            {visibleOptions.length === 0 ? <p className="home-param-empty">{emptyLabel}</p> : null}
+          </div>
         </div>
       ) : null}
       {hint ? <span id={hintId} className="home-param-hint">{hint}</span> : null}
@@ -309,6 +421,7 @@ export interface ImageParameterControlProps {
   onResolutionChange: (value: string) => void;
   onQuantityChange: (value: number) => void;
   onDimensionsCommit: (width: number, height: number) => void;
+  hideLabel?: boolean;
 }
 
 export function ImageParameterControl({
@@ -331,6 +444,7 @@ export function ImageParameterControl({
   onResolutionChange,
   onQuantityChange,
   onDimensionsCommit,
+  hideLabel = false,
 }: ImageParameterControlProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -374,7 +488,7 @@ export function ImageParameterControl({
         }
       }}
     >
-      <span className="home-param-label">{label}</span>
+      <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
         type="button"
         className="home-combined-trigger home-combined-trigger--image"
@@ -514,6 +628,7 @@ export interface VideoParameterControlProps {
   onRatioChange: (value: string) => void;
   onResolutionChange: (value: string) => void;
   onQuantityChange: (value: number) => void;
+  hideLabel?: boolean;
 }
 
 export function VideoParameterControl({
@@ -530,6 +645,7 @@ export function VideoParameterControl({
   onRatioChange,
   onResolutionChange,
   onQuantityChange,
+  hideLabel = false,
 }: VideoParameterControlProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -553,7 +669,7 @@ export function VideoParameterControl({
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
       }}
     >
-      <span className="home-param-label">{label}</span>
+      <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
         type="button"
         className="home-combined-trigger home-combined-trigger--video"
@@ -644,9 +760,129 @@ export interface DurationControlProps {
   durations?: readonly number[];
   onChange: (value: number) => void;
   ariaLabel?: string;
+  hideLabel?: boolean;
 }
 
-export function DurationControl({ label, minimumLabel, value, durations, onChange, ariaLabel = label }: DurationControlProps) {
+export interface AgentParameterControlProps {
+  label: string;
+  preferenceLabel: string;
+  imageLabel: string;
+  videoLabel: string;
+  ratioLabel: string;
+  preference: AgentGenerationPreference;
+  ratio: string;
+  ratioOptions: ReadonlyArray<{ value: string; label: string }>;
+  onPreferenceChange: (value: AgentGenerationPreference) => void;
+  onRatioChange: (value: string) => void;
+  hideLabel?: boolean;
+  placement?: "auto" | "top";
+}
+
+export function AgentParameterControl({
+  label,
+  preferenceLabel,
+  imageLabel,
+  videoLabel,
+  ratioLabel,
+  preference,
+  ratio,
+  ratioOptions,
+  onPreferenceChange,
+  onRatioChange,
+  hideLabel = false,
+  placement = "auto",
+}: AgentParameterControlProps) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
+
+  return (
+    <div
+      ref={rootRef}
+      className={`home-param-control home-agent-parameters${placement === "top" ? " home-param-control--top" : ""}`}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
+      <button
+        type="button"
+        className="home-param-trigger"
+        aria-label={label}
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="home-param-trigger__value">
+          <SlidersHorizontal className="home-param-trigger__icon" aria-hidden />
+          <span className="truncate">{preference === "image" ? imageLabel : videoLabel} · {ratio}</span>
+        </span>
+        <ChevronDown className={`home-param-trigger__chevron${open ? " is-open" : ""}`} aria-hidden />
+      </button>
+      {open ? (
+        <div id={panelId} className="home-param-popover home-agent-parameters__popover" role="dialog" aria-label={label}>
+          <fieldset className="home-popover-section">
+            <legend>{preferenceLabel}</legend>
+            <div className="home-detail-options home-detail-options--two">
+              {([
+                ["image", imageLabel, ImageIcon],
+                ["video", videoLabel, Video],
+              ] as const).map(([value, optionLabel, OptionIcon]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className="home-detail-option inline-flex items-center justify-center gap-1.5"
+                  aria-pressed={preference === value}
+                  onClick={() => onPreferenceChange(value)}
+                >
+                  <OptionIcon className="h-3.5 w-3.5" aria-hidden />
+                  {optionLabel}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset className="home-popover-section">
+            <legend>{ratioLabel}</legend>
+            <div className="home-ratio-options">
+              {ratioOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className="home-detail-option home-ratio-option"
+                  aria-pressed={ratio === option.value}
+                  onClick={() => onRatioChange(option.value)}
+                >
+                  <span className="home-ratio-option__shape" style={{ aspectRatio: option.value.replace(":", " / ") }} aria-hidden />
+                  <span>{option.label}</span>
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function DurationControl({
+  label,
+  minimumLabel,
+  value,
+  durations,
+  onChange,
+  ariaLabel = label,
+  hideLabel = false,
+}: DurationControlProps) {
   const supported = useMemo(
     () => (durations?.length ? [...durations].sort((left, right) => left - right) : [value]),
     [durations, value],
@@ -679,7 +915,7 @@ export function DurationControl({ label, minimumLabel, value, durations, onChang
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
       }}
     >
-      <span className="home-param-label">{label}</span>
+      <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
         type="button"
         className="home-param-trigger"
@@ -741,6 +977,11 @@ export function DurationControl({ label, minimumLabel, value, durations, onChang
 
 export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const { t } = useTranslation("dashboard");
+  const referenceInputRef = useRef<HTMLInputElement>(null);
+  const [composerMode, setComposerMode] = useState<HomeComposerMode>("video");
+  const [agentPreference, setAgentPreference] = useState<AgentGenerationPreference>("video");
+  const [agentAspectRatio, setAgentAspectRatio] = useState("16:9");
+  const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
   const [outputType, setOutputType] = useState<"image" | "video">("video");
   const [prompt, setPrompt] = useState("");
   const [videoAspectRatio, setVideoAspectRatio] = useState("16:9");
@@ -843,6 +1084,24 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const videoDurations = capabilities?.output_type === "video" ? capabilities.durations : [];
   const effectiveDuration = videoDurations.includes(duration) ? duration : videoDurations[0] ?? 4;
   const aspectRatio = outputType === "image" ? effectiveImageAspectRatio : effectiveVideoAspectRatio;
+  const agentRatioOptions = useMemo(() => ASPECT_RATIO_OPTIONS.map(({ value, labelKey }) => ({
+    value,
+    label: t(labelKey),
+  })), [t]);
+
+  const addReferenceFiles = (files: FileList | null) => {
+    if (!files?.length) return;
+    setReferenceFiles((current) => {
+      const next = [...current];
+      for (const file of Array.from(files)) {
+        const duplicate = next.some((item) => (
+          item.name === file.name && item.size === file.size && item.lastModified === file.lastModified
+        ));
+        if (!duplicate && next.length < MAX_HOME_REFERENCES) next.push(file);
+      }
+      return next;
+    });
+  };
 
   const changeImageAspectRatio = (nextRatio: string) => {
     setImageAspectRatio(nextRatio);
@@ -866,11 +1125,55 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
 
   const handleSubmit = async () => {
     const cleanPrompt = prompt.trim();
-    if (!cleanPrompt || submitting || !videoCapabilitiesReady) return;
+    if (!cleanPrompt || submitting || (composerMode !== "agent" && !videoCapabilitiesReady)) return;
     setSubmitting(true);
     setError(null);
 
+    let rollbackProjectName: string | null = null;
     try {
+      const createProjectShell = async (projectAspectRatio: string) => {
+        const project = await API.createProject({
+          title: shortProjectTitle(cleanPrompt),
+          content_mode: "free",
+          generation_mode: null,
+          aspect_ratio: projectAspectRatio,
+        });
+        rollbackProjectName = project.name;
+        return project;
+      };
+      const uploadReferences = async (projectName: string): Promise<FreeCreationReferenceClaim[]> => {
+        const claims: FreeCreationReferenceClaim[] = [];
+        for (const file of referenceFiles) {
+          const uploaded = await API.uploadFreeCreationReference(projectName, file);
+          claims.push({
+            type: "upload",
+            reference_id: uploaded.reference.reference_id,
+            role: referenceRoleForFile(file),
+          });
+        }
+        return claims;
+      };
+
+      if (composerMode === "agent") {
+        const project = await createProjectShell(agentAspectRatio);
+        await uploadReferences(project.name);
+        const preferenceLabel = agentPreference === "image"
+          ? t("free_creation_agent_preference_image")
+          : t("free_creation_agent_preference_video");
+        const agentContext = t("free_creation_agent_prompt_context", {
+          preference: preferenceLabel,
+          ratio: agentAspectRatio,
+        });
+        const referenceContext = referenceFiles.length
+          ? `\n${t("free_creation_agent_reference_context", { files: referenceFiles.map((file) => file.name).join(", ") })}`
+          : "";
+        useAssistantStore.getState().setInput(`${cleanPrompt}\n\n${agentContext}${referenceContext}`);
+        setPrompt("");
+        setReferenceFiles([]);
+        rollbackProjectName = null;
+        onCreated(project.name, "agent");
+        return;
+      }
       const payload: CreateFreeCreationRequest = {
         output_type: outputType,
         prompt: cleanPrompt,
@@ -883,10 +1186,26 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
         model: selectedModel === "auto" ? undefined : selectedModel,
         ...(outputType === "video" ? { duration_seconds: effectiveDuration } : {}),
       };
-      const project = await API.createFreeProject({ title: shortProjectTitle(cleanPrompt), creation: payload });
+      const project = referenceFiles.length
+        ? await (async () => {
+            const created = await createProjectShell(aspectRatio);
+            const references = await uploadReferences(created.name);
+            await API.createFreeCreation(created.name, { ...payload, references });
+            return created;
+          })()
+        : await API.createFreeProject({ title: shortProjectTitle(cleanPrompt), creation: payload });
       setPrompt("");
-      onCreated(project.name, outputType);
+      setReferenceFiles([]);
+      rollbackProjectName = null;
+      onCreated(project.name, composerMode);
     } catch (err) {
+      if (rollbackProjectName) {
+        try {
+          await API.deleteProject(rollbackProjectName);
+        } catch {
+          // Preserve the original creation error; project cleanup is best effort.
+        }
+      }
       const message = errMsg(err);
       setError(message);
       useAppStore.getState().pushToast(message, "error");
@@ -911,51 +1230,113 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       </div>
 
       <div className="home-composer-shell rounded-[14px] p-3 sm:p-5">
-        <div className="flex items-center gap-1 border-b border-hairline-soft px-1 pb-3" role="tablist" aria-label={t("home_output_type")}>
-          {([
-            ["video", Video, "home_video"],
-            ["image", ImageIcon, "home_image"],
-          ] as const).map(([value, Icon, label]) => {
-            const active = outputType === value;
-            return (
+        <div className="home-composer-input-row">
+          <div className="home-reference-tray" aria-label={t("free_creation_reference_content")}>
+            {referenceFiles.map((file) => {
+              const isImage = file.type.startsWith("image/");
+              const isVideo = file.type.startsWith("video/");
+              const ReferenceIcon = isImage ? ImageIcon : isVideo ? Video : FileText;
+              return (
+                <div key={`${file.name}:${file.size}:${file.lastModified}`} className="home-reference-card">
+                  <ReferenceIcon className="h-5 w-5 text-accent-2" aria-hidden />
+                  <span title={file.name}>{file.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setReferenceFiles((current) => current.filter((item) => item !== file))}
+                    aria-label={`${t("free_creation_remove_reference")}: ${file.name}`}
+                  >
+                    <X className="h-3 w-3" aria-hidden />
+                  </button>
+                </div>
+              );
+            })}
+            {referenceFiles.length < MAX_HOME_REFERENCES ? (
               <button
-                key={value}
                 type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setOutputType(value)}
-                className={`inline-flex items-center gap-2 border-b-2 px-3 py-2 text-[12px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${active ? "border-accent text-text" : "border-transparent text-text-3 hover:text-text-2"}`}
+                className="home-reference-card home-reference-card--add"
+                onClick={() => referenceInputRef.current?.click()}
+                aria-label={t("free_creation_upload_reference")}
+                title={t("free_creation_upload_reference")}
               >
-                <Icon className="h-4 w-4" aria-hidden />
-                {t(label)}
+                <Plus className="h-5 w-5" aria-hidden />
+                <span>{t("free_creation_reference_content")}</span>
               </button>
-            );
-          })}
+            ) : null}
+            <input
+              ref={referenceInputRef}
+              type="file"
+              multiple
+              accept={HOME_REFERENCE_ACCEPT}
+              className="sr-only"
+              aria-label={t("free_creation_upload_reference")}
+              onChange={(event) => {
+                addReferenceFiles(event.target.files);
+                event.currentTarget.value = "";
+              }}
+            />
+          </div>
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                event.preventDefault();
+                void handleSubmit();
+              }
+            }}
+            rows={4}
+            maxLength={10000}
+            aria-label={t("home_prompt_label")}
+            placeholder={t("home_prompt_placeholder")}
+            className="home-prompt-input min-h-[130px] min-w-0 flex-1 resize-y px-3 py-3 text-[15px] leading-7 text-text outline-none placeholder:text-text-4"
+          />
         </div>
 
-        <textarea
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              void handleSubmit();
-            }
-          }}
-          rows={4}
-          maxLength={10000}
-          aria-label={t("home_prompt_label")}
-          placeholder={t("home_prompt_placeholder")}
-          className="home-prompt-input mt-3 min-h-[130px] w-full resize-y px-3 py-3 text-[15px] leading-7 text-text outline-none placeholder:text-text-4"
-        />
-
-        <div className="home-param-grid border-t border-hairline-soft pt-3">
+        <div className="home-param-grid composer-param-strip home-composer-param-strip border-t border-hairline-soft pt-3">
+          <HomeSelect
+            label={t("free_creation_mode")}
+            value={composerMode}
+            icon={composerMode === "agent" ? Bot : composerMode === "image" ? ImageIcon : Video}
+            hideLabel
+            className="home-composer-mode-control"
+            options={[
+              { value: "agent", label: t("free_creation_mode_agent") },
+              { value: "image", label: t("free_creation_mode_image") },
+              { value: "video", label: t("free_creation_mode_video") },
+            ]}
+            onChange={(nextMode) => {
+              setComposerMode(nextMode);
+              if (nextMode !== "agent") {
+                setOutputType(nextMode);
+                setModel("auto");
+              }
+            }}
+          />
+          {composerMode === "agent" ? (
+            <AgentParameterControl
+              label={t("free_creation_agent_parameters")}
+              preferenceLabel={t("free_creation_agent_generation_preference")}
+              imageLabel={t("free_creation_agent_preference_image")}
+              videoLabel={t("free_creation_agent_preference_video")}
+              ratioLabel={t("free_creation_aspect_ratio")}
+              preference={agentPreference}
+              ratio={agentAspectRatio}
+              ratioOptions={agentRatioOptions}
+              onPreferenceChange={setAgentPreference}
+              onRatioChange={setAgentAspectRatio}
+              hideLabel
+            />
+          ) : (
+          <>
           <HomeSelect
             label={t("home_model")}
             value={selectedModel}
             icon={Settings2}
+            hideLabel
             className="home-model-control"
-            hint={t("home_model_keyboard_hint")}
+            searchable
+            searchPlaceholder={t("home_model_search")}
+            emptyLabel={t("home_model_no_results")}
             options={[
               { value: "auto", label: t("home_model_auto") },
               ...models.map((item) => ({ value: item, label: modelLabel(item, t("home_model_auto")) })),
@@ -983,6 +1364,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
               onResolutionChange={changeImageResolution}
               onQuantityChange={setQuantity}
               onDimensionsCommit={commitImageDimensions}
+              hideLabel
             />
           ) : (
             <VideoParameterControl
@@ -999,6 +1381,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
               onRatioChange={setVideoAspectRatio}
               onResolutionChange={setVideoResolution}
               onQuantityChange={setQuantity}
+              hideLabel
             />
           )}
           {outputType === "video" ? (
@@ -1008,17 +1391,20 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
               durations={videoDurations}
               onChange={setDuration}
               minimumLabel={t("home_duration_minimum", { value: videoDurations[0] ?? effectiveDuration })}
+              hideLabel
             />
           ) : null}
+          </>
+          )}
         </div>
 
         <div className="mt-3 flex flex-col gap-3 border-t border-hairline-soft pt-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-h-5 text-[11px] text-danger-2" role="status" aria-live="polite">
-            {error ?? capabilityError}
+            {error ?? (composerMode === "agent" ? null : capabilityError)}
           </div>
           <button
             type="button"
-            disabled={!prompt.trim() || submitting || !videoCapabilitiesReady}
+            disabled={!prompt.trim() || submitting || (composerMode !== "agent" && !videoCapabilitiesReady)}
             onClick={() => void handleSubmit()}
             className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] px-5 text-[13px] font-semibold transition-transform motion-safe:hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-45"
             style={{ color: "oklch(0.14 0 0)", background: "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))" }}

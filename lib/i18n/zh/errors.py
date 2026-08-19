@@ -1,4 +1,8 @@
 MESSAGES = {
+    "free_creation_storyboard_source_invalid": "分镜来源为空或不是支持的文本资源",
+    "free_creation_storyboard_not_found": "分镜计划不存在：{id}",
+    "free_creation_storyboard_order_invalid": "分镜顺序无效",
+    "free_creation_storyboard_shot_not_found": "分镜镜头不存在",
     "project_migration_failed": "项目 '{name}' 的数据升级未完成，暂时无法生成内容。原因：{reason}。请在智能体对话中修复后重试升级",
     "project_not_found": "项目 '{name}' 不存在或未初始化",
     "resource_not_found": "请求的资源不存在",

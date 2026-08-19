@@ -30,14 +30,50 @@ from server.services.free_creation_tasks import (
 )
 from server.services.free_creation_workspace import (
     build_creation_export,
+    create_storyboard_plan,
     load_canvas_state,
+    load_storyboard_plan,
     read_reference_preview,
     resolve_reference_claims,
     save_canvas_state,
     save_reference_upload,
+    save_storyboard_plan,
+    split_storyboard_text,
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_storyboard_splitter_preserves_short_sentences_and_caps_shots() -> None:
+    text = "One. Two. Three. Four. Five. Six."
+    assert split_storyboard_text(text, max_shots=3) == ["One. Two.", "Three. Four.", "Five. Six."]
+    assert split_storyboard_text("\n\n第一幕。\n\n第二幕。", max_shots=12) == ["第一幕。", "第二幕。"]
+
+
+def test_storyboard_plan_persists_editable_shot_metadata(tmp_path: Path) -> None:
+    plan = create_storyboard_plan(
+        tmp_path,
+        title="Rain station",
+        source={"type": "upload", "reference_id": "r_0123456789abcdef0123"},
+        text="Exterior. Interior.",
+    )
+    assert plan["plan_id"].startswith("sp_")
+    assert [shot["sequence_index"] for shot in plan["shots"]] == [0, 1]
+
+    updated = save_storyboard_plan(
+        tmp_path,
+        {
+            **plan,
+            "shots": [
+                {**plan["shots"][1], "sequence_index": 0},
+                {**plan["shots"][0], "sequence_index": 1},
+            ],
+        },
+    )
+    loaded = load_storyboard_plan(tmp_path, plan["plan_id"])
+    assert loaded is not None
+    assert updated["shots"][0]["sequence_index"] == 0
+    assert loaded["shots"][1]["sequence_index"] == 1
 
 
 def test_free_creation_request_validates_mode_specific_fields() -> None:

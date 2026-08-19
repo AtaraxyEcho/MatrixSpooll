@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -19,6 +20,7 @@ from lib.path_safety import safe_join
 
 ReferenceType = Literal["upload", "creation"]
 ExportScope = Literal["selected", "request", "all"]
+StoryboardPlanStatus = Literal["draft", "generating", "ready", "failed"]
 
 _TEXT_REFERENCE_EXTENSIONS = frozenset({".txt", ".text", ".md", ".markdown", ".rtf", ".doc", ".docx", ".pdf", ".epub"})
 _REFERENCE_EXTENSIONS = (
@@ -27,6 +29,7 @@ _REFERENCE_EXTENSIONS = (
 MAX_REFERENCE_BYTES = 100 * 1024 * 1024
 MAX_REFERENCE_PREVIEW_CHARS = 120_000
 MAX_PLAIN_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024
+MAX_STORYBOARD_SHOTS = 12
 
 
 def _now() -> str:
@@ -35,6 +38,10 @@ def _now() -> str:
 
 def new_request_id() -> str:
     return f"q_{uuid.uuid4().hex[:20]}"
+
+
+def new_storyboard_plan_id() -> str:
+    return f"sp_{uuid.uuid4().hex[:20]}"
 
 
 def new_reference_id() -> str:
@@ -55,6 +62,91 @@ def _request_path(project_path: Path, request_id: str) -> Path:
 
 def _reference_record_path(project_path: Path, reference_id: str) -> Path:
     return safe_join(_workspace_root(project_path), "references", f"{reference_id}.json")
+
+
+def _storyboard_root(project_path: Path) -> Path:
+    return safe_join(_workspace_root(project_path), "storyboards")
+
+
+def _storyboard_plan_path(project_path: Path, plan_id: str) -> Path:
+    return safe_join(_storyboard_root(project_path), f"{plan_id}.json")
+
+
+def split_storyboard_text(text: str, *, max_shots: int = MAX_STORYBOARD_SHOTS) -> list[str]:
+    """Create an editable shot draft without requiring a text-model provider."""
+
+    limit = max(1, min(max_shots, MAX_STORYBOARD_SHOTS))
+    normalized = re.sub(r"[\t ]+", " ", text.replace("\r\n", "\n")).strip()
+    if not normalized:
+        return []
+    paragraphs = [part.strip() for part in re.split(r"\n{2,}", normalized) if part.strip()]
+    parts: list[str] = []
+    for paragraph in paragraphs:
+        sentences = [part.strip() for part in re.split(r"(?<=[.!?。！？])\s*", paragraph) if part.strip()]
+        parts.extend(sentences or [paragraph])
+    if len(parts) <= limit:
+        return parts
+    grouped: list[str] = []
+    for index in range(limit):
+        start = round(index * len(parts) / limit)
+        end = round((index + 1) * len(parts) / limit)
+        grouped.append(" ".join(parts[start:end]).strip())
+    return [part for part in grouped if part]
+
+
+def create_storyboard_plan(
+    project_path: Path,
+    *,
+    title: str,
+    source: dict[str, Any] | None,
+    text: str,
+    max_shots: int = MAX_STORYBOARD_SHOTS,
+) -> dict[str, Any]:
+    shots = [
+        {
+            "shot_id": f"shot_{index + 1:02d}",
+            "sequence_index": index,
+            "title": f"Shot {index + 1}",
+            "prompt": prompt,
+            "duration_seconds": 5,
+            "image_creation_id": None,
+            "video_creation_id": None,
+        }
+        for index, prompt in enumerate(split_storyboard_text(text, max_shots=max_shots))
+    ]
+    if not shots:
+        raise ValueError("storyboard source is empty")
+    plan = {
+        "plan_id": new_storyboard_plan_id(),
+        "title": title.strip() or "Untitled storyboard",
+        "source": source,
+        "status": "draft",
+        "shots": shots,
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+    with project_metadata_lock(project_path):
+        path = _storyboard_plan_path(project_path, str(plan["plan_id"]))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, plan)
+    return plan
+
+
+def load_storyboard_plan(project_path: Path, plan_id: str) -> dict[str, Any] | None:
+    payload = load_json_or_none(_storyboard_plan_path(project_path, plan_id))
+    return payload if isinstance(payload, dict) else None
+
+
+def save_storyboard_plan(project_path: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    plan_id = plan.get("plan_id")
+    if not isinstance(plan_id, str):
+        raise ValueError("storyboard plan id is required")
+    updated = {**plan, "updated_at": _now()}
+    with project_metadata_lock(project_path):
+        path = _storyboard_plan_path(project_path, plan_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, updated)
+    return updated
 
 
 def default_canvas_state() -> dict[str, Any]:
@@ -397,17 +489,23 @@ def build_creation_export(
 __all__ = [
     "MAX_REFERENCE_BYTES",
     "MAX_REFERENCE_PREVIEW_CHARS",
+    "MAX_STORYBOARD_SHOTS",
     "build_creation_export",
+    "create_storyboard_plan",
     "default_canvas_state",
     "delete_reference_upload",
     "detach_reference_upload",
     "extract_reference_text",
     "list_reference_uploads",
     "load_canvas_state",
+    "load_storyboard_plan",
     "new_request_id",
+    "new_storyboard_plan_id",
     "resolve_reference_claims",
     "read_reference_preview",
     "save_canvas_state",
     "save_reference_upload",
+    "save_storyboard_plan",
+    "split_storyboard_text",
     "write_creation_request",
 ]
