@@ -33,7 +33,9 @@ from server.services.free_creation_tasks import (
 from server.services.free_creation_workspace import (
     build_creation_export,
     create_storyboard_plan,
+    delete_storyboard_plan,
     list_creation_requests,
+    list_storyboard_plans,
     load_canvas_state,
     load_storyboard_plan,
     read_reference_preview,
@@ -134,6 +136,22 @@ def test_storyboard_plan_persists_editable_shot_metadata(tmp_path: Path) -> None
     assert loaded is not None
     assert updated["shots"][0]["sequence_index"] == 0
     assert loaded["shots"][1]["sequence_index"] == 1
+
+
+def test_storyboard_plan_tracks_source_revision_and_soft_delete(tmp_path: Path) -> None:
+    plan = create_storyboard_plan(tmp_path, title="Prompt source", source=None, text="A. B.")
+    assert plan["source"] == {"type": "prompt", "text": "A. B."}
+    assert plan["revision"] == 1
+
+    updated = save_storyboard_plan(tmp_path, {**plan, "title": "Updated"}, expected_revision=1)
+    assert updated["revision"] == 2
+    with pytest.raises(RuntimeError, match="revision conflict"):
+        save_storyboard_plan(tmp_path, {**updated, "title": "Stale"}, expected_revision=1)
+
+    assert len(list_storyboard_plans(tmp_path)) == 1
+    delete_storyboard_plan(tmp_path, plan["plan_id"])
+    assert load_storyboard_plan(tmp_path, plan["plan_id"]) is None
+    assert list_storyboard_plans(tmp_path) == []
 
 
 def test_free_creation_request_validates_mode_specific_fields() -> None:

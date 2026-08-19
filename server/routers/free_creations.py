@@ -39,9 +39,11 @@ from server.services.free_creation_workspace import (
     build_creation_export,
     create_storyboard_plan,
     delete_reference_upload,
+    delete_storyboard_plan,
     detach_reference_upload,
     list_creation_requests,
     list_reference_uploads,
+    list_storyboard_plans,
     load_canvas_state,
     load_storyboard_plan,
     new_request_id,
@@ -236,6 +238,7 @@ class StoryboardShotUpdate(BaseModel):
 class StoryboardPlanUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     shots: list[StoryboardShotUpdate] = Field(min_length=1, max_length=MAX_STORYBOARD_SHOTS)
+    expected_revision: int | None = Field(default=None, ge=1)
 
 
 def _free_creation_request_status(creations: Sequence[dict[str, Any]]) -> str:
@@ -1096,6 +1099,8 @@ async def create_free_storyboard_plan(project_name: str, req: StoryboardPlanRequ
             raise NotFoundError("free_creation_reference_not_found") from exc
         text = str(preview.get("text") or "").strip()
         source = {"type": "upload", "reference_id": req.reference_id}
+    elif text:
+        source = {"type": "prompt", "text": text}
     try:
         plan = await asyncio.to_thread(
             create_storyboard_plan,
@@ -1108,6 +1113,12 @@ async def create_free_storyboard_plan(project_name: str, req: StoryboardPlanRequ
     except ValueError as exc:
         raise BadRequestError("free_creation_storyboard_source_invalid") from exc
     return {"success": True, "plan": plan}
+
+
+@router.get("/projects/{project_name}/free-creation-storyboards")
+async def list_free_storyboard_plans(project_name: str, limit: int = Query(default=50, ge=1, le=100)):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    return {"plans": await asyncio.to_thread(list_storyboard_plans, project_path, limit)}
 
 
 @router.get("/projects/{project_name}/free-creation-storyboards/{plan_id}")
@@ -1143,12 +1154,26 @@ async def update_free_storyboard_plan(project_name: str, plan_id: str, req: Stor
                 **shot.model_dump(),
             }
         )
-    updated = await asyncio.to_thread(
-        save_storyboard_plan,
-        project_path,
-        {**plan, "title": req.title, "shots": sorted(shots, key=lambda item: item["sequence_index"])},
-    )
+    try:
+        updated = await asyncio.to_thread(
+            save_storyboard_plan,
+            project_path,
+            {**plan, "title": req.title, "shots": sorted(shots, key=lambda item: item["sequence_index"])},
+            expected_revision=req.expected_revision,
+        )
+    except RuntimeError as exc:
+        raise ConflictError("free_creation_storyboard_conflict") from exc
     return {"success": True, "plan": updated}
+
+
+@router.delete("/projects/{project_name}/free-creation-storyboards/{plan_id}")
+async def delete_free_storyboard_plan(project_name: str, plan_id: str):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    try:
+        await asyncio.to_thread(delete_storyboard_plan, project_path, plan_id)
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_storyboard_not_found", id=plan_id) from exc
+    return {"success": True}
 
 
 @router.get("/projects/{project_name}/free-creation-canvas")

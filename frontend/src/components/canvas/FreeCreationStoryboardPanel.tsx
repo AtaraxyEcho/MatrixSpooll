@@ -84,6 +84,7 @@ export function FreeCreationStoryboardPanel({
       const result = await API.updateFreeStoryboardPlan(projectName, plan.plan_id, {
         title: plan.title.trim() || t("free_creation_storyboard_default_title"),
         shots: sortedShots,
+        expected_revision: plan.revision,
       });
       setPlan(result.plan);
       return true;
