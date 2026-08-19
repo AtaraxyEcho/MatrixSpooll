@@ -4,7 +4,7 @@ import type { Config } from "@docusaurus/types";
 const config: Config = {
   title: "MatrixSpooll 文档中心",
   tagline: "开源、自托管的 AI 视频创作平台",
-  favicon: "img/matrixspooll-logo.svg",
+  favicon: "img/logo.jpg",
 
   url: "https://docs.arc-reel.com",
   baseUrl: "/",
@@ -72,7 +72,7 @@ const config: Config = {
       title: "MatrixSpooll",
       logo: {
         alt: "MatrixSpooll",
-        src: "img/matrixspooll-logo.svg",
+        src: "img/logo.jpg",
       },
       items: [
         {
