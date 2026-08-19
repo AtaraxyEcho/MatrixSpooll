@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -27,6 +28,7 @@ from lib.project_change_hints import project_change_source
 from lib.project_manager import get_project_manager
 from lib.video_backends.base import VideoCapabilityError
 from server.auth import CurrentUser, CurrentUserFlexible
+from server.services.free_creation_merge import merge_video_creations
 from server.services.free_creation_tasks import (
     list_creation_metadata,
     load_creation_metadata,
@@ -222,6 +224,10 @@ class FreeCreationExportRequest(BaseModel):
         if self.scope == "request" and not self.request_id:
             raise ValueError("request_id is required for request export")
         return self
+
+
+class FreeCreationMergeRequest(BaseModel):
+    creation_ids: list[str] = Field(min_length=2, max_length=32)
 
 
 class StoryboardPlanRequest(BaseModel):
@@ -1618,6 +1624,26 @@ async def export_free_creations(project_name: str, req: FreeCreationExportReques
         media_type="application/zip",
         filename=f"{project_name}-creations.zip",
         background=BackgroundTask(archive.unlink, missing_ok=True),
+    )
+
+
+@router.post("/projects/{project_name}/free-creation-merge")
+async def merge_free_creation_videos(project_name: str, req: FreeCreationMergeRequest):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    creations = await asyncio.to_thread(list_creation_metadata, project_path, None)
+    try:
+        output, temporary_directory = await merge_video_creations(project_path, req.creation_ids, creations)
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_merge_input_not_found", id=str(exc)) from exc
+    except ValueError as exc:
+        raise BadRequestError("free_creation_merge_invalid", details=str(exc)) from exc
+    except RuntimeError as exc:
+        raise BadRequestError("free_creation_merge_unavailable") from exc
+    return FileResponse(
+        output,
+        media_type="video/mp4",
+        filename=f"{project_name}-merged.mp4",
+        background=BackgroundTask(shutil.rmtree, temporary_directory, ignore_errors=True),
     )
 
 

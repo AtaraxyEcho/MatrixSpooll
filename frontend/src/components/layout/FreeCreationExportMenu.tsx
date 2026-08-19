@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Download, Loader2 } from "lucide-react";
+import { ChevronDown, Clapperboard, Download, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { API } from "@/api";
 import { useAppStore } from "@/stores/app-store";
@@ -28,6 +28,7 @@ export function FreeCreationExportMenu({ projectName, disabled = false }: FreeCr
   const selectedRequestId = useFreeCreationStore((state) => state.selectedRequestId);
   const [open, setOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [merging, setMerging] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -63,17 +64,35 @@ export function FreeCreationExportMenu({ projectName, disabled = false }: FreeCr
     }
   };
 
+  const runMerge = async () => {
+    if (!projectName || merging || selectedIds.length < 2) return;
+    setOpen(false);
+    setMerging(true);
+    try {
+      const blob = await API.mergeFreeCreationVideos(projectName, selectedIds);
+      downloadBlob(blob, `${projectName}-merged.mp4`);
+      useAppStore.getState().pushToast(t("free_creation_merge_started"), "success");
+    } catch (error) {
+      useAppStore.getState().pushToast(
+        t("free_creation_merge_failed", { message: errMsg(error) }),
+        "error",
+      );
+    } finally {
+      setMerging(false);
+    }
+  };
+
   return (
     <div ref={rootRef} className="relative">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        disabled={disabled || !projectName || exporting}
+        disabled={disabled || !projectName || exporting || merging}
         className="focus-ring inline-flex h-[32px] items-center gap-1.5 rounded-md bg-[var(--color-accent)] px-3 text-xs font-semibold text-[oklch(0.15_0_0)] transition-colors hover:bg-[var(--color-accent-2)] disabled:cursor-not-allowed disabled:opacity-50"
         aria-expanded={open}
         aria-haspopup="menu"
       >
-        {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Download className="h-3.5 w-3.5" aria-hidden />}
+        {exporting || merging ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Download className="h-3.5 w-3.5" aria-hidden />}
         <span className="hidden lg:inline">{t("free_creation_export")}</span>
         <ChevronDown className="h-3.5 w-3.5" aria-hidden />
       </button>
@@ -97,6 +116,16 @@ export function FreeCreationExportMenu({ projectName, disabled = false }: FreeCr
           >
             <span>{t("free_creation_export_selected")}</span>
             <span className="text-[var(--color-text-muted)]">{selectedIds.length}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={selectedIds.length < 2}
+            onClick={() => void runMerge()}
+            className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)] disabled:opacity-40"
+          >
+            <Clapperboard className="h-3.5 w-3.5" aria-hidden />
+            <span>{t("free_creation_merge_selected")}</span>
           </button>
           <button
             type="button"
