@@ -1,7 +1,9 @@
+/* eslint-disable jsx-a11y/media-has-caption */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronDown,
+  AudioLines,
   Download,
+  FileText,
   Image,
   Link2,
   Loader2,
@@ -9,7 +11,6 @@ import {
   Pencil,
   Plus,
   Send,
-  Settings2,
   Video,
   X,
 } from "lucide-react";
@@ -28,9 +29,16 @@ import type {
   FreeCreationReferenceRole,
   FreeCreationUpload,
 } from "@/types";
+import { freeCreationUploadRole } from "@/types";
 import { errMsg } from "@/utils/async";
 import { FreeCreationInfiniteCanvas } from "./FreeCreationInfiniteCanvas";
+import { FreeCreationPreviewDialog, type FreeCreationPreviewTarget } from "./FreeCreationPreviewDialog";
 import { FreeCreationSessionSummary } from "./FreeCreationSessionSummary";
+import {
+  DurationControl,
+  ImageParameterControl,
+  VideoParameterControl,
+} from "@/components/pages/HomeHeroComposer";
 
 export interface FreeCreationWorkspaceProps {
   projectName: string;
@@ -99,6 +107,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
   const [uploading, setUploading] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<FreeCreationPreviewTarget | null>(null);
   const refreshToken = useFreeCreationStore((state) => state.refreshToken);
   const { candidates, reload: reloadCandidates } = useModelCandidates();
 
@@ -183,6 +192,16 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
   ), durationOptions[0] ?? duration);
   const capabilitiesReady = effectiveMediaType !== "video"
     || (capabilities?.output_type === "video" && ratioOptions.length > 0 && durationOptions.length > 0);
+  const parameterRatioOptions = useMemo(
+    () => ratioOptions.map((value) => ({
+      value,
+      label: (() => {
+        const known = ASPECT_RATIO_OPTIONS.find((option) => option.value === value);
+        return known ? t(known.labelKey) : value;
+      })(),
+    })),
+    [ratioOptions, t],
+  );
 
   const loadCreations = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
@@ -233,6 +252,18 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
     });
   }, []);
 
+  const referenceFromShortcut = (
+    event: React.MouseEvent<HTMLElement> | React.KeyboardEvent<HTMLElement>,
+    claim: FreeCreationReferenceClaim,
+    label: string,
+  ) => {
+    if (!event.ctrlKey && !event.metaKey) return;
+    if ("key" in event && event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    event.stopPropagation();
+    addReference(claim, label);
+  };
+
   const editFromCreation = (creationId: string) => {
     const creation = creations.find((item) => item.creation_id === creationId);
     if (!creation) return;
@@ -257,6 +288,31 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
     }
   };
 
+  const changeAspectRatio = (next: string) => {
+    setAspectRatio(next);
+    if (effectiveMediaType === "image" && !customSize) {
+      const nextDimensions = dimensionsFor(selectedResolution, next);
+      setImageWidth(nextDimensions.width);
+      setImageHeight(nextDimensions.height);
+    }
+  };
+
+  const changeResolution = (next: string) => {
+    setResolution(next);
+    if (effectiveMediaType === "image") {
+      const nextDimensions = dimensionsFor(next, effectiveAspectRatio);
+      setImageWidth(nextDimensions.width);
+      setImageHeight(nextDimensions.height);
+      setCustomSize(false);
+    }
+  };
+
+  const commitImageDimensions = (width: number, height: number) => {
+    setImageWidth(width);
+    setImageHeight(height);
+    setCustomSize(true);
+  };
+
   const runCreationAction = async (creationId: string, action: "cancel" | "retry") => {
     if (readOnly) return;
     setActingId(creationId);
@@ -278,7 +334,6 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
       for (const file of Array.from(files)) {
         const result = await API.uploadFreeCreationReference(projectName, file);
         setUploads((current) => [result.reference, ...current.filter((item) => item.reference_id !== result.reference.reference_id)]);
-        addReference({ type: "upload", reference_id: result.reference.reference_id, role: result.reference.media_type === "video" ? "reference_video" : result.reference.media_type === "audio" ? "reference_audio" : "reference_image" }, result.reference.original_filename);
       }
     } catch (uploadError) {
       useAppStore.getState().pushToast(errMsg(uploadError), "error");
@@ -296,6 +351,17 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
       setReferences((current) => current.filter((item) => item.claim.type !== "upload" || item.claim.reference_id !== referenceId));
     } catch (deleteError) {
       useAppStore.getState().pushToast(errMsg(deleteError), "error");
+    }
+  };
+
+  const detachUpload = async (referenceId: string) => {
+    if (readOnly) return;
+    try {
+      await API.detachFreeCreationReference(projectName, referenceId);
+      setUploads((current) => current.filter((item) => item.reference_id !== referenceId));
+      setReferences((current) => current.filter((item) => item.claim.type !== "upload" || item.claim.reference_id !== referenceId));
+    } catch (detachError) {
+      useAppStore.getState().pushToast(errMsg(detachError), "error");
     }
   };
 
@@ -333,14 +399,6 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
 
   const durationMinimum = durationOptions[0] ?? 1;
   const durationMaximum = durationOptions[durationOptions.length - 1] ?? durationMinimum;
-  const declaredDurationTicks = durationOptions.length <= 6
-    ? durationOptions
-    : [...new Set([0, 0.25, 0.5, 0.75, 1].map((ratio) => (
-      durationOptions[Math.round((durationOptions.length - 1) * ratio)]
-    )))];
-  const durationTicks = [...new Set([0, ...declaredDurationTicks])];
-  const durationMinimumProgress = `${(durationMinimum / Math.max(1, durationMaximum)) * 100}%`;
-  const durationProgress = `${(safeDuration / Math.max(1, durationMaximum)) * 100}%`;
   const mobileCreations = [...creations].sort(
     (left, right) => (right.updated_at ?? "").localeCompare(left.updated_at ?? ""),
   );
@@ -359,6 +417,8 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
           onRetry={(creationId) => void runCreationAction(creationId, "retry")}
           onEdit={editFromCreation}
           onReference={addReference}
+          onPreview={setPreviewTarget}
+          onDetachUpload={(referenceId) => void detachUpload(referenceId)}
           onDeleteUpload={(referenceId) => void deleteUpload(referenceId)}
         />
       </div>
@@ -366,24 +426,24 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
       <div className="absolute inset-0 overflow-y-auto px-3 pb-[330px] pt-3 md:hidden">
         <div className="grid gap-3">
           {uploads.map((upload) => (
-            <article key={upload.reference_id} className="overflow-hidden rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]">
+            <article key={upload.reference_id} className="overflow-hidden rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]" onDoubleClick={(event) => { event.preventDefault(); setPreviewTarget({ kind: "upload", upload }); }}>
               <div className="flex h-10 items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-3 text-xs"><span className="truncate font-medium">{upload.original_filename}</span><span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{t("free_creation_reference")}</span></div>
-              {upload.media_type === "image" ? <img src={API.getFileUrl(projectName, upload.path)} alt={upload.original_filename} className="aspect-video w-full bg-black object-contain" /> : upload.media_type === "video" ? (
-                // eslint-disable-next-line jsx-a11y/media-has-caption -- uploaded references do not include caption tracks
-                <video src={API.getFileUrl(projectName, upload.path)} className="aspect-video w-full bg-black object-contain" aria-label={upload.original_filename} controls />
-              ) : null}
-              <div className="flex justify-end p-2"><button type="button" onClick={() => addReference({ type: "upload", reference_id: upload.reference_id, role: upload.media_type === "video" ? "reference_video" : upload.media_type === "audio" ? "reference_audio" : "reference_image" }, upload.original_filename)} className="focus-ring inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs text-[var(--color-text-muted)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button></div>
+              <div role={upload.media_type === "audio" || upload.media_type === "video" ? undefined : "button"} tabIndex={upload.media_type === "audio" || upload.media_type === "video" ? undefined : 0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id, role: freeCreationUploadRole(upload.media_type) }, upload.original_filename)} onKeyDown={upload.media_type === "audio" || upload.media_type === "video" ? undefined : (event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id, role: freeCreationUploadRole(upload.media_type) }, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
+                {upload.media_type === "image" ? <img src={API.getFileUrl(projectName, upload.path)} alt={upload.original_filename} className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
+                  <video src={API.getFileUrl(projectName, upload.path)} className="h-full w-full object-contain" aria-label={upload.original_filename} controls onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id, role: freeCreationUploadRole(upload.media_type) }, upload.original_filename)} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "upload", upload }); }} />
+                ) : upload.media_type === "audio" ? <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={API.getFileUrl(projectName, upload.path)} className="w-full" aria-label={upload.original_filename} controls /></div> : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto pt-12 h-8 w-8 text-[var(--color-text-muted)]" aria-hidden />}
+              </div>
+              <div className="flex justify-end px-3 py-2"><button type="button" onClick={() => addReference({ type: "upload", reference_id: upload.reference_id, role: freeCreationUploadRole(upload.media_type) }, upload.original_filename)} className="focus-ring inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button></div>
             </article>
           ))}
           {mobileCreations.map((creation) => {
             const isVideo = creation.media_type === "video" || creation.output_type === "video";
             return (
-              <article key={creation.creation_id} className="overflow-hidden rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]">
+              <article key={creation.creation_id} className="overflow-hidden rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]" onDoubleClick={(event) => { event.preventDefault(); if (creation.status === "succeeded" && creation.media_path) setPreviewTarget({ kind: "creation", creation }); }}>
                 <div className="flex h-10 items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-3 text-xs"><span className="font-medium">{t(`free_creation_${creation.output_type}`)}</span><span className="text-[10px] text-[var(--color-text-muted)]">{t(`free_creation_status_${creation.status}`)}</span></div>
                 {creation.status === "succeeded" && creation.media_path ? isVideo ? (
-                  // eslint-disable-next-line jsx-a11y/media-has-caption -- generated free videos do not carry caption tracks
-                  <video src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} className="aspect-video w-full bg-black object-contain" aria-label={creation.prompt ?? creation.creation_id} controls />
-                ) : <img src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} alt={creation.prompt ?? creation.creation_id} className="aspect-video w-full bg-black object-contain" /> : <div className="grid aspect-video place-items-center bg-black px-3 text-center text-xs text-[var(--color-text-muted)]">{creation.status === "failed" ? t("free_creation_failed") : t(`free_creation_status_${creation.status}`)}</div>}
+                  <video src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} className="aspect-video w-full bg-black object-contain" aria-label={creation.prompt ?? creation.creation_id} controls onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_video" }, creation.prompt || t("free_creation"))} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "creation", creation }); }} />
+                ) : <div role="button" tabIndex={0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))} onKeyDown={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))}><img src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} alt={creation.prompt ?? creation.creation_id} className="h-full w-full object-contain" /></div> : <div className="grid aspect-video place-items-center bg-black px-3 text-center text-xs text-[var(--color-text-muted)]">{creation.status === "failed" ? t("free_creation_failed") : t(`free_creation_status_${creation.status}`)}</div>}
                 <p className="line-clamp-2 px-3 py-2 text-xs leading-5 text-[var(--color-text-2)]">{creation.prompt || t("free_creation_prompt")}</p>
                 {creation.status === "succeeded" && creation.media_path ? <div className="flex justify-end gap-1 border-t border-[var(--color-hairline)] p-2"><button type="button" onClick={() => addReference({ type: "creation", creation_id: creation.creation_id, version: creation.version, role: isVideo ? "reference_video" : "reference_image" }, creation.prompt || t("free_creation"))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_add_reference")}><Link2 className="h-4 w-4" aria-hidden /></button><button type="button" onClick={() => editFromCreation(creation.creation_id)} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_use_as_parent")}><Pencil className="h-4 w-4" aria-hidden /></button><a href={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} download className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_download")}><Download className="h-4 w-4" aria-hidden /></a></div> : null}
               </article>
@@ -393,7 +453,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
         </div>
       </div>
 
-      <section className="absolute bottom-3 left-1/2 z-30 w-[min(780px,calc(100vw-1.5rem))] -translate-x-1/2 rounded-lg border border-[var(--color-hairline)] bg-[var(--color-surface)]/96 p-3 shadow-lg backdrop-blur-md sm:bottom-4 sm:p-4">
+      <section className="free-creation-composer absolute bottom-3 left-1/2 z-30 w-[min(780px,calc(100vw-1.5rem))] -translate-x-1/2 rounded-lg border border-[var(--color-hairline)] bg-[var(--color-surface)]/96 p-3 shadow-lg backdrop-blur-md sm:bottom-4 sm:p-4">
         <div className="mb-2 flex items-center justify-between gap-3">
           {!initialOutputType ? <div className="flex items-center gap-1 rounded-md bg-[var(--color-background)] p-1" role="tablist" aria-label={t("free_creation")}>
             {([[
@@ -424,43 +484,106 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
         <div className="rounded-md border border-[var(--color-hairline)] bg-[var(--color-background)] transition-colors focus-within:border-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent-dim)]">
           <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void handleSubmit(); } }} rows={2} maxLength={10000} placeholder={t("free_creation_prompt")} className="min-h-[68px] w-full resize-none bg-transparent px-3 py-2.5 text-sm leading-5 outline-none placeholder:text-[var(--color-text-muted)]" disabled={readOnly || submitting} />
           <div className="flex items-center gap-1.5 border-t border-[var(--color-hairline)] px-2 py-2">
-            <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,audio/wav,audio/mpeg" className="sr-only" onChange={(event) => void uploadReferences(event.target.files)} />
+            <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,audio/wav,audio/mpeg,text/plain,text/markdown,application/rtf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.txt,.text,.md,.markdown,.rtf,.doc,.docx" className="sr-only" onChange={(event) => void uploadReferences(event.target.files)} />
             <button type="button" onClick={() => fileInputRef.current?.click()} disabled={readOnly || uploading || submitting} className="focus-ring grid h-8 w-8 shrink-0 place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)] disabled:opacity-50" aria-label={t("free_creation_upload_reference")} title={t("free_creation_upload_reference")}>{uploading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Plus className="h-4 w-4" aria-hidden />}</button>
 
-            <details className="group relative">
-              <summary className="focus-ring flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md px-2.5 text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Settings2 className="h-3.5 w-3.5" aria-hidden /><span>{effectiveMediaType === "video" ? t("free_creation_video_parameters") : t("free_creation_image_parameters")}</span><ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" aria-hidden /></summary>
-              <div className="absolute bottom-[calc(100%+8px)] left-0 z-[210] w-[min(600px,calc(100vw-3rem))] rounded-md border border-[var(--color-hairline)] p-3 shadow-2xl" style={{ background: "var(--color-surface-2)", opacity: 1 }}>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">{t("free_creation_model")}</span><select value={selectedModel} onChange={(event) => setModel(event.target.value)} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]"><option value="auto">{t("free_creation_model_auto")}</option>{modelOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
-                  <label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">{t("free_creation_aspect_ratio")}</span><select value={effectiveAspectRatio} onChange={(event) => { const next = event.target.value; setAspectRatio(next); if (effectiveMediaType === "image" && !customSize) { const nextDimensions = dimensionsFor(selectedResolution, next); setImageWidth(nextDimensions.width); setImageHeight(nextDimensions.height); } }} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]">{ratioOptions.map((ratio) => <option key={ratio} value={ratio}>{ratio}</option>)}</select></label>
-                  <label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">{t("free_creation_resolution")}</span><select value={selectedResolution} onChange={(event) => { const next = event.target.value; setResolution(next); if (effectiveMediaType === "image") { const nextDimensions = dimensionsFor(next, effectiveAspectRatio); setImageWidth(nextDimensions.width); setImageHeight(nextDimensions.height); setCustomSize(false); } }} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]">{resolutionOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
-                  {!parentId ? <label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">{t("free_creation_quantity")}</span><select value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]">{[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}</select></label> : null}
-                </div>
-                {effectiveMediaType === "video" && durationOptions.length ? (
-                  <div className="mt-3 border-t border-[var(--color-hairline)] pt-3">
-                    <div className="mb-2 flex items-center justify-between text-[11px]"><span className="text-[var(--color-text-muted)]">{t("free_creation_duration")}</span><span className="font-medium text-[var(--color-text)]">{safeDuration}s</span></div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={durationMaximum}
-                      step={1}
-                      value={safeDuration}
-                      onChange={(event) => {
-                        const requested = event.currentTarget.valueAsNumber;
-                        setDuration(durationOptions.reduce((closest, candidate) => Math.abs(candidate - requested) < Math.abs(closest - requested) ? candidate : closest, durationOptions[0] ?? requested));
-                      }}
-                      className="h-1.5 w-full appearance-none rounded-full accent-[var(--color-accent)]"
-                      aria-label={t("free_creation_duration")}
-                      aria-valuemin={durationMinimum}
-                      aria-valuetext={`${safeDuration}s`}
-                      style={{ background: `linear-gradient(90deg, oklch(0.34 0.006 265) 0 ${durationMinimumProgress}, var(--color-accent) ${durationMinimumProgress} ${durationProgress}, oklch(0.27 0.012 265) ${durationProgress} 100%)` }}
-                    />
-                    <div className="mt-1 flex justify-between text-[10px] text-[var(--color-text-muted)]">{durationTicks.map((value) => <span key={value}>{value}s</span>)}</div>
-                  </div>
-                ) : null}
-                {effectiveMediaType === "image" ? <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-end gap-2 border-t border-[var(--color-hairline)] pt-3"><label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">W</span><input type="number" min={64} value={imageWidth} onChange={(event) => { setImageWidth(Math.max(64, Number(event.target.value) || 64)); setCustomSize(true); }} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]" /></label><span className="pb-2 text-xs text-[var(--color-text-muted)]">x</span><label className="text-[11px] text-[var(--color-text-muted)]"><span className="mb-1 block">H</span><input type="number" min={64} value={imageHeight} onChange={(event) => { setImageHeight(Math.max(64, Number(event.target.value) || 64)); setCustomSize(true); }} className="focus-ring h-9 w-full rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-xs text-[var(--color-text)]" /></label></div> : null}
-              </div>
-            </details>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <label className="min-w-28 text-[10px] text-[var(--color-text-muted)]">
+                <span className="sr-only">{t("free_creation_model")}</span>
+                <select value={selectedModel} onChange={(event) => setModel(event.target.value)} className="focus-ring h-8 max-w-36 rounded border border-[var(--color-hairline)] bg-[var(--color-background)] px-2 text-[11px] text-[var(--color-text)]">
+                  <option value="auto">{t("free_creation_model_auto")}</option>
+                  {modelOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+              {effectiveMediaType === "image" ? (
+                <ImageParameterControl
+                  label={t("home_image_settings")}
+                  ratioLabel={t("home_ratio")}
+                  resolutionLabel={t("home_resolution")}
+                  quantityLabel={t("home_quantity")}
+                  sizeLabel={t("home_size")}
+                  widthLabel={t("home_width")}
+                  heightLabel={t("home_height")}
+                  sizeHint={t("home_size_hint")}
+                  ratio={effectiveAspectRatio}
+                  resolution={selectedResolution || "1.5k"}
+                  quantity={quantity}
+                  width={imageWidth}
+                  height={imageHeight}
+                  ratioOptions={parameterRatioOptions}
+                  resolutionOptions={resolutionOptions}
+                  onRatioChange={changeAspectRatio}
+                  onResolutionChange={changeResolution}
+                  onQuantityChange={setQuantity}
+                  onDimensionsCommit={commitImageDimensions}
+                />
+              ) : (
+                <VideoParameterControl
+                  label={t("home_video_settings")}
+                  ratioLabel={t("home_ratio")}
+                  resolutionLabel={t("home_resolution")}
+                  quantityLabel={t("home_quantity")}
+                  autoLabel={t("home_auto")}
+                  ratio={effectiveAspectRatio}
+                  resolution={selectedResolution || "auto"}
+                  quantity={quantity}
+                  ratioOptions={parameterRatioOptions}
+                  resolutionOptions={resolutionOptions}
+                  onRatioChange={changeAspectRatio}
+                  onResolutionChange={changeResolution}
+                  onQuantityChange={setQuantity}
+                />
+              )}
+              {effectiveMediaType === "video" && durationOptions.length ? (
+                <DurationControl
+                  label={t("free_creation_duration")}
+                  minimumLabel={t("home_duration_minimum", { value: durationOptions[0] ?? safeDuration })}
+                  value={safeDuration}
+                  durations={durationOptions}
+                  onChange={setDuration}
+                  ariaLabel={`${t("free_creation_duration")} control`}
+                />
+              ) : null}
+              <select
+                className="sr-only"
+                aria-label={t("free_creation_resolution")}
+                value={selectedResolution}
+                onChange={(event) => changeResolution(event.target.value)}
+                tabIndex={-1}
+              >
+                {resolutionOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <select
+                className="sr-only"
+                aria-label={t("free_creation_quantity")}
+                value={quantity}
+                onChange={(event) => setQuantity(Number(event.target.value))}
+                tabIndex={-1}
+              >
+                {[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              {effectiveMediaType === "image" ? <>
+                <input className="sr-only" aria-label="W" type="number" value={imageWidth} onChange={(event) => commitImageDimensions(Number(event.target.value) || imageWidth, imageHeight)} tabIndex={-1} />
+                <input className="sr-only" aria-label="H" type="number" value={imageHeight} onChange={(event) => commitImageDimensions(imageWidth, Number(event.target.value) || imageHeight)} tabIndex={-1} />
+              </> : null}
+              {effectiveMediaType === "video" && durationOptions.length ? (
+                <input
+                  className="sr-only"
+                  type="range"
+                  min={0}
+                  max={durationMaximum}
+                  step={1}
+                  value={safeDuration}
+                  aria-label={t("free_creation_duration")}
+                  aria-valuemin={durationMinimum}
+                  onChange={(event) => {
+                    const requested = event.currentTarget.valueAsNumber;
+                    setDuration(durationOptions.reduce((closest, candidate) => Math.abs(candidate - requested) < Math.abs(closest - requested) ? candidate : closest, durationOptions[0] ?? requested));
+                  }}
+                  tabIndex={-1}
+                />
+              ) : null}
+            </div>
 
             <div className="min-w-0 flex-1 truncate px-1 text-[11px] text-[var(--color-text-muted)]">{selectedModel === "auto" ? t("free_creation_model_auto") : selectedModel} · {effectiveAspectRatio}{selectedResolution ? ` · ${selectedResolution}` : ""}{effectiveMediaType === "video" ? ` · ${safeDuration}s` : ` · ${imageWidth}x${imageHeight}`}</div>
             <button type="button" onClick={() => void handleSubmit()} disabled={!prompt.trim() || readOnly || submitting || !capabilitiesReady} className="focus-ring grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[var(--color-accent)] text-[oklch(0.15_0_0)] transition-colors hover:bg-[var(--color-accent-2)] disabled:cursor-not-allowed disabled:opacity-40" aria-label={t("free_creation_submit")} title={t("free_creation_submit")}>{submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}</button>
@@ -469,6 +592,11 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
 
         {capabilityError || error ? <p className="mt-2 text-xs text-[var(--color-danger)]" role="alert">{capabilityError || error}</p> : null}
       </section>
+      <FreeCreationPreviewDialog
+        projectName={projectName}
+        target={previewTarget}
+        onClose={() => setPreviewTarget(null)}
+      />
     </div>
   );
 }

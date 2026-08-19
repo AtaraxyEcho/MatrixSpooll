@@ -233,7 +233,7 @@ function HomeSelect<T extends HomeSelectValue>({
   );
 }
 
-interface ImageParameterControlProps {
+export interface ImageParameterControlProps {
   label: string;
   ratioLabel: string;
   resolutionLabel: string;
@@ -255,7 +255,7 @@ interface ImageParameterControlProps {
   onDimensionsCommit: (width: number, height: number) => void;
 }
 
-function ImageParameterControl({
+export function ImageParameterControl({
   label,
   ratioLabel,
   resolutionLabel,
@@ -444,7 +444,7 @@ function ImageParameterControl({
   );
 }
 
-interface VideoParameterControlProps {
+export interface VideoParameterControlProps {
   label: string;
   ratioLabel: string;
   resolutionLabel: string;
@@ -460,7 +460,7 @@ interface VideoParameterControlProps {
   onQuantityChange: (value: number) => void;
 }
 
-function VideoParameterControl({
+export function VideoParameterControl({
   label,
   ratioLabel,
   resolutionLabel,
@@ -581,15 +581,16 @@ function VideoParameterControl({
   );
 }
 
-interface DurationControlProps {
+export interface DurationControlProps {
   label: string;
   minimumLabel: string;
   value: number;
   durations?: readonly number[];
   onChange: (value: number) => void;
+  ariaLabel?: string;
 }
 
-function DurationControl({ label, minimumLabel, value, durations, onChange }: DurationControlProps) {
+export function DurationControl({ label, minimumLabel, value, durations, onChange, ariaLabel = label }: DurationControlProps) {
   const supported = useMemo(
     () => (durations?.length ? [...durations].sort((left, right) => left - right) : [value]),
     [durations, value],
@@ -626,7 +627,7 @@ function DurationControl({ label, minimumLabel, value, durations, onChange }: Du
       <button
         type="button"
         className="home-param-trigger"
-        aria-label={label}
+        aria-label={ariaLabel}
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         aria-haspopup="dialog"
@@ -653,7 +654,7 @@ function DurationControl({ label, minimumLabel, value, durations, onChange }: Du
               max={maximum}
               step={1}
               value={safeValue}
-              aria-label={label}
+              aria-label={ariaLabel}
               aria-valuemin={minimum}
               aria-valuetext={`${value}s`}
               style={{

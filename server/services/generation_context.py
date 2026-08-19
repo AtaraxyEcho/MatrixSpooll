@@ -208,6 +208,7 @@ class VideoLaneResult:
     supported_durations: tuple[int, ...]
     max_duration: int | None
     max_reference_images: int | None
+    text_to_video: bool = True
     # 费用与实际 provider 出账口径的有声档位，直接来自 video capabilities。
     # 它与下方的 requested_generate_audio（用户开关意图）不等价。
     generate_audio: bool = False
@@ -370,6 +371,7 @@ async def resolve_generation_context(
             supported_durations: tuple[int, ...] = ()
             max_duration: int | None = None
             max_reference_images: int | None = None
+            text_to_video = True
             max_reference_videos: int | None = None
             max_reference_media_count: int | None = None
             supported_aspect_ratios: tuple[str, ...] = ()
@@ -386,6 +388,7 @@ async def resolve_generation_context(
                 supported_durations = tuple(int(d) for d in caps.get("supported_durations") or [])
                 max_duration = caps.get("max_duration")
                 max_reference_images = caps.get("max_reference_images")
+                text_to_video = bool(caps.get("text_to_video", True))
                 max_reference_videos = caps.get("max_reference_videos")
                 max_reference_media_count = caps.get("max_reference_media_count")
                 supported_aspect_ratios = tuple(str(item) for item in caps.get("supported_aspect_ratios") or [])
@@ -412,6 +415,7 @@ async def resolve_generation_context(
                 supported_durations=supported_durations,
                 max_duration=max_duration,
                 max_reference_images=max_reference_images,
+                text_to_video=text_to_video,
                 max_reference_videos=max_reference_videos,
                 max_reference_media_count=max_reference_media_count,
                 supported_aspect_ratios=supported_aspect_ratios,

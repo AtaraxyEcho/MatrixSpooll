@@ -16,6 +16,7 @@ import { WorkspaceNotificationsDrawer } from "./WorkspaceNotificationsDrawer";
 import { ExportScopeDialog } from "./ExportScopeDialog";
 import { ProjectMenu } from "./ProjectMenu";
 import { PhaseStepper } from "./PhaseStepper";
+import { FreeCreationExportMenu } from "./FreeCreationExportMenu";
 
 import { API } from "@/api";
 import { ArchiveDiagnosticsDialog } from "@/components/shared/ArchiveDiagnosticsDialog";
@@ -36,6 +37,7 @@ function triggerBrowserDownload(url: string) {
 
 interface GlobalHeaderProps {
   onNavigateBack?: () => void;
+  variant?: "workflow" | "free";
 }
 
 /**
@@ -44,7 +46,7 @@ interface GlobalHeaderProps {
  * - 中：PhaseStepper（5 阶段胶囊）
  * - 右：通知 / 费用 / 任务雷达 / 导出 / 资产库 / 设置
  */
-export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
+export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHeaderProps) {
   const { t } = useTranslation();
   const [, setLocation] = useLocation();
   const { currentProjectData, currentProjectName } = useProjectsStore();
@@ -220,9 +222,15 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
         </div>
 
         {/* ---- Center: phase stepper ---- */}
-        <div className="app-workspace-topbar__phase hidden justify-self-center md:flex">
-          <PhaseStepper currentPhase={currentPhase} />
-        </div>
+        {variant === "workflow" ? (
+          <div className="app-workspace-topbar__phase hidden justify-self-center md:flex">
+            <PhaseStepper currentPhase={currentPhase} />
+          </div>
+        ) : (
+          <div className="hidden justify-self-center text-xs font-medium text-[var(--color-text-muted)] md:block">
+            {t("dashboard:free_creation_workspace")}
+          </div>
+        )}
 
         {/* ---- Right: actions ---- */}
         <div className="app-workspace-topbar__actions">
@@ -373,7 +381,7 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
           />
 
           {/* Export — accent CTA */}
-          <div
+          {variant === "workflow" ? <div
             className="relative"
             ref={exportAnchorRef}
             data-onboarding={ONBOARDING_ANCHORS.workbenchExport}
@@ -417,10 +425,12 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
               onJianyingExport={voidPromise(handleJianyingExport)}
               jianyingExporting={jianyingExporting}
             />
-          </div>
+          </div> : (
+            <FreeCreationExportMenu projectName={currentProjectName} disabled={demoMode} />
+          )}
 
           {/* Asset library */}
-          <button
+          {variant === "workflow" ? <button
             type="button"
             onClick={() => {
               rememberAssetLibraryReturnTo(window.location.pathname);
@@ -440,7 +450,7 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
             aria-label={t("assets:library_title")}
           >
             <Package className="h-4 w-4" />
-          </button>
+          </button> : null}
 
           {/* Settings */}
           <button

@@ -12,7 +12,7 @@ Scope: `content_mode=free` only. Storyboard and reference-video project flows ke
 
 ## Resource and input roles
 
-Resource types are `image`, `video`, `audio`, `script`, and `creation`. A resource role is explicit and is never inferred from a filename:
+Resource types are `image`, `video`, `audio`, `script`, and `creation`. A resource role is explicit and is never inferred from a filename. Audio uploads, including voiceover files, are first-class canvas nodes with native preview controls and can be referenced as `reference_audio` when the selected video model declares that slot.
 
 `first_frame`, `last_frame`, `reference_image`, `reference_video`, `reference_audio`, `prompt_context`.
 
@@ -49,6 +49,7 @@ The free detail shell contains only the infinite canvas, the shared composer, op
 - `Ctrl/Cmd + wheel` zooms only inside the canvas and calls `preventDefault`; ordinary wheel pans the canvas.
 - Right-click inside the canvas suppresses the browser menu and opens an opaque, viewport-safe context menu. Right-click outside the canvas keeps browser behavior.
 - Upload nodes have the same selection, drag, marquee, context-menu, and batch actions as creation nodes.
+- Image, video, text/script, and audio/voiceover uploads are all rendered as identifiable canvas cards. Audio cards keep native playback controls so creators can audition a voiceover before binding it to a request; text/script cards use `prompt_context` and do not require a text model.
 - A batch selection can move, hide, reference, or export. Deleting an unreferenced upload deletes its private record and file; a referenced upload is detached/hidden first and cannot break an existing creation.
 - Popovers and menus use an opaque raised surface, a portal/fixed position, and a high stacking layer. They must not be clipped by the composer or category bars.
 

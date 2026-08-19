@@ -630,6 +630,9 @@ class VideoCapabilities:
     元数据沿用后者）。
     """
 
+    # Explicit prompt-only support. Legacy backends default to True until their
+    # model table declares otherwise; capability consumers must read this field.
+    text_to_video: bool = True
     first_frame: bool = True
     last_frame: bool = False
     max_reference_images: int = 0

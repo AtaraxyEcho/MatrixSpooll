@@ -1023,12 +1023,37 @@ class API {
     return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-references`);
   }
 
+  static async getFreeCreationReferencePreview(
+    projectName: string,
+    referenceId: string,
+  ): Promise<{
+    reference_id: string;
+    original_filename: string;
+    media_type: string;
+    supported: boolean;
+    text?: string;
+    truncated?: boolean;
+  }> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/free-creation-references/${encodeURIComponent(referenceId)}/preview`,
+    );
+  }
+
   static async deleteFreeCreationReference(
     projectName: string,
     referenceId: string,
   ): Promise<{ success: boolean }> {
     return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-references/${encodeURIComponent(referenceId)}`, {
       method: "DELETE",
+    });
+  }
+
+  static async detachFreeCreationReference(
+    projectName: string,
+    referenceId: string,
+  ): Promise<{ success: boolean }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-references/${encodeURIComponent(referenceId)}/detach`, {
+      method: "POST",
     });
   }
 

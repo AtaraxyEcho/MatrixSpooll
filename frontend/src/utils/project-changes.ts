@@ -29,6 +29,7 @@ const ENTITY_LABELS: Record<ProjectChange["entity_type"], string> = {
   overview: "项目概览",
   draft: "预处理",
   grid: "宫格",
+  free_creation: "自由创作",
   // 任务终态是刷新信号（important=false），不进通知文案；此项只为满足映射完整性。
   task: "任务",
 };
