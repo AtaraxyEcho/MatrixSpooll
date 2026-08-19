@@ -65,26 +65,49 @@ def build_free_creation_basis(project_path: Path, metadata: dict[str, Any]) -> A
     """Freeze the request inputs that directly determine a free artifact."""
 
     references = metadata.get("references", [])
-    reference_digests: list[dict[str, str]] = []
+    claims = metadata.get("reference_claims", [])
+    reference_offset = int(metadata.get("reference_role_offset") or 0)
+    reference_digests: list[dict[str, Any]] = []
     if isinstance(references, list):
-        for reference in references:
+        for index, reference in enumerate(references):
             if isinstance(reference, str):
                 reference_path = safe_join(project_path, reference)
-                reference_digests.append({"path": reference, "digest": prefixed_sha256_file(reference_path)})
+                claim_index = index - reference_offset
+                claim = (
+                    claims[claim_index]
+                    if isinstance(claims, list)
+                    and 0 <= claim_index < len(claims)
+                    and isinstance(claims[claim_index], dict)
+                    else {}
+                )
+                reference_digests.append(
+                    {
+                        "digest": prefixed_sha256_file(reference_path),
+                        "resource_order": index,
+                        **{
+                            key: claim[key]
+                            for key in ("type", "reference_id", "creation_id", "version", "role")
+                            if claim.get(key) is not None
+                        },
+                    }
+                )
     return ArtifactBasis.build(
         "free-creation/request",
-        kind_version=1,
+        kind_version=2,
         inputs={
+            "request_id": metadata.get("request_id"),
             "prompt": metadata.get("prompt", ""),
             "prompt_mode": metadata.get("prompt_mode", "original"),
             "output_type": metadata.get("output_type"),
             "media_type": metadata.get("media_type"),
             "model": metadata.get("model"),
+            "effective_mode": metadata.get("effective_mode"),
             "references": reference_digests,
             "aspect_ratio": metadata.get("aspect_ratio"),
             "resolution": metadata.get("resolution"),
             "size": metadata.get("size"),
             "duration_seconds": metadata.get("duration_seconds"),
+            "quantity": metadata.get("quantity", 1),
             "storyboard_plan_id": metadata.get("storyboard_plan_id"),
             "storyboard_shot_id": metadata.get("storyboard_shot_id"),
             "sequence_index": metadata.get("sequence_index"),
@@ -307,9 +330,11 @@ async def execute_free_image_task(
         "model": f"{ctx.image.provider_model.provider_id}/{ctx.image.backend_model}",
         "references": payload.get("references") or [],
         "reference_claims": payload.get("reference_claims") or [],
+        "effective_mode": payload.get("effective_mode"),
         "aspect_ratio": payload.get("aspect_ratio") or project.get("aspect_ratio") or "9:16",
         "resolution": payload.get("resolution"),
         "size": payload.get("size"),
+        "quantity": int(payload.get("quantity") or 1),
         "storyboard_plan_id": payload.get("storyboard_plan_id"),
         "storyboard_shot_id": payload.get("storyboard_shot_id"),
         "sequence_index": payload.get("sequence_index"),
@@ -351,10 +376,12 @@ async def execute_free_video_task(
     start_image: Path | None = None
     end_image: Path | None = None
     claims = payload.get("reference_claims")
+    reference_role_offset = int(payload.get("reference_role_offset") or 0)
     for index, path in enumerate(references):
+        claim_index = index - reference_role_offset
         claim = (
-            claims[index]
-            if isinstance(claims, list) and index < len(claims) and isinstance(claims[index], dict)
+            claims[claim_index]
+            if isinstance(claims, list) and 0 <= claim_index < len(claims) and isinstance(claims[claim_index], dict)
             else {}
         )
         role = claim.get("role")
@@ -368,11 +395,11 @@ async def execute_free_video_task(
             reference_videos.append(path)
         elif role == "reference_audio":
             reference_audio.append(path)
-        elif path.suffix.lower() in _IMAGE_REFERENCE_SUFFIXES:
+        elif not isinstance(claims, list) and path.suffix.lower() in _IMAGE_REFERENCE_SUFFIXES:
             reference_images.append(path)
-        elif path.suffix.lower() in _VIDEO_REFERENCE_SUFFIXES:
+        elif not isinstance(claims, list) and path.suffix.lower() in _VIDEO_REFERENCE_SUFFIXES:
             reference_videos.append(path)
-        elif path.suffix.lower() in _AUDIO_REFERENCE_SUFFIXES:
+        elif not isinstance(claims, list) and path.suffix.lower() in _AUDIO_REFERENCE_SUFFIXES:
             reference_audio.append(path)
     generation_prompt = await asyncio.to_thread(_prompt_with_reference_context, prompt, references)
     ctx = await resolve_generation_context(
@@ -417,9 +444,12 @@ async def execute_free_video_task(
         "model": f"{ctx.video.provider_model.provider_id}/{ctx.video.backend_model}",
         "references": payload.get("references") or [],
         "reference_claims": payload.get("reference_claims") or [],
+        "effective_mode": payload.get("effective_mode"),
+        "reference_role_offset": reference_role_offset,
         "aspect_ratio": payload.get("aspect_ratio") or project.get("aspect_ratio") or "9:16",
         "resolution": payload.get("resolution"),
         "size": payload.get("size"),
+        "quantity": int(payload.get("quantity") or 1),
         "duration_seconds": int(payload.get("duration_seconds") or 4),
         "parent_creation_id": parent_creation_id,
         "storyboard_plan_id": payload.get("storyboard_plan_id"),
@@ -468,6 +498,8 @@ async def execute_free_edit_task(
         else [parent_path, *additional_references]
     )
     payload = {**payload, "references": references}
+    if references and references[0] == parent_path:
+        payload["reference_role_offset"] = 1
     if parent_media_type == "video":
         result = await execute_free_video_task(
             project_name,

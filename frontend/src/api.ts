@@ -997,7 +997,7 @@ class API {
   static async getFreeCreationCapabilities(options: {
     outputType: "image" | "video";
     model?: string;
-    referenceKind?: "none" | "image" | "video";
+    referenceKind?: "none" | "frame" | "image" | "video";
     projectName?: string;
     signal?: AbortSignal;
   }): Promise<FreeCreationCapabilities> {

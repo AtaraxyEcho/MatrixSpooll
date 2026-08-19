@@ -24,6 +24,18 @@ describe("HomeHeroComposer", () => {
       max_reference_images: outputType === "video" ? 9 : null,
       max_reference_videos: outputType === "video" ? 0 : null,
       max_reference_media_count: outputType === "video" ? 9 : null,
+      modes: outputType === "video" ? ["t2v", "first_frame", "first_last_frame", "reference_image"] : ["t2i", "i2i"],
+      input_slots: outputType === "video"
+        ? [
+            { role: "first_frame", accepted_types: ["image"], max_count: 1 },
+            { role: "last_frame", accepted_types: ["image"], max_count: 1 },
+            { role: "reference_image", accepted_types: ["image"], max_count: 9 },
+            { role: "prompt_context", accepted_types: ["text"], max_count: 1 },
+          ]
+        : [
+            { role: "reference_image", accepted_types: ["image"], max_count: 32 },
+            { role: "prompt_context", accepted_types: ["text"], max_count: 1 },
+          ],
     }));
   });
 
@@ -189,6 +201,9 @@ describe("HomeHeroComposer", () => {
     fireEvent.change(screen.getByLabelText(t("home_prompt_label")), {
       target: { value: "Animate the opening frame" },
     });
+    fireEvent.change(screen.getByRole("combobox", {
+      name: t("free_creation_reference_role_label", { name: "opening.png" }),
+    }), { target: { value: "reference_image" } });
     const submit = screen.getByRole("button", { name: t("home_generate") });
     await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);

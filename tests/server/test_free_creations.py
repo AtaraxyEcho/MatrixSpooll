@@ -16,6 +16,7 @@ from server.routers.free_creations import (
     _record_batch_compensation,
     _record_enqueued_metadata,
     _validate_declared_resolution,
+    _validate_reference_roles,
     _validate_references,
     get_free_creation_capabilities,
 )
@@ -161,6 +162,24 @@ def test_free_creation_request_validates_mode_specific_fields() -> None:
         FreeCreationRequest(output_type="edit", prompt="rainy background", quantity=2)
     with pytest.raises(ValidationError):
         FreeCreationRequest(output_type="video", prompt="city", size="1024x1024")
+
+
+def test_reference_roles_are_explicit_and_lane_aware() -> None:
+    with pytest.raises(BadRequestError) as missing:
+        _validate_reference_roles(
+            [{"type": "upload", "reference_id": "r_0123456789abcdef0123"}],
+            ["uploads/frame.png"],
+            "video",
+        )
+    assert missing.value.key == "free_creation_reference_role_required"
+
+    with pytest.raises(BadRequestError) as unsupported:
+        _validate_reference_roles(
+            [{"type": "upload", "reference_id": "r_0123456789abcdef0123", "role": "first_frame"}],
+            ["uploads/frame.png"],
+            "image",
+        )
+    assert unsupported.value.key == "free_creation_reference_role_unsupported"
 
 
 def test_free_creation_model_selects_only_the_requested_media_lane() -> None:

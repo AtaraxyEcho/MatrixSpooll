@@ -147,7 +147,7 @@ describe("FreeCreationWorkspace", () => {
     );
   });
 
-  it("infers the internal role for an omni reference without exposing role controls", async () => {
+  it("requires an explicit role before submitting a bound canvas resource", async () => {
     vi.mocked(API.listFreeCreationReferences).mockResolvedValue({
       references: [{
         reference_id: "ref-1",
@@ -170,9 +170,11 @@ describe("FreeCreationWorkspace", () => {
       task_id: "task-reference-role",
     });
     expect(screen.getAllByText("hero.png").length).toBeGreaterThan(0);
-    expect(screen.queryByRole("combobox", {
+    const role = screen.getByRole("combobox", {
       name: t("free_creation_reference_role_label", { name: "hero.png" }),
-    })).not.toBeInTheDocument();
+    });
+    expect(role).toHaveValue("");
+    fireEvent.change(role, { target: { value: "reference_image" } });
     fireEvent.change(screen.getByPlaceholderText(t("free_creation_prompt")), {
       target: { value: "use the hero image as a visual reference" },
     });
@@ -187,7 +189,7 @@ describe("FreeCreationWorkspace", () => {
     );
   });
 
-  it("assigns canvas image references to fixed first and last frame slots", async () => {
+  it("assigns a canvas image to the explicit first-frame role", async () => {
     vi.mocked(API.listFreeCreationReferences).mockResolvedValue({
       references: [{
         reference_id: "ref-frames",
@@ -206,11 +208,11 @@ describe("FreeCreationWorkspace", () => {
     });
     render(<FreeCreationWorkspace projectName="demo" />);
 
-    const referenceMode = await screen.findByRole("button", { name: t("free_creation_reference_mode") });
-    fireEvent.click(referenceMode);
-    fireEvent.click(await screen.findByRole("option", { name: t("free_creation_reference_mode_frames") }));
     const addButtons = await screen.findAllByRole("button", { name: t("free_creation_add_reference") });
     fireEvent.click(addButtons[0]!);
+    fireEvent.change(screen.getByRole("combobox", {
+      name: t("free_creation_reference_role_label", { name: "opening.png" }),
+    }), { target: { value: "first_frame" } });
     fireEvent.change(screen.getByPlaceholderText(t("free_creation_prompt")), {
       target: { value: "start from the supplied opening frame" },
     });
