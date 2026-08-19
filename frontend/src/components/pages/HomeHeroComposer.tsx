@@ -123,9 +123,43 @@ export function HomeSelect<T extends HomeSelectValue>({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const pendingFocusIndexRef = useRef<number | null>(null);
+  const typeaheadRef = useRef("");
+  const typeaheadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listboxId = useId();
   const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));
   const selectedOption = options[selectedIndex] ?? options[0];
+
+  const clearTypeahead = () => {
+    typeaheadRef.current = "";
+    if (typeaheadTimerRef.current) {
+      clearTimeout(typeaheadTimerRef.current);
+      typeaheadTimerRef.current = null;
+    }
+  };
+
+  const focusByTypeahead = (key: string) => {
+    const normalizedKey = key.toLocaleLowerCase();
+    const nextQuery = typeaheadRef.current ? `${typeaheadRef.current}${normalizedKey}` : normalizedKey;
+    const findMatch = (query: string) => options.findIndex((option) => {
+      const searchText = `${option.label} ${String(option.value)}`.toLocaleLowerCase();
+      return searchText.includes(query);
+    });
+    let matchIndex = findMatch(nextQuery);
+    if (matchIndex < 0) {
+      typeaheadRef.current = normalizedKey;
+      matchIndex = findMatch(normalizedKey);
+    } else {
+      typeaheadRef.current = nextQuery;
+    }
+    if (matchIndex >= 0) {
+      pendingFocusIndexRef.current = matchIndex;
+      setOpen(true);
+      if (open) optionRefs.current[matchIndex]?.focus();
+    }
+    if (typeaheadTimerRef.current) clearTimeout(typeaheadTimerRef.current);
+    typeaheadTimerRef.current = setTimeout(clearTypeahead, 700);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -140,9 +174,20 @@ export function HomeSelect<T extends HomeSelectValue>({
     if (open) optionRefs.current[selectedIndex]?.focus();
   }, [open, selectedIndex]);
 
+  useEffect(() => {
+    if (!open || pendingFocusIndexRef.current === null) return;
+    optionRefs.current[pendingFocusIndexRef.current]?.focus();
+    pendingFocusIndexRef.current = null;
+  }, [open]);
+
+  useEffect(() => () => {
+    if (typeaheadTimerRef.current) clearTimeout(typeaheadTimerRef.current);
+  }, []);
+
   const selectOption = (nextValue: T) => {
     onChange(nextValue);
     setOpen(false);
+    clearTypeahead();
     triggerRef.current?.focus();
   };
 
@@ -169,7 +214,10 @@ export function HomeSelect<T extends HomeSelectValue>({
         aria-haspopup="listbox"
         onClick={() => setOpen((current) => !current)}
         onKeyDown={(event) => {
-          if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter" || event.key === " ") {
+          if (event.key.length === 1 && event.key !== " " && !event.altKey && !event.ctrlKey && !event.metaKey) {
+            event.preventDefault();
+            focusByTypeahead(event.key);
+          } else if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             setOpen(true);
           }
@@ -200,7 +248,10 @@ export function HomeSelect<T extends HomeSelectValue>({
                 className="home-param-option"
                 onClick={() => selectOption(option.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "ArrowDown") {
+                  if (event.key.length === 1 && event.key !== " " && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                    event.preventDefault();
+                    focusByTypeahead(event.key);
+                  } else if (event.key === "ArrowDown") {
                     event.preventDefault();
                     moveFocus(index + 1);
                   } else if (event.key === "ArrowUp") {

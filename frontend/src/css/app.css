@@ -315,8 +315,8 @@ body {
 }
 
 .home-duration-control {
-    width: 176px;
-    flex-basis: 176px;
+    width: 132px;
+    flex-basis: 132px;
 }
 
 .home-param-label {
@@ -491,6 +491,8 @@ body {
 
 .home-param-option {
     display: flex;
+    width: 100%;
+    min-width: 0;
     min-height: 34px;
     align-items: center;
     justify-content: space-between;
@@ -502,6 +504,16 @@ body {
     line-height: 1.25;
     text-align: left;
     transition: background-color 120ms ease, color 120ms ease;
+}
+
+.home-param-option > .truncate {
+    min-width: 0;
+}
+
+.home-model-control .home-param-popover {
+    width: min(280px, calc(100vw - 32px));
+    max-width: 100%;
+    overflow-x: hidden;
 }
 
 .home-param-option:hover,
