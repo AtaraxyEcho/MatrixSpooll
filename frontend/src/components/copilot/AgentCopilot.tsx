@@ -404,6 +404,30 @@ export function AgentCopilot({
   }, []);
 
   useEffect(() => {
+    if (!currentProjectName) return;
+    const handoff = useAssistantStore.getState().consumeHandoff(currentProjectName);
+    if (!handoff) return;
+
+    let active = true;
+    const outgoing = handoff.context
+      ? `${handoff.content.trim()}\n\n${handoff.context}`
+      : handoff.content.trim();
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      setLocalInput(handoff.content);
+      voidCall(sendMessage(outgoing, undefined).then((accepted) => {
+        if (!active || !accepted) return;
+        setLocalInput("");
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      }));
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [currentProjectName, sendMessage]);
+
+  useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }

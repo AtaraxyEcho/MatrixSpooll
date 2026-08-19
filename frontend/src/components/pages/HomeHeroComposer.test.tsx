@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Settings2 } from "lucide-react";
 import { API } from "@/api";
 import i18n from "@/i18n";
-import { HomeHeroComposer, HomeSelect } from "@/components/pages/HomeHeroComposer";
+import { HomeSelect } from "@/components/generation/GenerationComposer";
+import { HomeHeroComposer } from "@/components/pages/HomeHeroComposer";
 import { useAssistantStore } from "@/stores/assistant-store";
 
 const t = i18n.getFixedT("zh", "dashboard");
@@ -145,8 +146,11 @@ describe("HomeHeroComposer", () => {
       aspect_ratio: "1:1",
     });
     expect(createFreeProject).not.toHaveBeenCalled();
-    expect(useAssistantStore.getState().input).toContain("Plan a short launch video");
-    expect(useAssistantStore.getState().input).toContain("1:1");
+    expect(useAssistantStore.getState().pendingHandoff).toEqual(expect.objectContaining({
+      projectName: "agent-project",
+      content: "Plan a short launch video",
+      context: expect.stringContaining("1:1"),
+    }));
     expect(onCreated).toHaveBeenCalledWith("agent-project", "agent");
   });
 

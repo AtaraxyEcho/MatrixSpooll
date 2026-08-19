@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Bot } from "lucide-react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentParameterControl, HomeSelect } from "@/components/pages/HomeHeroComposer";
+import { AgentParameterControl, HomeSelect } from "@/components/generation/GenerationComposer";
 import { useAssistantSession } from "@/hooks/useAssistantSession";
 import { useAppStore } from "@/stores/app-store";
 import { useAssistantStore } from "@/stores/assistant-store";
@@ -178,6 +178,55 @@ describe("AgentCopilot", () => {
       expect(screen.getByLabelText("助手输入")).toHaveValue("Plan a short launch video");
     });
     await waitFor(() => expect(useAssistantStore.getState().input).toBe(""));
+  });
+
+  it("sends a matching homepage handoff once after the embedded composer mounts", async () => {
+    sendMessage.mockResolvedValueOnce(true);
+    useAssistantStore.getState().queueHandoff({
+      projectName: "demo",
+      content: "Plan a short launch video",
+      context: "Prefer video at 16:9",
+    });
+
+    render(<AgentCopilot embedded />);
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith(
+        "Plan a short launch video\n\nPrefer video at 16:9",
+        undefined,
+      );
+    });
+    await waitFor(() => expect(screen.getByLabelText("助手输入")).toHaveValue(""));
+    expect(useAssistantStore.getState().pendingHandoff).toBeNull();
+  });
+
+  it("does not consume a homepage handoff for another project", async () => {
+    useAssistantStore.getState().queueHandoff({
+      projectName: "another-project",
+      content: "Keep this queued",
+    });
+
+    render(<AgentCopilot embedded />);
+
+    await Promise.resolve();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(useAssistantStore.getState().pendingHandoff?.projectName).toBe("another-project");
+  });
+
+  it("keeps the visible homepage prompt when automatic handoff sending fails", async () => {
+    sendMessage.mockResolvedValueOnce(false);
+    useAssistantStore.getState().queueHandoff({
+      projectName: "demo",
+      content: "Plan a launch video",
+      context: "Prefer video",
+    });
+
+    render(<AgentCopilot embedded />);
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith("Plan a launch video\n\nPrefer video", undefined);
+    });
+    expect(screen.getByLabelText("助手输入")).toHaveValue("Plan a launch video");
   });
 
   it("detaches only the composer while leaving the conversation in its panel", () => {

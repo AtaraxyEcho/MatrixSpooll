@@ -46,7 +46,7 @@ import {
   HomeSelect,
   modelLabel,
   VideoParameterControl,
-} from "@/components/pages/HomeHeroComposer";
+} from "@/components/generation/GenerationComposer";
 
 export interface FreeCreationWorkspaceProps {
   projectName: string;
