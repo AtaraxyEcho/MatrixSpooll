@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Settings2 } from "lucide-react";
 import { API } from "@/api";
 import i18n from "@/i18n";
-import { HomeHeroComposer } from "@/components/pages/HomeHeroComposer";
+import { HomeHeroComposer, HomeSelect } from "@/components/pages/HomeHeroComposer";
 
 const t = i18n.getFixedT("zh", "dashboard");
 
@@ -55,6 +56,30 @@ describe("HomeHeroComposer", () => {
     expect(screen.getByRole("button", { name: "1080P" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "1" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: t("home_image_settings") })).not.toBeInTheDocument();
+  });
+
+  it("uses keyboard letters to focus a matching model and shows the hint", () => {
+    render(
+      <HomeSelect
+        label={t("home_model")}
+        value="auto"
+        icon={Settings2}
+        hint={t("home_model_keyboard_hint")}
+        options={[
+          { value: "auto", label: t("home_model_auto") },
+          { value: "veo-3", label: "veo-3" },
+          { value: "sora-2", label: "sora-2" },
+        ]}
+        onChange={vi.fn()}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: t("home_model") });
+    expect(screen.getByText(t("home_model_keyboard_hint"))).toBeInTheDocument();
+    fireEvent.keyDown(trigger, { key: "v" });
+
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("option", { name: "veo-3" })).toHaveFocus();
   });
 
   it("shows the disabled pre-minimum interval and clamps to model-supported durations", async () => {

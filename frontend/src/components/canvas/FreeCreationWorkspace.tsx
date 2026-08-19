@@ -496,6 +496,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
                 value={selectedModel}
                 icon={Settings2}
                 className="home-model-control free-creation-model-control"
+                hint={t("home_model_keyboard_hint")}
                 options={[
                   { value: "auto", label: t("home_model_auto") },
                   ...modelOptions.map((option) => ({ value: option, label: modelLabel(option, t("home_model_auto")) })),
