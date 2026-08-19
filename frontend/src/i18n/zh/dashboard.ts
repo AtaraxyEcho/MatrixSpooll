@@ -34,7 +34,7 @@ export default {
   'free_creation_prompt': '创作提示词',
   'free_creation_image': '图片',
   'free_creation_video': '视频',
-  'free_creation_edit': '编辑图片',
+  'free_creation_edit': '编辑',
   'free_creation_reference_paths': '参考文件路径（每行一个）',
   'free_creation_aspect_ratio': '画面比例',
   'free_creation_model': '模型',

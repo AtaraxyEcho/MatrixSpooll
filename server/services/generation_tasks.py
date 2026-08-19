@@ -3613,7 +3613,7 @@ async def execute_generation_task(task: dict[str, Any], *, claimed_provider_id: 
                 task_id=queue_task_id,
                 claimed_provider_id=claimed_provider_id,
             )
-        elif task_type == "video":
+        elif task_type == "video" or (task.get("media_type") == "video" and task_type in {"free_video", "free_edit"}):
             result = await executor(
                 project_name,
                 resource_id,

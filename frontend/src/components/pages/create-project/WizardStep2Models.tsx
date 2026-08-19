@@ -39,6 +39,7 @@ export interface WizardStep2ModelsProps {
   hideDuration?: boolean;
   /** 上一步选定的生成模式是否为参考生视频——参考图路径可能收窄可选时长。 */
   usesReferenceImages?: boolean;
+  freeMode?: boolean;
 }
 
 export function WizardStep2Models({
@@ -51,6 +52,7 @@ export function WizardStep2Models({
   error,
   hideDuration = false,
   usesReferenceImages = false,
+  freeMode = false,
 }: WizardStep2ModelsProps) {
   const { t } = useTranslation(["common", "templates"]);
   const loading = !data && !error;
@@ -88,7 +90,7 @@ export function WizardStep2Models({
           }}
           globalDefaults={data.globalDefaults}
           usesReferenceImages={usesReferenceImages}
-          enable={hideDuration ? { duration: false } : undefined}
+          enable={freeMode ? { video: true, image: false, text: false, duration: false } : hideDuration ? { duration: false } : undefined}
         />
       )}
 

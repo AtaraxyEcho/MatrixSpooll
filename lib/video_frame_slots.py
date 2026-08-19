@@ -110,6 +110,7 @@ def gate_video_request(
     prompt: str | None = None,
     end_image: Path | None = None,
     reference_images: "list[Path] | None" = None,
+    reference_videos: "list[Path] | None" = None,
     reference_audio_files: "list[Path] | None" = None,
     reference_audio_total_seconds: float | None = None,
 ) -> None:
@@ -162,6 +163,29 @@ def gate_video_request(
                 model=model,
                 limit=limit,
                 count=len(reference_images),
+            )
+
+    if reference_videos:
+        limit = 0 if caps is None else caps.max_reference_videos
+        if limit <= 0:
+            raise VideoCapabilityError("video_reference_videos_unsupported", provider=provider, model=model)
+        if len(reference_videos) > limit:
+            raise VideoCapabilityError(
+                "video_reference_videos_exceeded",
+                provider=provider,
+                model=model,
+                limit=limit,
+                count=len(reference_videos),
+            )
+        total_limit = None if caps is None else caps.max_reference_media_count
+        total_count = len(reference_images or []) + len(reference_videos)
+        if total_limit is not None and total_count > total_limit:
+            raise VideoCapabilityError(
+                "video_reference_media_exceeded",
+                provider=provider,
+                model=model,
+                limit=total_limit,
+                count=total_count,
             )
 
     if reference_audio_files:

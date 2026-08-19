@@ -322,7 +322,13 @@ def project_video_backend_ids(project: dict) -> tuple[str, str] | None:
     return None
 
 
-def video_capability_satisfied(*, capability: VideoCapability, first_frame: bool, max_reference_images: int) -> bool:
+def video_capability_satisfied(
+    *,
+    capability: VideoCapability,
+    first_frame: bool,
+    max_reference_images: int,
+    max_reference_videos: int = 0,
+) -> bool:
     """一组视频能力声明是否满足某个桶——桶归属判定的唯一口径。
 
     解析闸（``_ensure_video_bucket_capability``）与桶候选下拉（``lib.capability_buckets``）共用本
@@ -330,7 +336,7 @@ def video_capability_satisfied(*, capability: VideoCapability, first_frame: bool
     ``VideoCapabilities``，一是不在 lib.config 层导入 lib.video_backends.base（分层契约），二是让
     内置（backend 声明）与自定义供应商（endpoint ⊕ 模型级覆盖的合成）两条来源都能直接喂进来。
     """
-    return first_frame if capability == "i2v" else max_reference_images > 0
+    return first_frame if capability == "i2v" else max_reference_images > 0 or max_reference_videos > 0
 
 
 # 档位 → 设置键。全局（system_settings）与项目级（project.json）同名同构。
@@ -1231,6 +1237,7 @@ class ConfigResolver:
             capability=capability,
             first_frame=caps.first_frame,
             max_reference_images=caps.max_reference_images,
+            max_reference_videos=caps.max_reference_videos,
         )
         if not satisfied:
             raise _video_bucket_capability_missing(capability, provider_id, model_id)
@@ -1374,6 +1381,10 @@ class ConfigResolver:
             except ValueError as exc:
                 raise ValueError(f"cannot resolve video capabilities for {provider_id}/{model_id}: {exc}") from exc
             max_reference_images = caps.max_reference_images
+            max_reference_videos = caps.max_reference_videos
+            max_reference_media_count = caps.max_reference_media_count
+            supported_aspect_ratios = caps.supported_aspect_ratios
+            supported_durations_with_reference_video = caps.supported_durations_with_reference_video
             first_frame = caps.first_frame
             last_frame = caps.last_frame
             reference_audio_mode = caps.reference_audio_mode
@@ -1414,6 +1425,10 @@ class ConfigResolver:
             except ValueError as exc:
                 raise ValueError(f"cannot resolve video capabilities for {provider_id}/{model_id}: {exc}") from exc
             max_reference_images = builtin_caps.max_reference_images
+            max_reference_videos = builtin_caps.max_reference_videos
+            max_reference_media_count = builtin_caps.max_reference_media_count
+            supported_aspect_ratios = builtin_caps.supported_aspect_ratios
+            supported_durations_with_reference_video = builtin_caps.supported_durations_with_reference_video
             first_frame = builtin_caps.first_frame
             last_frame = builtin_caps.last_frame
             reference_audio_mode = builtin_caps.reference_audio_mode
@@ -1470,8 +1485,12 @@ class ConfigResolver:
             "provider_id": provider_id,
             "model": model_id,
             "supported_durations": supported_durations,
+            "supported_durations_with_reference_video": list(supported_durations_with_reference_video or []),
             "max_duration": max_duration,
             "max_reference_images": max_reference_images,
+            "max_reference_videos": max_reference_videos,
+            "max_reference_media_count": max_reference_media_count,
+            "supported_aspect_ratios": list(supported_aspect_ratios or []),
             "first_frame": first_frame,
             "last_frame": last_frame,
             "generate_audio": generate_audio,

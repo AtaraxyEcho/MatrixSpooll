@@ -133,7 +133,76 @@ class TestCapabilities:
         b = DashScopeVideoBackend(api_key="sk", model="wan2.7-r2v")
         vc = b.video_capabilities
         assert vc.max_reference_images == 5
+        assert vc.max_reference_videos == 5
+        assert vc.max_reference_media_count == 5
+        assert vc.supported_aspect_ratios == ("16:9", "9:16", "1:1", "4:3", "3:4")
+        assert vc.supported_durations_with_reference_video == tuple(range(2, 11))
         assert vc.first_frame is True
+
+    @pytest.mark.unit
+    async def test_wan_r2v_uploads_reference_video_to_temporary_oss(self, tmp_path: Path):
+        from lib.video_backends.dashscope import DashScopeVideoBackend
+
+        source = tmp_path / "source.mp4"
+        source.write_bytes(b"video-bytes")
+        upload_policy = {
+            "data": {
+                "policy": "policy-token",
+                "signature": "signature-token",
+                "upload_dir": "tmp/abc",
+                "upload_host": "https://oss-upload.example.com",
+                "oss_access_key_id": "temp-access-key",
+                "x_oss_object_acl": "private",
+                "x_oss_forbid_overwrite": "true",
+            }
+        }
+        post = AsyncMock(side_effect=[_resp({}), _resp(_submit("t-video-ref"))])
+        get = AsyncMock(side_effect=[_resp(upload_policy), _resp(_succeeded(duration=6))])
+        client = _client(post=post, get=get)
+        p1, p2, p3 = _patches(client, AsyncMock())
+        with p1, p2, p3:
+            await DashScopeVideoBackend(api_key="sk", model="wan2.7-r2v").generate(
+                VideoGenerationRequest(
+                    prompt="restyle this clip",
+                    output_path=tmp_path / "out.mp4",
+                    reference_videos=[source],
+                    duration_seconds=6,
+                )
+            )
+
+        policy_call = get.await_args_list[0]
+        assert policy_call.args[0].endswith("/api/v1/uploads")
+        assert policy_call.kwargs["params"] == {"action": "getPolicy", "model": "wan2.7-r2v"}
+
+        upload_call, submit_call = post.await_args_list
+        assert upload_call.args[0] == "https://oss-upload.example.com"
+        upload_files = upload_call.kwargs["files"]
+        object_key = upload_files["key"][1]
+        assert object_key.startswith("tmp/abc/")
+        assert object_key.endswith("-source.mp4")
+        assert upload_files["file"][0] == "source.mp4"
+        assert upload_files["file"][2] == "video/mp4"
+
+        media = submit_call.kwargs["json"]["input"]["media"]
+        assert media == [{"type": "reference_video", "url": f"oss://{object_key}"}]
+        assert submit_call.kwargs["headers"]["X-DashScope-OssResourceResolve"] == "enable"
+
+    @pytest.mark.unit
+    def test_wan_r2v_reference_video_requires_uploaded_url(self, tmp_path: Path):
+        from lib.video_backends.dashscope import DashScopeVideoBackend
+
+        source = tmp_path / "source.mov"
+        source.write_bytes(b"video-bytes")
+        with pytest.raises(VideoCapabilityError) as exc:
+            DashScopeVideoBackend(api_key="sk", model="wan2.7-r2v")._build_payload(
+                VideoGenerationRequest(
+                    prompt="restyle this clip",
+                    output_path=tmp_path / "out.mp4",
+                    reference_videos=[source],
+                )
+            )
+
+        assert exc.value.code == "video_reference_videos_unreadable"
 
     @pytest.mark.unit
     def test_t2v_caps(self):

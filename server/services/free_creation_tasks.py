@@ -22,14 +22,15 @@ from server.services.generation_context import ImageLaneRequest, VideoLaneReques
 FreeOutputType = Literal["image", "video", "edit"]
 _IMAGE_REFERENCE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 _AUDIO_REFERENCE_SUFFIXES = frozenset({".wav", ".mp3"})
+_VIDEO_REFERENCE_SUFFIXES = frozenset({".mp4", ".mov"})
 
 
 def creation_metadata_path(project_path: Path, creation_id: str) -> Path:
     return safe_join(project_path, "creations", f"{creation_id}.json")
 
 
-def creation_media_path(project_path: Path, creation_id: str, output_type: str) -> Path:
-    suffix = ".mp4" if output_type == "video" else ".png"
+def creation_media_path(project_path: Path, creation_id: str, media_type: str) -> Path:
+    suffix = ".mp4" if media_type == "video" else ".png"
     return safe_join(project_path, "creations", f"{creation_id}{suffix}")
 
 
@@ -75,6 +76,7 @@ def build_free_creation_basis(project_path: Path, metadata: dict[str, Any]) -> A
             "prompt": metadata.get("prompt", ""),
             "prompt_mode": metadata.get("prompt_mode", "original"),
             "output_type": metadata.get("output_type"),
+            "media_type": metadata.get("media_type"),
             "model": metadata.get("model"),
             "references": reference_digests,
             "aspect_ratio": metadata.get("aspect_ratio"),
@@ -139,6 +141,7 @@ def discard_free_creation_result(project_path: Path, metadata: dict[str, Any]) -
 
     creation_id = metadata.get("creation_id")
     output_type = metadata.get("output_type")
+    media_type = metadata.get("media_type")
     version = metadata.get("version")
     media_path = metadata.get("media_path")
     if (
@@ -149,10 +152,13 @@ def discard_free_creation_result(project_path: Path, metadata: dict[str, Any]) -
         or not isinstance(media_path, str)
     ):
         return False
-    expected_media = creation_media_path(project_path, creation_id, output_type)
+    effective_media_type = (
+        media_type if media_type in {"image", "video"} else ("video" if output_type == "video" else "image")
+    )
+    expected_media = creation_media_path(project_path, creation_id, effective_media_type)
     if media_path != expected_media.relative_to(project_path).as_posix():
         return False
-    resource_type = "free_videos" if output_type == "video" else "free_images"
+    resource_type = "free_videos" if effective_media_type == "video" else "free_images"
     adapter = ProjectArtifactManifestAdapter(project_path)
 
     def _forget_claim() -> None:
@@ -270,6 +276,7 @@ async def execute_free_image_task(
         "creation_id": resource_id,
         "status": "succeeded",
         "output_type": "image",
+        "media_type": "image",
         "prompt": prompt,
         "prompt_mode": "original",
         "model": f"{ctx.image.provider_model.provider_id}/{ctx.image.backend_model}",
@@ -296,6 +303,9 @@ async def execute_free_video_task(
     task_id: str | None = None,
     script_file: str | None = None,
     claimed_provider_id: str | None = None,
+    output_type: Literal["video", "edit"] = "video",
+    parent_creation_id: str | None = None,
+    commit_result: bool = True,
 ) -> dict[str, Any]:
     pm = get_project_manager()
     project = await asyncio.to_thread(pm.load_project, project_name)
@@ -307,6 +317,7 @@ async def execute_free_video_task(
         raise ValueError("prompt is required")
     references = await asyncio.to_thread(_reference_paths, project_path, payload)
     reference_images = [path for path in references if path.suffix.lower() in _IMAGE_REFERENCE_SUFFIXES]
+    reference_videos = [path for path in references if path.suffix.lower() in _VIDEO_REFERENCE_SUFFIXES]
     reference_audio = [path for path in references if path.suffix.lower() in _AUDIO_REFERENCE_SUFFIXES]
     ctx = await resolve_generation_context(
         project_name,
@@ -328,6 +339,7 @@ async def execute_free_video_task(
         resource_type="free_videos",
         resource_id=resource_id,
         reference_images=reference_images or None,
+        reference_videos=reference_videos or None,
         reference_audio_files=reference_audio or None,
         aspect_ratio=str(payload.get("aspect_ratio") or project.get("aspect_ratio") or "9:16"),
         duration_seconds=int(payload.get("duration_seconds") or 4),
@@ -339,7 +351,8 @@ async def execute_free_video_task(
     metadata = {
         "creation_id": resource_id,
         "status": "succeeded",
-        "output_type": "video",
+        "output_type": output_type,
+        "media_type": "video",
         "prompt": prompt,
         "prompt_mode": "original",
         "model": f"{ctx.video.provider_model.provider_id}/{ctx.video.backend_model}",
@@ -348,12 +361,14 @@ async def execute_free_video_task(
         "resolution": payload.get("resolution"),
         "size": payload.get("size"),
         "duration_seconds": int(payload.get("duration_seconds") or 4),
+        "parent_creation_id": parent_creation_id,
         "media_path": output_path.relative_to(project_path).as_posix(),
         "version": version,
         "task_id": task_id,
         "updated_at": _now(),
     }
-    await _commit_generated_free_creation(project_path, metadata, task_id)
+    if commit_result:
+        await _commit_generated_free_creation(project_path, metadata, task_id)
     return metadata
 
 
@@ -373,24 +388,51 @@ async def execute_free_edit_task(
     pm = get_project_manager()
     project_path = pm.get_project_path(project_name)
     parent = await asyncio.to_thread(load_creation_metadata, project_path, parent_id)
-    if not parent or parent.get("output_type") not in {"image", "edit"}:
-        raise ValueError("free_edit currently requires an existing image creation")
+    if not parent or parent.get("output_type") not in {"image", "video", "edit"}:
+        raise ValueError("free_edit requires an existing free creation")
+    parent_media_type = parent.get("media_type")
+    if parent_media_type not in {"image", "video"}:
+        parent_media_type = "video" if parent.get("output_type") == "video" else "image"
     parent_path = parent.get("media_path")
     if not isinstance(parent_path, str):
         raise ValueError("parent creation has no media path")
     additional_references = payload.get("references") or []
-    payload = {**payload, "references": [parent_path, *additional_references]}
-    result = await execute_free_image_task(
-        project_name,
-        resource_id,
-        payload,
-        user_id=user_id,
-        task_id=task_id,
-        script_file=script_file,
-        claimed_provider_id=claimed_provider_id,
-        commit_result=False,
+    if not isinstance(additional_references, list):
+        additional_references = []
+    references = (
+        additional_references
+        if additional_references and additional_references[0] == parent_path
+        else [parent_path, *additional_references]
     )
+    payload = {**payload, "references": references}
+    if parent_media_type == "video":
+        result = await execute_free_video_task(
+            project_name,
+            resource_id,
+            payload,
+            user_id=user_id,
+            task_id=task_id,
+            script_file=script_file,
+            claimed_provider_id=claimed_provider_id,
+            output_type="edit",
+            parent_creation_id=parent_id,
+            commit_result=False,
+        )
+    else:
+        result = await execute_free_image_task(
+            project_name,
+            resource_id,
+            payload,
+            user_id=user_id,
+            task_id=task_id,
+            script_file=script_file,
+            claimed_provider_id=claimed_provider_id,
+            commit_result=False,
+        )
+        result["output_type"] = "edit"
+        result["media_type"] = "image"
     result["output_type"] = "edit"
+    result["media_type"] = parent_media_type
     result["parent_creation_id"] = parent_id
     await _commit_generated_free_creation(project_path, result, task_id)
     return result

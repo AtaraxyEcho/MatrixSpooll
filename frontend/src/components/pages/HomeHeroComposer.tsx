@@ -17,7 +17,10 @@ import {
 import { useTranslation } from "react-i18next";
 import { API } from "@/api";
 import { ASPECT_RATIO_OPTIONS } from "@/components/shared/AspectRatioPicker";
-import type { CreateFreeCreationRequest, FreeCreationOutputType } from "@/types";
+import type {
+  CreateFreeCreationRequest,
+  FreeCreationCapabilities,
+} from "@/types";
 import { errMsg } from "@/utils/async";
 import { useAppStore } from "@/stores/app-store";
 
@@ -26,9 +29,13 @@ interface HomeHeroComposerProps {
 }
 
 type ModelOptions = { image: string[]; video: string[] };
+type CapabilityResult = {
+  key: string;
+  value: FreeCreationCapabilities | null;
+  error: string | null;
+};
 
 const EMPTY_MODEL_OPTIONS: ModelOptions = { image: [], video: [] };
-const VIDEO_RESOLUTIONS = ["auto", "480p", "720p", "1080p", "4k"] as const;
 const IMAGE_RESOLUTIONS = ["1.5k", "2k", "4k"] as const;
 const IMAGE_RESOLUTION_PIXELS: Record<(typeof IMAGE_RESOLUTIONS)[number], number> = {
   "1.5k": 1536,
@@ -55,8 +62,8 @@ function modelLabel(model: string, autoLabel: string): string {
   return name || model;
 }
 
-function dimensionsForPreset(resolution: (typeof IMAGE_RESOLUTIONS)[number], ratio: string) {
-  const edge = IMAGE_RESOLUTION_PIXELS[resolution];
+function dimensionsForPreset(resolution: string, ratio: string) {
+  const edge = IMAGE_RESOLUTION_PIXELS[resolution as (typeof IMAGE_RESOLUTIONS)[number]] ?? 1536;
   const [ratioWidth = 1, ratioHeight = 1] = ratio.split(":").map(Number);
   if (!Number.isFinite(ratioWidth) || !Number.isFinite(ratioHeight) || ratioWidth <= 0 || ratioHeight <= 0) {
     return { width: edge, height: edge };
@@ -236,13 +243,14 @@ interface ImageParameterControlProps {
   heightLabel: string;
   sizeHint: string;
   ratio: string;
-  resolution: (typeof IMAGE_RESOLUTIONS)[number];
+  resolution: string;
   quantity: number;
   width: number;
   height: number;
   ratioOptions: ReadonlyArray<{ value: string; label: string }>;
+  resolutionOptions: readonly string[];
   onRatioChange: (value: string) => void;
-  onResolutionChange: (value: (typeof IMAGE_RESOLUTIONS)[number]) => void;
+  onResolutionChange: (value: string) => void;
   onQuantityChange: (value: number) => void;
   onDimensionsCommit: (width: number, height: number) => void;
 }
@@ -262,6 +270,7 @@ function ImageParameterControl({
   width,
   height,
   ratioOptions,
+  resolutionOptions,
   onRatioChange,
   onResolutionChange,
   onQuantityChange,
@@ -361,7 +370,7 @@ function ImageParameterControl({
           <fieldset className="home-popover-section">
             <legend>{resolutionLabel}</legend>
             <div className="home-detail-options home-detail-options--three">
-              {IMAGE_RESOLUTIONS.map((value) => (
+              {resolutionOptions.map((value) => (
                 <button
                   key={value}
                   type="button"
@@ -442,11 +451,12 @@ interface VideoParameterControlProps {
   quantityLabel: string;
   autoLabel: string;
   ratio: string;
-  resolution: (typeof VIDEO_RESOLUTIONS)[number];
+  resolution: string;
   quantity: number;
   ratioOptions: ReadonlyArray<{ value: string; label: string }>;
+  resolutionOptions: readonly string[];
   onRatioChange: (value: string) => void;
-  onResolutionChange: (value: (typeof VIDEO_RESOLUTIONS)[number]) => void;
+  onResolutionChange: (value: string) => void;
   onQuantityChange: (value: number) => void;
 }
 
@@ -460,6 +470,7 @@ function VideoParameterControl({
   resolution,
   quantity,
   ratioOptions,
+  resolutionOptions,
   onRatioChange,
   onResolutionChange,
   onQuantityChange,
@@ -534,7 +545,7 @@ function VideoParameterControl({
           <fieldset className="home-popover-section">
             <legend>{resolutionLabel}</legend>
             <div className="home-detail-options home-detail-options--video-resolution">
-              {VIDEO_RESOLUTIONS.map((value) => (
+              {resolutionOptions.map((value) => (
                 <button
                   key={value}
                   type="button"
@@ -574,17 +585,25 @@ interface DurationControlProps {
   label: string;
   minimumLabel: string;
   value: number;
+  durations?: readonly number[];
   onChange: (value: number) => void;
 }
 
-function DurationControl({ label, minimumLabel, value, onChange }: DurationControlProps) {
-  const minimum = 4;
-  const maximum = 15;
+function DurationControl({ label, minimumLabel, value, durations, onChange }: DurationControlProps) {
+  const supported = useMemo(
+    () => (durations?.length ? [...durations].sort((left, right) => left - right) : [4, 5, 6, 8, 10, 12, 15]),
+    [durations],
+  );
+  const minimum = supported[0] ?? 4;
+  const maximum = supported[supported.length - 1] ?? 15;
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
-  const minimumProgress = `${(minimum / maximum) * 100}%`;
-  const progress = `${(value / maximum) * 100}%`;
+  const safeValue = supported.includes(value) ? value : supported.reduce((closest, candidate) => (
+    Math.abs(candidate - value) < Math.abs(closest - value) ? candidate : closest
+  ), supported[0] ?? 4);
+  const minimumProgress = `${((minimum - minimum) / Math.max(1, maximum - minimum)) * 100}%`;
+  const progress = `${((safeValue - minimum) / Math.max(1, maximum - minimum)) * 100}%`;
 
   useEffect(() => {
     if (!open) return;
@@ -624,32 +643,36 @@ function DurationControl({ label, minimumLabel, value, onChange }: DurationContr
         <div id={panelId} className="home-param-popover home-duration-popover" role="dialog" aria-label={label}>
           <div className="home-duration-popover__header">
             <span>{minimumLabel}</span>
-            <strong>{value}s</strong>
+            <strong>{safeValue}s</strong>
           </div>
           <div className="home-duration-track">
             <input
               className="home-duration-slider"
               type="range"
-              min={0}
+              min={minimum}
               max={maximum}
               step={1}
-              value={value}
+              value={safeValue}
               aria-label={label}
               aria-valuemin={minimum}
               aria-valuetext={`${value}s`}
               style={{
                 background: `linear-gradient(90deg, oklch(0.34 0.006 265) 0 ${minimumProgress}, var(--color-accent) ${minimumProgress} ${progress}, oklch(0.27 0.012 265) ${progress} 100%)`,
               }}
-              onChange={(event) =>
-                onChange(Math.min(maximum, Math.max(minimum, event.currentTarget.valueAsNumber)))
-              }
+              onChange={(event) => {
+                const requested = event.currentTarget.valueAsNumber;
+                const next = supported.reduce((closest, candidate) => (
+                  Math.abs(candidate - requested) < Math.abs(closest - requested) ? candidate : closest
+                ), minimum);
+                onChange(next);
+              }}
             />
             <span className="home-duration-minimum-marker" style={{ left: minimumProgress }} aria-hidden>
-              <span>4s</span>
+              <span>{minimum}s</span>
             </span>
           </div>
           <div className="home-duration-ticks" aria-hidden>
-            {[0, 5, 10, 15].map((tick) => (
+            {[...new Set([minimum, ...supported.filter((_, index) => index % Math.max(1, Math.ceil(supported.length / 3)) === 0), maximum])].map((tick) => (
               <span key={tick}>{tick}s</span>
             ))}
           </div>
@@ -661,12 +684,12 @@ function DurationControl({ label, minimumLabel, value, onChange }: DurationContr
 
 export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const { t } = useTranslation("dashboard");
-  const [outputType, setOutputType] = useState<FreeCreationOutputType>("video");
+  const [outputType, setOutputType] = useState<"image" | "video">("video");
   const [prompt, setPrompt] = useState("");
   const [videoAspectRatio, setVideoAspectRatio] = useState("16:9");
   const [imageAspectRatio, setImageAspectRatio] = useState("16:9");
-  const [videoResolution, setVideoResolution] = useState<(typeof VIDEO_RESOLUTIONS)[number]>("1080p");
-  const [imageResolution, setImageResolution] = useState<(typeof IMAGE_RESOLUTIONS)[number]>("1.5k");
+  const [videoResolution, setVideoResolution] = useState<string>("1080p");
+  const [imageResolution, setImageResolution] = useState<string>("1.5k");
   const initialImageDimensions = dimensionsForPreset("1.5k", "16:9");
   const [imageWidth, setImageWidth] = useState(initialImageDimensions.width);
   const [imageHeight, setImageHeight] = useState(initialImageDimensions.height);
@@ -674,6 +697,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const [duration, setDuration] = useState(4);
   const [model, setModel] = useState("auto");
   const [modelOptions, setModelOptions] = useState<ModelOptions>(EMPTY_MODEL_OPTIONS);
+  const [capabilityResult, setCapabilityResult] = useState<CapabilityResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -700,18 +724,79 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
     () => (model === "auto" || models.includes(model) ? model : "auto"),
     [model, models],
   );
-  const aspectRatio = outputType === "image" ? imageAspectRatio : videoAspectRatio;
+  const capabilityRequestKey = `${outputType}:${selectedModel}`;
+  const capabilities = capabilityResult?.key === capabilityRequestKey ? capabilityResult.value : null;
+  const capabilityError = capabilityResult?.key === capabilityRequestKey ? capabilityResult.error : null;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void API.getFreeCreationCapabilities({
+      outputType,
+      model: selectedModel === "auto" ? undefined : selectedModel,
+      signal: controller.signal,
+    })
+      .then((next) => {
+        setCapabilityResult({ key: capabilityRequestKey, value: next, error: null });
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setCapabilityResult({
+            key: capabilityRequestKey,
+            value: null,
+            error: outputType === "video" ? errMsg(err) : null,
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [capabilityRequestKey, outputType, selectedModel]);
+  const ratioValues = useMemo(
+    () => capabilities?.output_type === outputType && capabilities.ratios.length
+      ? capabilities.ratios
+      : outputType === "image"
+        ? ASPECT_RATIO_OPTIONS.map(({ value }) => value)
+        : [],
+    [capabilities, outputType],
+  );
+  const ratioOptions = useMemo(() => ratioValues.map((value) => {
+    const known = ASPECT_RATIO_OPTIONS.find((option) => option.value === value);
+    return { value, label: known ? t(known.labelKey) : value };
+  }), [ratioValues, t]);
+  const imageResolutionOptions = useMemo(
+    () => capabilities?.output_type === "image" && capabilities.resolutions.length
+      ? capabilities.resolutions
+      : [...IMAGE_RESOLUTIONS],
+    [capabilities],
+  );
+  const videoResolutionOptions = useMemo(
+    () => capabilities?.output_type === "video" && capabilities.resolutions.length
+      ? capabilities.resolutions
+      : [],
+    [capabilities],
+  );
+  const videoCapabilitiesReady = outputType !== "video"
+    || (capabilities?.output_type === "video" && capabilities.ratios.length > 0 && capabilities.durations.length > 0);
+  const effectiveVideoAspectRatio = ratioValues.includes(videoAspectRatio) ? videoAspectRatio : ratioValues[0] ?? "16:9";
+  const effectiveImageAspectRatio = ratioValues.includes(imageAspectRatio) ? imageAspectRatio : ratioValues[0] ?? "16:9";
+  const effectiveVideoResolution = videoResolutionOptions.includes(videoResolution)
+    ? videoResolution
+    : videoResolutionOptions[0] ?? "auto";
+  const effectiveImageResolution = imageResolutionOptions.includes(imageResolution)
+    ? imageResolution
+    : imageResolutionOptions[0] ?? "1.5k";
+  const videoDurations = capabilities?.output_type === "video" ? capabilities.durations : [];
+  const effectiveDuration = videoDurations.includes(duration) ? duration : videoDurations[0] ?? 4;
+  const aspectRatio = outputType === "image" ? effectiveImageAspectRatio : effectiveVideoAspectRatio;
 
   const changeImageAspectRatio = (nextRatio: string) => {
     setImageAspectRatio(nextRatio);
-    const dimensions = dimensionsForPreset(imageResolution, nextRatio);
+    const dimensions = dimensionsForPreset(effectiveImageResolution, nextRatio);
     setImageWidth(dimensions.width);
     setImageHeight(dimensions.height);
   };
 
-  const changeImageResolution = (nextResolution: (typeof IMAGE_RESOLUTIONS)[number]) => {
+  const changeImageResolution = (nextResolution: string) => {
     setImageResolution(nextResolution);
-    const dimensions = dimensionsForPreset(nextResolution, imageAspectRatio);
+    const dimensions = dimensionsForPreset(nextResolution, effectiveImageAspectRatio);
     setImageWidth(dimensions.width);
     setImageHeight(dimensions.height);
   };
@@ -724,33 +809,24 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
 
   const handleSubmit = async () => {
     const cleanPrompt = prompt.trim();
-    if (!cleanPrompt || submitting) return;
+    if (!cleanPrompt || submitting || !videoCapabilitiesReady) return;
     setSubmitting(true);
     setError(null);
 
     try {
-      const project = await API.createProject({
-        title: shortProjectTitle(cleanPrompt),
-        content_mode: "free",
-        generation_mode: null,
-        aspect_ratio: aspectRatio,
-        ...(outputType === "video"
-          ? { video_backend: selectedModel === "auto" ? null : selectedModel }
-          : { default_image_backend: selectedModel === "auto" ? null : selectedModel }),
-      });
       const payload: CreateFreeCreationRequest = {
         output_type: outputType,
         prompt: cleanPrompt,
         aspect_ratio: aspectRatio,
         resolution: outputType === "image"
-          ? imageResolution
-          : videoResolution === "auto" ? undefined : videoResolution,
+          ? effectiveImageResolution
+          : effectiveVideoResolution === "auto" ? undefined : effectiveVideoResolution,
         size: outputType === "image" ? `${imageWidth}x${imageHeight}` : undefined,
         quantity,
         model: selectedModel === "auto" ? undefined : selectedModel,
-        ...(outputType === "video" ? { duration_seconds: duration } : {}),
+        ...(outputType === "video" ? { duration_seconds: effectiveDuration } : {}),
       };
-      await API.createFreeCreation(project.name, payload);
+      const project = await API.createFreeProject({ title: shortProjectTitle(cleanPrompt), creation: payload });
       setPrompt("");
       onCreated(project.name);
     } catch (err) {
@@ -838,12 +914,13 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
               widthLabel={t("home_width")}
               heightLabel={t("home_height")}
               sizeHint={t("home_size_hint")}
-              ratio={imageAspectRatio}
-              resolution={imageResolution}
+              ratio={effectiveImageAspectRatio}
+              resolution={effectiveImageResolution}
               quantity={quantity}
               width={imageWidth}
               height={imageHeight}
-              ratioOptions={ASPECT_RATIO_OPTIONS.map(({ value, labelKey }) => ({ value, label: t(labelKey) }))}
+              ratioOptions={ratioOptions}
+              resolutionOptions={imageResolutionOptions}
               onRatioChange={changeImageAspectRatio}
               onResolutionChange={changeImageResolution}
               onQuantityChange={setQuantity}
@@ -856,10 +933,11 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
               resolutionLabel={t("home_resolution")}
               quantityLabel={t("home_quantity")}
               autoLabel={t("home_auto")}
-              ratio={videoAspectRatio}
-              resolution={videoResolution}
+              ratio={effectiveVideoAspectRatio}
+              resolution={effectiveVideoResolution}
               quantity={quantity}
-              ratioOptions={ASPECT_RATIO_OPTIONS.map(({ value, labelKey }) => ({ value, label: t(labelKey) }))}
+              ratioOptions={ratioOptions}
+              resolutionOptions={videoResolutionOptions}
               onRatioChange={setVideoAspectRatio}
               onResolutionChange={setVideoResolution}
               onQuantityChange={setQuantity}
@@ -868,7 +946,8 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
           {outputType === "video" ? (
             <DurationControl
               label={t("home_duration")}
-              value={duration}
+              value={effectiveDuration}
+              durations={videoDurations}
               onChange={setDuration}
               minimumLabel={t("home_duration_minimum")}
             />
@@ -877,11 +956,11 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
 
         <div className="mt-3 flex flex-col gap-3 border-t border-hairline-soft pt-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-h-5 text-[11px] text-danger-2" role="status" aria-live="polite">
-            {error}
+            {error ?? capabilityError}
           </div>
           <button
             type="button"
-            disabled={!prompt.trim() || submitting}
+            disabled={!prompt.trim() || submitting || !videoCapabilitiesReady}
             onClick={() => void handleSubmit()}
             className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] px-5 text-[13px] font-semibold transition-transform motion-safe:hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-45"
             style={{ color: "oklch(0.14 0 0)", background: "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))" }}

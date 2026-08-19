@@ -660,7 +660,7 @@ class GenerationWorker:
                             "回队前投影刷新失败 task_id=%s provider=%s", task["task_id"], provider_id, exc_info=True
                         )
                     await self._requeue_single_task(task["task_id"])
-                    if task.get("task_type") in ("video", "reference_video", "free_video"):
+                    if media_type == "video":
                         # 两条视频路线都必须先重投影才能判断当前 provider；本 cycle 排除已
                         # 重投影且仍池满的任务，继续寻找其它 provider 的可运行任务。
                         attempted_current_state_tasks.add(task["task_id"])
@@ -671,7 +671,7 @@ class GenerationWorker:
 
                 # Dispatch：登记占用（INFLIGHT），bucket 由 register 自动创建
                 claimed_any = True
-                if task.get("task_type") in ("video", "reference_video", "free_video"):
+                if media_type == "video":
                     process_task = self._process_task(task, claimed_provider_id=provider_id)
                 else:
                     process_task = self._process_task(task)
@@ -780,7 +780,7 @@ class GenerationWorker:
         from server.services.generation_tasks import execute_generation_task
 
         try:
-            if task_type in ("video", "reference_video", "free_video"):
+            if task_type in ("video", "reference_video", "free_video") or task.get("media_type") == "video":
                 result = await execute_generation_task(task, claimed_provider_id=provider_id)
             else:
                 result = await execute_generation_task(task)
@@ -1201,10 +1201,10 @@ class GenerationWorker:
 
             # 自由视频尚未持久化可恢复的 provider 提交身份。重启后重跑会重复扣费，
             # 因此明确落失败，交给用户决定是否重试。
-            if task_type == "free_video":
+            if task_type == "free_video" or (task_type == "free_edit" and media_type == "video"):
                 failure = encode_failure(
                     "execution_identity_unrecoverable",
-                    detail="free video resume checkpoint is unavailable",
+                    detail="free creation video resume checkpoint is unavailable",
                 )
                 rows = await self.queue.mark_task_failed(
                     task_id,

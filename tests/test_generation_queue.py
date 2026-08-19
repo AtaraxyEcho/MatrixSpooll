@@ -25,9 +25,11 @@ pytestmark = pytest.mark.unit
         (["uploads/voice.wav"], None),
         (["uploads/frame.png"], "r2v"),
         (["uploads/voice.mp3", "uploads/frame.webp"], "r2v"),
+        (["uploads/source.mp4"], "r2v"),
+        (["uploads/source.mov", "uploads/frame.jpg"], "r2v"),
     ],
 )
-def test_free_video_capability_uses_image_references(references, expected):
+def test_free_video_capability_uses_visual_references(references, expected):
     assert free_video_capability({"references": references}) == expected
 
 

@@ -29,6 +29,8 @@ from lib.video_backends.base import (
 
 logger = logging.getLogger(__name__)
 
+_ARK_VIDEO_ASPECT_RATIOS = ("16:9", "4:3", "1:1", "3:4", "9:16", "21:9")
+
 # Seedance 2.0 系列每请求最多 3 段参考音频，且总时长不超过 15 秒（官方《创建视频生成任务
 # API》音频信息章节）。
 _SEEDANCE_2_MAX_REFERENCE_AUDIO = 3
@@ -216,6 +218,7 @@ class ArkVideoBackend(ProviderJobIdPersistenceMixin):
                     _SEEDANCE_2_5_MAX_REFERENCE_AUDIO_TOTAL_SECONDS if on_verified_allowlist else None
                 ),
                 first_frame_ratio_adaptive_only=True,
+                supported_aspect_ratios=_ARK_VIDEO_ASPECT_RATIOS,
             )
         if ArkVideoBackend._is_seedance_2(model):
             # API 拒绝首帧/尾帧与参考素材混合请求（InvalidParameter: first/last frame content
@@ -240,6 +243,7 @@ class ArkVideoBackend(ProviderJobIdPersistenceMixin):
                 max_reference_audio_total_seconds=(
                     _SEEDANCE_2_MAX_REFERENCE_AUDIO_TOTAL_SECONDS if on_verified_allowlist else None
                 ),
+                supported_aspect_ratios=_ARK_VIDEO_ASPECT_RATIOS,
             )
         # 非 2.0 系列：DEFAULT_MODEL 1.5 pro 可正常下发 role="last_frame"（见
         # test_first_last_frame_role_fields）。白名单覆盖能力表已验证支持首尾帧的三个型号，
@@ -261,6 +265,7 @@ class ArkVideoBackend(ProviderJobIdPersistenceMixin):
                 if ArkVideoBackend._matches_known_model(model_lower, ArkVideoBackend._REFERENCE_IMAGE_ALLOW_SUBSTRINGS)
                 else 0
             ),
+            supported_aspect_ratios=_ARK_VIDEO_ASPECT_RATIOS,
         )
 
     @property

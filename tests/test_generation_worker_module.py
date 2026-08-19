@@ -1263,6 +1263,45 @@ class TestGenerationWorker:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_video_edit_orphan_uses_free_video_failure_path(self, monkeypatch):
+        queue = _FakeQueue()
+        queue._orphans = [
+            {
+                "task_id": "free-edit-video-orphan",
+                "status": "running",
+                "provider_id": "dashscope",
+                "provider_job_id": "job-without-free-checkpoint",
+                "media_type": "video",
+                "task_type": "free_edit",
+                "payload": {},
+                "project_name": "demo",
+                "resource_id": "c_video_edit_orphan",
+            }
+        ]
+        worker = GenerationWorker(queue=queue)
+        updates: list[dict] = []
+
+        async def _capture(_task, **kwargs):
+            updates.append(kwargs)
+
+        monkeypatch.setattr(worker, "_sync_free_creation_metadata", _capture)
+        await worker._handle_orphan_tasks_on_start()
+
+        assert len(queue.failed) == 1
+        assert queue.failed[0][0] == "free-edit-video-orphan"
+        assert "[execution_identity_unrecoverable]" in queue.failed[0][1]
+        assert "free creation video resume checkpoint is unavailable" in queue.failed[0][1]
+        assert updates == [
+            {
+                "status": "failed",
+                "error_code": "execution_identity_unrecoverable",
+                "error": queue.failed[0][1],
+                "discard_result": True,
+            }
+        ]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_request_cancel_signals_inflight_task(self):
         queue = _FakeQueue()
         worker = GenerationWorker(queue=queue)

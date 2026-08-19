@@ -124,6 +124,31 @@ describe("CreateProjectModal", () => {
     );
   });
 
+  it("creates a free project after video model selection without image, text, or style settings", async () => {
+    render(<CreateProjectModal />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "free demo" } });
+    fireEvent.click(screen.getByRole("radio", { name: /自由创作/ }));
+    expect(screen.queryByRole("radio", { name: /分镜图生视频/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /下一步/ })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+
+    await waitFor(() => expect(API.createProject).toHaveBeenCalled());
+    const payload = vi.mocked(API.createProject).mock.calls[0][0];
+    expect(payload).toEqual({
+      title: "free demo",
+      content_mode: "free",
+      generation_mode: null,
+      aspect_ratio: "9:16",
+      grid_storyboard: false,
+      video_backend: null,
+    });
+    expect(payload).not.toHaveProperty("default_image_backend");
+    expect(payload).not.toHaveProperty("default_text_backend");
+    expect(payload).not.toHaveProperty("style_template_id");
+    expect(navigateMock).toHaveBeenCalledWith("/app/projects/demo-proj");
+  });
+
   it("submits createProject with default template when Create clicked on step 3", async () => {
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });

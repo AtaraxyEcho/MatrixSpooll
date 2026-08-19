@@ -424,4 +424,11 @@ MESSAGES = {
     "free_creation_media_not_found": "Không tìm thấy tệp phương tiện của tạo tác tự do '{id}'",
     "free_creation_cancel_not_ready": "Chỉ có thể hủy tạo tác tự do đang chờ hoặc đang tạo",
     "free_creation_retry_not_ready": "Chỉ có thể thử lại tạo tác tự do đã thất bại hoặc bị hủy",
+    "video_reference_videos_unsupported": "Mô hình {model} không hỗ trợ video tham chiếu; hãy bỏ video tham chiếu hoặc chuyển sang mô hình phù hợp",
+    "video_reference_videos_exceeded": "Mô hình {model} chỉ hỗ trợ tối đa {limit} video tham chiếu nhưng nhận {count}; hãy giảm số video tham chiếu",
+    "video_reference_media_exceeded": "Mô hình {model} chỉ hỗ trợ tối đa {limit} tư liệu ảnh và video tham chiếu nhưng nhận {count}; hãy giảm tư liệu tham chiếu",
+    "video_reference_media_required": "Mô hình {model} yêu cầu ít nhất một ảnh hoặc video tham chiếu",
+    "video_reference_videos_unreadable": "Mô hình {model} có video tham chiếu bị thiếu hoặc không đọc được; đã hủy tạo: {names}",
+    "free_creation_aspect_ratio_not_supported": "Mô hình {model} không hỗ trợ tỷ lệ khung hình {ratio}; hãy chọn: {supported}",
+    "free_creation_aspect_ratio_capabilities_missing": "Mô hình {model} chưa khai báo các tỷ lệ khung hình được hỗ trợ, nên không thể gửi tác vụ sáng tạo tự do một cách an toàn",
 }

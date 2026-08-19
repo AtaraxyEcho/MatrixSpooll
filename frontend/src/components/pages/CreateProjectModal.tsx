@@ -64,7 +64,7 @@ const STEP_CONNECTOR_INACTIVE_STYLE: CSSProperties = {
   background: "var(--color-hairline-soft)",
 };
 
-function StepIndicator({ current }: { current: 1 | 2 | 3 }) {
+function StepIndicator({ current, steps }: { current: 1 | 2 | 3; steps: readonly typeof STEPS[number][] }) {
   const { t } = useTranslation("templates");
   return (
     <div className="relative">
@@ -73,10 +73,10 @@ function StepIndicator({ current }: { current: 1 | 2 | 3 }) {
       <div aria-hidden className="absolute inset-x-6 bottom-0 h-[3px] opacity-40" style={SPROCKET_STYLE} />
 
       <ol className="relative flex items-stretch py-5">
-        {STEPS.map((s, i) => {
+        {steps.map((s, i) => {
           const done = current > s.num;
           const active = current === s.num;
-          const last = i === STEPS.length - 1;
+          const last = i === steps.length - 1;
           return (
             <li
               key={s.num}
@@ -181,6 +181,8 @@ export function CreateProjectModal() {
   });
 
   const [creating, setCreating] = useState(false);
+  const freeMode = basics.contentMode === "free";
+  const visibleSteps = freeMode ? STEPS.slice(0, 2) : STEPS;
 
   // Step2 的远端数据 hoist 到此处：只在 modal 挂载时 fetch 一次，
   // 前进/后退切 step 时 Step2 unmount/mount 不再触发 HTTP。
@@ -262,6 +264,7 @@ export function CreateProjectModal() {
   const handleBasicsChange = (next: WizardStep1Value) => {
     setBasics(next);
     if (next.contentMode === "free") {
+      setStep((current) => (current === 3 ? 2 : current));
       setModels((prev) => ({ ...prev, defaultDuration: null, videoResolution: null }));
       return;
     }
@@ -290,6 +293,19 @@ export function CreateProjectModal() {
     if (basics.contentMode !== "free" && !basics.generationRoute) return;
     setCreating(true);
     try {
+      if (basics.contentMode === "free") {
+        const resp = await API.createProject({
+          title: basics.title.trim(),
+          content_mode: "free",
+          generation_mode: null,
+          aspect_ratio: basics.aspectRatio,
+          grid_storyboard: false,
+          video_backend: models.videoBackend || null,
+        });
+        setShowCreateModal(false);
+        navigate(`/app/projects/${resp.name}`);
+        return;
+      }
       // resolution 的 model_settings key 用执行模型：后端按执行模型查这张表，向导只暴露默认层，
       // 但全局细分层若指向别的模型，执行的就不是默认层那个——键位对不上分辨率会被静默忽略。
       const globals = step2Data?.globalDefaults ?? { video: "", videoI2V: "", videoR2V: "", image: "", imageT2I: "" };
@@ -310,16 +326,14 @@ export function CreateProjectModal() {
         // source_kind 仅 drama 暴露与生效；其余模式由服务端缺省 novel
         ...(basics.contentMode === "drama" ? { source_kind: basics.sourceKind } : {}),
         aspect_ratio: basics.aspectRatio,
-        generation_mode: basics.contentMode === "free" ? null : basics.generationRoute,
-        grid_storyboard: basics.contentMode === "free" ? false : basics.gridStoryboard,
+        generation_mode: basics.generationRoute,
+        grid_storyboard: basics.gridStoryboard,
         // 口播语速估算未填即不传（服务端不落盘，回退语言默认）
         ...(basics.speechRate !== null ? { speech_rate_units_per_second: basics.speechRate } : {}),
         // ad 按目标总时长规划；free 不使用固定工作流的默认镜头时长。
         ...(isAd
           ? { target_duration: basics.targetDuration }
-          : basics.contentMode === "free"
-            ? {}
-            : { default_duration: models.defaultDuration }),
+          : { default_duration: models.defaultDuration }),
         style_template_id: style.mode === "template" ? style.templateId : null,
         video_backend: models.videoBackend || null,
         default_image_backend: models.imageBackendDefault || null,
@@ -353,7 +367,7 @@ export function CreateProjectModal() {
     }
   };
 
-  const stepKicker = `Reel ${step.toString().padStart(2, "0")} / 03`;
+  const stepKicker = `Reel ${step.toString().padStart(2, "0")} / ${visibleSteps.length.toString().padStart(2, "0")}`;
 
   const modal = (
     <div
@@ -422,17 +436,18 @@ export function CreateProjectModal() {
             {t("dashboard:new_project")}
           </h2>
           <p className="mt-1.5 text-[12.5px] leading-[1.55] text-text-3">
-            {t("templates:wizard_step_basics")}
-            <span aria-hidden className="mx-1.5 text-text-4">/</span>
-            {t("templates:wizard_step_models")}
-            <span aria-hidden className="mx-1.5 text-text-4">/</span>
-            {t("templates:wizard_step_style")}
+            {visibleSteps.map((item, index) => (
+              <span key={item.key}>
+                {index > 0 ? <span aria-hidden className="mx-1.5 text-text-4">/</span> : null}
+                {t(`templates:${item.key}`)}
+              </span>
+            ))}
           </p>
         </div>
 
         {/* Step indicator strip */}
         <div className="shrink-0 border-y border-hairline-soft bg-[oklch(0.16_0.010_265_/_0.55)] px-6">
-          <StepIndicator current={step} />
+          <StepIndicator current={step} steps={visibleSteps} />
         </div>
 
         {/* Current step body */}
@@ -450,12 +465,13 @@ export function CreateProjectModal() {
               value={models}
               onChange={setModels}
               onBack={() => setStep(1)}
-              onNext={() => setStep(3)}
+              onNext={freeMode ? voidPromise(handleCreate) : () => setStep(3)}
               onCancel={handleClose}
               data={step2Data}
               error={step2Error}
               hideDuration={basics.contentMode === "ad"}
               usesReferenceImages={basics.generationRoute === "reference_video"}
+              freeMode={freeMode}
             />
           )}
           {step === 3 && (

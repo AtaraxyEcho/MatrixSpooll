@@ -64,7 +64,7 @@ describe("FreeCreationWorkspace", () => {
     );
   });
 
-  it("shows 0-4 seconds as restricted and snaps to a supported duration", async () => {
+  it("uses the declared duration bounds and snaps to a supported duration", async () => {
     const create = vi.spyOn(API, "createFreeCreation").mockResolvedValue({
       success: true,
       creation_id: "c_0123456789abcdef0124",
@@ -74,7 +74,7 @@ describe("FreeCreationWorkspace", () => {
 
     const duration = screen.getByLabelText(t("free_creation_duration"));
     await waitFor(() => expect(duration).toHaveAttribute("max", "15"));
-    expect(duration).toHaveAttribute("min", "0");
+    expect(duration).toHaveAttribute("min", "4");
     expect(duration).toHaveAttribute("aria-valuemin", "4");
     fireEvent.change(duration, { target: { value: "9" } });
     expect(duration).toHaveValue("8");

@@ -542,6 +542,11 @@ class TestArkModelCapabilities:
         assert caps.max_reference_audio_count == 3
 
     @pytest.mark.unit
+    def test_seedance_declares_verified_fixed_aspect_ratios(self):
+        caps = ArkVideoBackend.video_capabilities_for_model("doubao-seedance-2-0-260128")
+        assert caps.supported_aspect_ratios == ("16:9", "4:3", "1:1", "3:4", "9:16", "21:9")
+
+    @pytest.mark.unit
     def test_seedance_2_5_unknown_suffix_does_not_inherit_verified_caps(self):
         """未验证的 2.5 变体只保留族群级的参考图容量，尾帧与参考音频不继承。"""
         caps = ArkVideoBackend.video_capabilities_for_model("doubao-seedance-2-5-future")

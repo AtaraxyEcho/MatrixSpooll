@@ -8,7 +8,7 @@
 
 **UI workspace source:** [`自由创作无限画布工作区方案`](../../proposals/2026-08-19-free-creation-infinite-canvas.md)。自由项目的前端工作区必须按该方案与固定工作流项目分流；实现计划中的 `FreeCreationCanvas`、会话和首页交接任务不得重新引入标准侧边栏或右侧固定助手面板。
 
-**Model rule:** 文本模型负责聊天理解、意图分流和工具调用；图片模型负责最终图片或图片编辑；视频模型负责最终视频。直接文生视频不经过图片模型，直连生成入口可以跳过文本模型。
+**Model rule:** 文本模型只负责显式开启的智能体辅助、意图分流和工具调用；图片模型负责最终图片或图片编辑；视频模型负责最终视频。首页和自由画布的原文直送入口不是 Agent 对话：直接文生视频不经过文本或图片模型，只配置视频模型即可使用。自由项目创建向导因此只显示视频模型，不显示图片模型、文本模型或风格；这些能力在用户选择对应输出或辅助模式时再按需配置。
 
 ## Branding and icon requirements
 
@@ -139,14 +139,14 @@
 
 - [x] 新增 `POST /api/v1/projects/{project_name}/creations`，接受自由创作请求并返回 `creation_id`、`task_id`。
 - [x] 新增列表、详情、版本、取消、重试和下载能力；版本查询复用项目统一 `VersionManager` 接口，其他接口继续复用项目级认证和路径围栏。
-- [ ] 请求层按 `output_type` 校验参考素材、比例、分辨率和时长；错误发生在入队前。
+- [x] 请求层按 `output_type` 校验参考素材、已声明的模型比例、分辨率和时长；错误发生在入队前。
 - [x] 直连 API 不调用文本模型，当前仅开放 `prompt_mode=original`，原文直接进入媒体 lane；`enhance` 待文本改写实现后再开放。
 
 ### Queue and execution
 
 - [x] 增加 `free_image`、`free_video` 和 `free_edit` 任务类型，复用 GenerationQueue 的排队、取消和重试能力；自由视频重启恢复仍待 checkpoint 支持。
 - [x] 图片任务解析 image lane；视频任务根据参考素材选择 T2V 或 R2V，不为视频任务无条件解析 image lane。
-- [ ] 编辑任务根据父产物媒体类型选择 image 或 video lane，并记录 `parent_creation_id`。
+- [x] 编辑任务根据父产物媒体类型选择 image 或 video lane，并记录 `parent_creation_id`；视频父产物作为视频参考输入，仅在模型声明视频引用能力时放行。
 - [x] 通过 `GenerationContext` 一次解析实际 provider、model、resolution 和能力；禁止任务执行器重新读取另一套项目默认值。
 - [ ] provider 调用成功后，在同一正式提交边界写入 `creations/` 文件和 `artifact_manifest` 条目；当前已登记共享清单并补偿取消竞争，但文件、清单与状态 JSON 尚非单一原子事务。
 - [x] 任务 payload 保存原始请求和执行事实摘要，但不把完整聊天 transcript 塞入任务记录。
@@ -166,7 +166,9 @@
 
 The project list route is also the product homepage. Its primary action is an input-first free creation composer:
 
-- The prompt is the required input. Submitting it creates a `content_mode=free` project, derives a short project title from the prompt, and immediately queues the requested media task in that project.
+  - The prompt is the required input. Submitting it creates a `content_mode=free` project, derives a short project title from the prompt, and immediately queues the requested media task in that project.
+  - [x] 首页通过 `POST /api/v1/free-projects` 原子编排项目创建与首任务入队；任一步失败都补偿删除新项目，前端不再串联两个写接口。
+  - [x] 创建向导的自由模式只有“基础信息 + 视频模型”两步，不要求图片模型、文本模型、风格或固定生成路线。
 - The composer exposes output type, model, aspect ratio, resolution, quantity, and video duration. Image-only size choices are sent as `size`; video does not present an image pixel-size control that providers may ignore.
 - The project list is rendered below the composer as a recent-project rail. It uses a two-row horizontal grid with bounded card dimensions so large project libraries do not expand the page vertically.
 - The legacy project creation modal remains available from the top bar and rail card for users who need explicit project metadata before entering the workspace.
@@ -186,9 +188,9 @@ The homepage composer now performs lane/model/resolution preflight where the sel
 ## Phase 5: Make aspect ratios capability-driven
 
 - [ ] 新增统一的比例能力值对象，至少表达 `supported_aspect_ratios`、`supports_custom_aspect_ratio` 和 `adaptive_only`。
-- [ ] 视频 backend 的能力声明作为视频比例真相源；Seedance 型号声明 `9:16`、`16:9`、`1:1`、`4:3`、`3:4`、`21:9` 的实际支持差异，首帧自适应型号不下发固定 ratio。
+- [x] 视频 backend 的能力声明作为视频比例真相源；Ark Seedance 声明六种固定比例，DashScope `wan2.7-r2v` 声明五种比例，首帧自适应型号仍不下发固定 ratio。
 - [ ] 图片模型比例能力继续从模型级能力声明或 backend 约束读取，不把视频比例列表复制成图片真相源。
-- [ ] capability endpoint 返回当前执行模型可选比例；前端只展示可用项，并保留后端入队校验作为最终闸门。
+- [x] capability endpoint 返回当前执行模型的比例、分辨率、时长和参考素材上限；首页和自由画布消费该响应，并保留后端入队校验作为最终闸门。
 - [ ] `AspectRatioPicker` 支持六种首批预设和可选自定义 `width x height`；自定义仅在 `supports_custom_aspect_ratio=true` 时显示。
 - [x] `AspectFrame`、时间线、项目设置和创建向导统一消费比例字符串，移除仅有 `9:16 | 16:9` 的类型收窄和非法值静默回退。
 - [x] MVP 结果元数据冻结最终比例；项目默认比例改变不改写历史自由产物。
@@ -205,26 +207,28 @@ The homepage composer now performs lane/model/resolution preflight where the sel
 
 ## 实施状态
 
-截至 2026-08-18，可执行 MVP 已完成：
+截至 2026-08-19，可执行 MVP 已完成：
 
 - 项目创建契约已按内容模式分支。`drama`、`narration`、`ad` 创建时仍必须选择 `storyboard` 或 `reference_video`；`free` 不显示生成方式并强制保存 `generation_mode: null`，同时固定 `grid_storyboard: false`。
 - 自由项目绕过脚本、分集和固定工作流状态机，项目摘要显式返回 `workflow_applicable=false`；项目 profile 与自由创作 skill 已可加载。
 - API 与 GenerationQueue 已支持 `free_image`、`free_video`、`free_edit` 的创建、列表、详情、媒体读取、取消和重试。图片请求只解析 image lane；视频请求直接解析 video lane，不强制调用文本模型或先生成图片。
+- 首页通过原子应用接口创建自由项目并入队首个任务；创建向导自由模式只选择视频模型，不选择图片模型、文本模型或风格。纯 prompt 视频只要求视频模型配置。
 - 首页输入框已支持图片/视频、模型、比例、分辨率、图片尺寸、数量和视频秒数；提交后默认创建自由项目，项目名由输入内容截取生成，项目区按最多两行横向滚动。
-- 入队前会解析实际媒体 lane 与模型，并拒绝已登记的模型能力或时长错误；最终实际模型写入产物元数据。模型级比例白名单尚未统一，因此比例暂时只做严格语法校验。
+- 入队前会解析实际媒体 lane 与模型，并拒绝未声明比例能力、不支持的比例、分辨率或时长；最终实际模型写入产物元数据。能力接口与入队预检读取相同的 backend/model 声明，不使用全局比例回退。
 - 成功产物已登记到共享 `artifact_manifest`；自由任务完成会进入项目事件 SSE，列表与项目事件快照均只读取最近 40 条记录；运行中取消使用 `cancelling` 中间态，worker 重启丢失任务会回写可重试的失败态。
 - 自由项目的 `full` 与 `current` 官方归档均可往返保留媒体、任务元数据和共享产物清单；排队、失败等尚无媒体的记录只作为任务证据保留，不会伪装成正式产物。
 - 自由图片、视频和编辑结果复用 `VersionManager`，结果卡可只读查看和下载历史版本；图片编辑延迟到父子关系写入后再一次性提交成功状态。
 - 直连接口当前只接受 `prompt_mode=original`，提示词原文直接进入媒体模型。`enhance` 在真正接入文本模型改写前不会暴露为可用能力。
-- Web 端已将自由项目路由到 `FreeCreationCanvas`，支持输出类型、提示词、项目内参考路径、比例、视频时长、状态轮询、预览、取消、重试、下载和基于图片结果继续编辑。
+- Web 端已将自由项目路由到独立无限画布，支持输出类型、提示词、项目内图片/音频/视频参考路径、能力驱动的比例/分辨率/时长、状态轮询、预览、取消、重试、下载，以及基于图片或视频结果继续编辑。
+- Ark Seedance 与 DashScope `wan2.7-r2v` 已登记可核验的比例能力并在入队前拒绝不支持的比例；WAN 2.7 支持 `.mp4`/`.mov` 视频参考，图片与视频合计上限为 5。Ark 当前只接受 URL/资产 ID 形态的视频引用，项目内本地视频不会被伪装成支持。
 - 创建向导、项目设置与画幅容器已支持 `9:16`、`16:9`、`1:1`、`4:3`、`3:4`、`21:9`，后端对任意正整数 `width:height` 做严格语法校验，不再把新比例静默收窄到横屏或竖屏。
 - 默认产品名称、Web/PWA 入口、README、文档站配置和活动 SVG 标志已迁移为 MatrixSpooll；Git 远端已连接 `git@github.com:MockMine/MatrixSpooll.git`。内部 `ARCREEL_*`、数据目录、旧容器名和历史协议继续保留兼容。
 
 以下工作仍未完成，不能视为现有支持：
 
-- provider/model 级 `supported_aspect_ratios` 与比例入队前拒绝。官方资料没有给出可安全套用于所有 Seedance 型号的统一白名单，因此本阶段不硬编码推断值；已登记的 lane、模型和时长能力仍会在入队前校验。
+- 尚未登记 `supported_aspect_ratios` 的其他 provider/model 不会在自由视频入口中开放比例选择或入队；需先在其 backend 真相源登记并测试，不得用 Ark/WAN 的白名单代替。
 - 成本归属键、单产物删除一致性、导入时的请求摘要重算，以及文件、清单和状态 JSON 的原子提交；归档/导入基本往返与内容 hash 校验已经完成。
-- 基于视频父产物的编辑。当前 `free_edit` 只接受图片或图片编辑结果，避免在 provider 没有统一视频编辑契约时伪装支持。
+- 独立“视频编辑”供应商接口尚未抽象；当前视频父产物编辑按 R2V 语义进入视频 lane，因此仅对声明视频引用能力的模型可用，不把普通 T2V/I2V 模型伪装成视频编辑模型。
 - 自由创作 MCP 工具、聊天入口自动工具调用、文本提示词增强，以及视频任务重启后的 provider checkpoint 恢复。
 - 浏览器上传参考素材和所有旧 raster 图标的位图替换；当前界面使用项目内相对路径，活动入口使用新 SVG，旧位图暂留兼容。
 

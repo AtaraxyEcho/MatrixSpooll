@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -9,15 +10,18 @@ from lib.version_manager import VersionManager
 from server.routers.free_creations import (
     FreeCreationRequest,
     _free_request_payload,
+    _preflight_free_creation,
     _record_batch_compensation,
     _record_enqueued_metadata,
     _validate_declared_resolution,
     _validate_references,
+    get_free_creation_capabilities,
 )
 from server.services import free_creation_tasks as free_creation_tasks_module
 from server.services.free_creation_tasks import (
     commit_free_creation_state,
     discard_free_creation_result,
+    execute_free_video_task,
     list_creation_metadata,
     load_creation_metadata,
     register_free_creation_artifact,
@@ -30,8 +34,11 @@ pytestmark = pytest.mark.unit
 def test_free_creation_request_validates_mode_specific_fields() -> None:
     request = FreeCreationRequest(output_type="video", prompt="city at night", aspect_ratio="21:9")
     assert request.aspect_ratio == "21:9"
+    assert FreeCreationRequest(output_type="video", prompt="city", duration_seconds=30).duration_seconds == 30
     assert FreeCreationRequest(output_type="image", prompt="poster", quantity=4, size="1024x1024").quantity == 4
 
+    with pytest.raises(ValidationError):
+        FreeCreationRequest(output_type="video", prompt="city", duration_seconds=31)
     with pytest.raises(ValidationError):
         FreeCreationRequest(output_type="image", prompt="poster", duration_seconds=4)
     with pytest.raises(ValidationError):
@@ -56,21 +63,26 @@ def test_free_creation_request_validates_mode_specific_fields() -> None:
 
 def test_free_creation_model_selects_only_the_requested_media_lane() -> None:
     image = _free_request_payload(
-        FreeCreationRequest(output_type="image", prompt="poster", model="ark/doubao-seedream-4-0")
+        FreeCreationRequest(output_type="image", prompt="poster", model="ark/doubao-seedream-4-0"),
+        "image",
     )
     assert image["image_provider"] == "ark"
     assert image["image_model"] == "doubao-seedream-4-0"
     assert "video_provider" not in image
 
     video = _free_request_payload(
-        FreeCreationRequest(output_type="video", prompt="city", model="ark/doubao-seedance-1-5-pro")
+        FreeCreationRequest(output_type="video", prompt="city", model="ark/doubao-seedance-1-5-pro"),
+        "video",
     )
     assert video["video_provider"] == "ark"
     assert video["video_model"] == "doubao-seedance-1-5-pro"
     assert "image_provider" not in video
 
     with pytest.raises(BadRequestError):
-        _free_request_payload(FreeCreationRequest(output_type="image", prompt="poster", model="missing-provider"))
+        _free_request_payload(
+            FreeCreationRequest(output_type="image", prompt="poster", model="missing-provider"),
+            "image",
+        )
 
 
 def test_declared_video_resolution_is_rejected_before_enqueue() -> None:
@@ -80,6 +92,156 @@ def test_declared_video_resolution_is_rejected_before_enqueue() -> None:
     _validate_declared_resolution("ark", "doubao-seedance-1-5-pro-251215", "1080P")
 
 
+@pytest.mark.asyncio
+async def test_video_reference_duration_is_rejected_from_backend_context_before_enqueue(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def _context(*_args, **_kwargs):
+        return SimpleNamespace(
+            video=SimpleNamespace(
+                supported_durations=tuple(range(2, 16)),
+                supported_durations_with_reference_video=tuple(range(2, 11)),
+                supported_aspect_ratios=("16:9", "9:16"),
+                max_reference_images=5,
+                max_reference_videos=5,
+                max_reference_media_count=5,
+                provider_model=SimpleNamespace(provider_id="dashscope"),
+                backend_model="wan2.7-r2v",
+            )
+        )
+
+    monkeypatch.setattr("server.routers.free_creations.resolve_generation_context", _context)
+    request = FreeCreationRequest(
+        output_type="video",
+        prompt="restyle this clip",
+        references=["uploads/clip.mp4"],
+        aspect_ratio="16:9",
+        duration_seconds=12,
+    )
+
+    with pytest.raises(BadRequestError) as exc:
+        await _preflight_free_creation(
+            "demo",
+            {"content_mode": "free", "aspect_ratio": "16:9"},
+            tmp_path,
+            request,
+            media_type="video",
+            user_id="user-1",
+        )
+
+    assert exc.value.key == "video_duration_not_supported"
+    assert exc.value.params["supported"] == "2, 3, 4, 5, 6, 7, 8, 9, 10"
+
+
+@pytest.mark.asyncio
+async def test_capability_endpoint_uses_video_reference_duration_subset(monkeypatch) -> None:
+    class FakeResolver:
+        def __init__(self, _session_factory):
+            pass
+
+        async def resolve_video_backend(self, _project, _payload, *, capability=None):
+            assert capability == "r2v"
+            return SimpleNamespace(provider_id="dashscope", model_id="wan2.7-r2v")
+
+        async def video_capabilities_for_model(self, _provider_id, _model_id, _project):
+            return {
+                "supported_durations": list(range(2, 16)),
+                "supported_durations_with_reference_video": list(range(2, 11)),
+                "supported_aspect_ratios": ["16:9", "9:16"],
+                "max_reference_images": 5,
+                "max_reference_videos": 5,
+                "max_reference_media_count": 5,
+            }
+
+        async def resolve_resolution(self, _project, _provider_id, _model_id):
+            return None
+
+    monkeypatch.setattr("lib.config.resolver.ConfigResolver", FakeResolver)
+
+    result = await get_free_creation_capabilities(
+        output_type="video",
+        model=None,
+        reference_kind="video",
+    )
+
+    assert result["durations"] == list(range(2, 11))
+    assert result["ratios"] == ["16:9", "9:16"]
+
+
+@pytest.mark.asyncio
+async def test_capability_endpoint_fails_when_video_ratios_are_undeclared(monkeypatch) -> None:
+    class FakeResolver:
+        def __init__(self, _session_factory):
+            pass
+
+        async def resolve_video_backend(self, _project, _payload, *, capability=None):
+            return SimpleNamespace(provider_id="custom-provider", model_id="unknown-video")
+
+        async def video_capabilities_for_model(self, _provider_id, _model_id, _project):
+            return {"supported_durations": [4, 8], "supported_aspect_ratios": []}
+
+    monkeypatch.setattr("lib.config.resolver.ConfigResolver", FakeResolver)
+
+    with pytest.raises(BadRequestError) as exc:
+        await get_free_creation_capabilities(output_type="video", model=None, reference_kind="none")
+
+    assert exc.value.key == "free_creation_aspect_ratio_capabilities_missing"
+
+
+@pytest.mark.asyncio
+async def test_prompt_only_free_video_executes_only_the_video_lane(tmp_path: Path, monkeypatch) -> None:
+    output_path = tmp_path / "creations" / "c_0123456789abcdef0123.mp4"
+    output_path.parent.mkdir(parents=True)
+    output_path.write_bytes(b"video")
+    video_calls: list[dict] = []
+
+    class FakeProjectManager:
+        def load_project(self, _project_name):
+            return {"content_mode": "free", "aspect_ratio": "16:9"}
+
+        def get_project_path(self, _project_name):
+            return tmp_path
+
+    class VideoOnlyGenerator:
+        async def generate_video_async(self, **kwargs):
+            video_calls.append(kwargs)
+            return output_path, 1, None, None
+
+        async def generate_image_async(self, **_kwargs):
+            raise AssertionError("prompt-only free video must not call the image lane")
+
+    async def _context(*_args, **kwargs):
+        assert kwargs.get("video") is not None
+        assert "image" not in kwargs
+        return SimpleNamespace(
+            generator=VideoOnlyGenerator(),
+            video=SimpleNamespace(
+                provider_model=SimpleNamespace(provider_id="ark"),
+                backend_model="doubao-seedance-2-0",
+                resolution="1080p",
+            ),
+        )
+
+    monkeypatch.setattr(free_creation_tasks_module, "get_project_manager", lambda: FakeProjectManager())
+    monkeypatch.setattr(free_creation_tasks_module, "resolve_generation_context", _context)
+
+    result = await execute_free_video_task(
+        "demo",
+        "c_0123456789abcdef0123",
+        {"prompt": "a quiet city at night", "aspect_ratio": "16:9", "duration_seconds": 6},
+        user_id="user-1",
+        commit_result=False,
+    )
+
+    assert result["media_type"] == "video"
+    assert result["model"] == "ark/doubao-seedance-2-0"
+    assert len(video_calls) == 1
+    assert video_calls[0]["reference_images"] is None
+    assert video_calls[0]["reference_videos"] is None
+    assert video_calls[0]["duration_seconds"] == 6
+
+
 def test_reference_validation_is_media_aware_and_path_safe(tmp_path: Path) -> None:
     project_path = tmp_path / "project"
     uploads = project_path / "uploads"
@@ -87,14 +249,20 @@ def test_reference_validation_is_media_aware_and_path_safe(tmp_path: Path) -> No
     (uploads / "frame.png").write_bytes(b"png")
     (uploads / "voice.wav").write_bytes(b"wav")
     (uploads / "clip.mp4").write_bytes(b"mp4")
+    (uploads / "clip.mov").write_bytes(b"mov")
+    (uploads / "notes.txt").write_text("notes", encoding="utf-8")
 
     _validate_references(project_path, ["uploads/frame.png"], "image")
-    _validate_references(project_path, ["uploads/frame.png", "uploads/voice.wav"], "video")
+    _validate_references(
+        project_path,
+        ["uploads/frame.png", "uploads/voice.wav", "uploads/clip.mp4", "uploads/clip.mov"],
+        "video",
+    )
 
     with pytest.raises(BadRequestError):
         _validate_references(project_path, ["uploads/voice.wav"], "image")
     with pytest.raises(BadRequestError):
-        _validate_references(project_path, ["uploads/clip.mp4"], "video")
+        _validate_references(project_path, ["uploads/notes.txt"], "video")
     with pytest.raises(BadRequestError):
         _validate_references(project_path, ["../outside.png"], "image")
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,6 +82,7 @@ def _read_image_or_none(path: Path) -> str | None:
 # wan2.7 的 reference_voice 接受 wav / mp3（官方《万相2.7-参考生视频》reference_voice 章节），
 # URL 形态与 media.url 同为 http / oss / base64 data URI。
 _REFERENCE_AUDIO_MIME_TYPES = {".wav": "audio/wav", ".mp3": "audio/mpeg"}
+_REFERENCE_VIDEO_MIME_TYPES = {".mp4": "video/mp4", ".mov": "video/quicktime"}
 
 
 def _read_reference_audio_or_none(path: Path) -> str | None:
@@ -91,13 +93,14 @@ def _read_reference_audio_or_none(path: Path) -> str | None:
     try:
         return file_to_data_uri(path, mime)
     except OSError as exc:
-        logger.warning("DashScope 参考音频读取失败: %s (%s)", path, exc)
+        logger.warning("DashScope audio reference read failed: %s (%s)", path, exc)
         return None
 
 
 DEFAULT_MODEL = "happyhorse-1.1-i2v"
 
 _VIDEO_ENDPOINT = "/services/aigc/video-generation/video-synthesis"
+_UPLOAD_ENDPOINT = "/uploads"
 
 _MIN_POLL_TIMEOUT_SECONDS = 900.0
 _POLL_TIMEOUT_PER_SECOND = 60.0
@@ -335,11 +338,15 @@ _MODEL_PROFILES: dict[str, VideoCapabilities] = {
     "happyhorse-1.0-r2v": VideoCapabilities(first_frame=False, max_reference_images=9),
     "wan2.7-t2v": VideoCapabilities(first_frame=False, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS),
     "wan2.7-i2v": VideoCapabilities(first_frame=True, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS),
-    # 带首帧的参考生视频是 wan2.7-r2v 的官方形态（_build_media 同请求组装
-    # first_frame + reference_image）。
+    # 带首帧的参考生视频是 wan2.7-r2v 的官方形态；参考视频须先上传到临时 OSS，
+    # _build_media 只接收已解析的 oss:// 地址，不把本地视频编码为 data URI。
     "wan2.7-r2v": VideoCapabilities(
         first_frame=True,
         max_reference_images=_WAN27_R2V_MAX_REFERENCE,
+        max_reference_videos=_WAN27_R2V_MAX_REFERENCE,
+        max_reference_media_count=_WAN27_R2V_MAX_REFERENCE,
+        supported_aspect_ratios=("16:9", "9:16", "1:1", "4:3", "3:4"),
+        supported_durations_with_reference_video=tuple(range(2, 11)),
         reference_audio_mode=ReferenceAudioMode.DIRECT,
         max_reference_audio_count=_WAN27_R2V_MAX_REFERENCE,
         # 音色挂在具体参考素材项上（_attach_reference_voices），不是独立的音色输入通道，
@@ -473,15 +480,16 @@ class DashScopeVideoBackend(ProviderJobIdPersistenceMixin):
         return self._base_url
 
     async def generate(self, request: VideoGenerationRequest) -> VideoGenerationResult:
-        payload = self._build_payload(request)
-        logger.info(
-            "调用 %s 视频 API model=%s body=%s",
-            self.name,
-            self._model,
-            format_kwargs_for_log(safe_body_for_log(payload)),
-        )
         async with httpx.AsyncClient(timeout=self._http_timeout) as client:
-            task_id = await self._create_task(client, payload)
+            reference_video_urls = await self._upload_reference_videos(client, request.reference_videos or [])
+            payload = self._build_payload(request, reference_video_urls=reference_video_urls)
+            logger.info(
+                "调用 %s 视频 API model=%s body=%s",
+                self.name,
+                self._model,
+                format_kwargs_for_log(safe_body_for_log(payload)),
+            )
+            task_id = await self._create_task(client, payload, resolve_oss_resources=bool(reference_video_urls))
             logger.info("DashScope 视频任务已创建: task_id=%s model=%s", task_id, self._model)
             # 一并写回实际提交域名（wan3.0 走独立 maas 域名，且两者都随用户配置可变）：
             # 续跑据此回放原域名，不然改配置后轮询会打到查不到该任务的主机。
@@ -497,8 +505,13 @@ class DashScopeVideoBackend(ProviderJobIdPersistenceMixin):
 
     # ── request building ────────────────────────────────────────────────
 
-    def _build_payload(self, request: VideoGenerationRequest) -> dict:
-        media = self._build_media(request)
+    def _build_payload(
+        self,
+        request: VideoGenerationRequest,
+        *,
+        reference_video_urls: list[str] | None = None,
+    ) -> dict:
+        media = self._build_media(request, reference_video_urls=reference_video_urls)
         input_block: dict = {"prompt": request.prompt}
         if media:
             input_block["media"] = media
@@ -528,7 +541,12 @@ class DashScopeVideoBackend(ProviderJobIdPersistenceMixin):
             "parameters": parameters,
         }
 
-    def _build_media(self, request: VideoGenerationRequest) -> list[dict]:
+    def _build_media(
+        self,
+        request: VideoGenerationRequest,
+        *,
+        reference_video_urls: list[str] | None = None,
+    ) -> list[dict]:
         caps = self._video_capabilities
         media: list[dict] = []
         if caps.first_frame and request.start_image:
@@ -547,13 +565,18 @@ class DashScopeVideoBackend(ProviderJobIdPersistenceMixin):
                 raise VideoCapabilityError("video_end_image_unreadable", model=self._model, name=p.name)
             media.append({"type": "last_frame", "url": uri})
         reference_items: list[dict] = []
-        if caps.max_reference_images > 0:
-            # r2v 必须有参考图。fail-loud：未提供 → required；任一声明的参考图缺失/不可读（is_file 不过
-            # 或 read_bytes 抛 OSError）→ 报错列出文件名中止。不静默退化为无参考/子集生成（会产出错误
-            # 结果且照常计费），让用户感知到有图未被使用。
+        if caps.max_reference_images > 0 or caps.max_reference_videos > 0:
+            # r2v 必须有参考素材。fail-loud：未提供 → required；任一声明的素材缺失/不可读即中止，
+            # 不静默退化为无参考/子集生成（会产出错误结果且照常计费）。
             provided = [r for r in (request.reference_images or []) if r]
-            if not provided and not _is_wan3(self._model):
-                raise VideoCapabilityError("video_reference_images_required", model=self._model)
+            provided_videos = [r for r in (request.reference_videos or []) if r]
+            if not provided and not provided_videos and not _is_wan3(self._model):
+                code = (
+                    "video_reference_media_required"
+                    if caps.max_reference_videos > 0
+                    else "video_reference_images_required"
+                )
+                raise VideoCapabilityError(code, model=self._model)
             data_uris: list[str] = []
             unreadable: list[str] = []
             for r in provided:
@@ -577,6 +600,23 @@ class DashScopeVideoBackend(ProviderJobIdPersistenceMixin):
                 )
                 data_uris = data_uris[:limit]
             reference_items = [{"type": "reference_image", "url": uri} for uri in data_uris]
+            video_limit = caps.max_reference_videos
+            if len(provided_videos) > video_limit:
+                raise VideoCapabilityError(
+                    "video_reference_videos_exceeded",
+                    provider=self.name,
+                    model=self._model,
+                    limit=video_limit,
+                    count=len(provided_videos),
+                )
+            uploaded_video_urls = reference_video_urls or []
+            if len(uploaded_video_urls) != len(provided_videos):
+                raise VideoCapabilityError(
+                    "video_reference_videos_unreadable",
+                    model=self._model,
+                    names=", ".join(Path(item).name for item in provided_videos),
+                )
+            reference_items.extend({"type": "reference_video", "url": url} for url in uploaded_video_urls)
         # 音频判定在参考素材循环之外：无参考素材可挂时也要走一遍，否则 wan2.7-i2v 这类无参考图
         # 能力的 model 收到音频会静默丢弃、照常扣费。自定义供应商可把 endpoint 级的
         # reference_audio_mode 覆盖成 direct，而 delegate 的 model profile 仍是真相源，故这条
@@ -688,21 +728,96 @@ class DashScopeVideoBackend(ProviderJobIdPersistenceMixin):
 
     # ── HTTP submit / poll / download ───────────────────────────────────
 
+    async def _upload_reference_videos(self, client: httpx.AsyncClient, references: list[Path]) -> list[str]:
+        if not references:
+            return []
+
+        unreadable = [
+            path.name
+            for path in references
+            if path.suffix.lower() not in _REFERENCE_VIDEO_MIME_TYPES or not path.is_file()
+        ]
+        if unreadable:
+            raise VideoCapabilityError(
+                "video_reference_videos_unreadable",
+                model=self._model,
+                names=", ".join(unreadable),
+            )
+
+        policy_response = await client.get(
+            f"{self._base_url}{_UPLOAD_ENDPOINT}",
+            params={"action": "getPolicy", "model": self._model},
+            headers=dashscope_headers(self._api_key),
+        )
+        policy_response.raise_for_status()
+        payload = policy_response.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        required = (
+            "policy",
+            "signature",
+            "upload_dir",
+            "upload_host",
+            "oss_access_key_id",
+            "x_oss_object_acl",
+            "x_oss_forbid_overwrite",
+        )
+        if not isinstance(data, dict) or any(not data.get(key) for key in required):
+            raise RuntimeError("DashScope upload policy response is incomplete")
+
+        urls: list[str] = []
+        upload_dir = str(data["upload_dir"]).rstrip("/")
+        for path in references:
+            key = f"{upload_dir}/{uuid.uuid4().hex}-{path.name}"
+            mime = _REFERENCE_VIDEO_MIME_TYPES[path.suffix.lower()]
+            try:
+                with path.open("rb") as handle:
+                    upload_response = await client.post(
+                        str(data["upload_host"]),
+                        files={
+                            "OSSAccessKeyId": (None, str(data["oss_access_key_id"])),
+                            "Signature": (None, str(data["signature"])),
+                            "policy": (None, str(data["policy"])),
+                            "x-oss-object-acl": (None, str(data["x_oss_object_acl"])),
+                            "x-oss-forbid-overwrite": (None, str(data["x_oss_forbid_overwrite"])),
+                            "key": (None, key),
+                            "success_action_status": (None, "200"),
+                            "file": (path.name, handle, mime),
+                        },
+                    )
+            except OSError as exc:
+                raise VideoCapabilityError(
+                    "video_reference_videos_unreadable",
+                    model=self._model,
+                    names=path.name,
+                ) from exc
+            upload_response.raise_for_status()
+            urls.append(f"oss://{key}")
+        return urls
+
     @with_retry_async(
         max_attempts=DEFAULT_MAX_ATTEMPTS,
         backoff_seconds=DEFAULT_BACKOFF_SECONDS,
         retry_if=should_retry_submit,
     )
-    async def _create_task(self, client: httpx.AsyncClient, payload: dict) -> str:
+    async def _create_task(
+        self,
+        client: httpx.AsyncClient,
+        payload: dict,
+        *,
+        resolve_oss_resources: bool = False,
+    ) -> str:
         # 创建任务是非幂等的「建任务 + 计费」POST：submit_post 把歧义传输错误（请求可能已送达
         # 服务端但响应在途丢失）转 AmbiguousSubmitError 终态失败，避免自动重试重复建任务 + 重复计费；
         # >=400 由其落 body 日志 + raise_for_status 抛 HTTPStatusError（保留 status_code 供咽喉层识别
         # 413 降档），交 should_retry_submit 按状态码分流——4xx fail-fast、5xx/429 重试。
+        headers = dashscope_headers(self._api_key, async_mode=True)
+        if resolve_oss_resources:
+            headers["X-DashScope-OssResourceResolve"] = "enable"
         resp = await submit_post(
             lambda: client.post(
                 f"{self._request_base_url}{_VIDEO_ENDPOINT}",
                 json=payload,
-                headers=dashscope_headers(self._api_key, async_mode=True),
+                headers=headers,
             ),
             provider=PROVIDER_DASHSCOPE,
         )

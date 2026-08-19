@@ -422,4 +422,11 @@ MESSAGES = {
     "free_creation_media_not_found": "Media for free creation '{id}' does not exist",
     "free_creation_cancel_not_ready": "Only queued or running free creations can be cancelled",
     "free_creation_retry_not_ready": "Only failed or cancelled free creations can be retried",
+    "video_reference_videos_unsupported": "Model {model} does not support reference videos; remove video references or switch to a compatible model",
+    "video_reference_videos_exceeded": "Model {model} supports at most {limit} reference videos but received {count}; reduce the number of video references",
+    "video_reference_media_exceeded": "Model {model} supports at most {limit} combined reference images and videos but received {count}; reduce the reference media",
+    "video_reference_media_required": "Model {model} requires at least one reference image or video",
+    "video_reference_videos_unreadable": "Model {model} has reference videos that are missing or unreadable; generation aborted: {names}",
+    "free_creation_aspect_ratio_not_supported": "Model {model} does not support the {ratio} aspect ratio; choose one of: {supported}",
+    "free_creation_aspect_ratio_capabilities_missing": "Model {model} does not declare supported aspect ratios, so this free creation cannot be submitted safely",
 }
