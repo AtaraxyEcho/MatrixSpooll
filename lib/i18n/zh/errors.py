@@ -365,6 +365,9 @@ MESSAGES = {
     "request_invalid": "请求无效，请检查后重试",
     "free_creation_project_required": "自由创作仅可用于自由创作项目",
     "free_creation_reference_invalid": "参考文件路径无效",
+    "free_creation_reference_not_found": "参考素材「{id}」不存在或不可用",
+    "free_creation_canvas_conflict": "画布已在其他位置更新，请刷新后重试",
+    "free_creation_export_empty": "所选范围内没有可导出的已完成作品",
     "free_creation_reference_type_unsupported": "当前自由创作不支持 {type} 类型的参考文件",
     "free_creation_resolution_not_supported": "模型 {model} 不支持 {resolution} 分辨率（仅支持 {supported}）",
     "free_creation_parent_not_found": "自由创作父图「{id}」不存在或不可用",
@@ -377,6 +380,7 @@ MESSAGES = {
     "video_reference_media_exceeded": "模型 {model} 最多支持 {limit} 个参考图和视频，收到 {count} 个；请减少参考素材",
     "video_reference_media_required": "模型 {model} 至少需要一个参考图或参考视频",
     "video_reference_videos_unreadable": "模型 {model} 有参考视频缺失或无法读取，已中止生成：{names}",
+    "free_creation_capabilities_unavailable": "尚未配置可用于自由创作的生成模型，请前往「设置 > 模型」完成配置",
     "free_creation_aspect_ratio_not_supported": "模型 {model} 不支持 {ratio} 画面比例；请选择：{supported}",
     "free_creation_aspect_ratio_capabilities_missing": "模型 {model} 未声明支持的画面比例，无法安全提交自由创作",
 }

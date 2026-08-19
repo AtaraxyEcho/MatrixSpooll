@@ -415,6 +415,9 @@ MESSAGES = {
     "request_invalid": "Invalid request, please check and retry",
     "free_creation_project_required": "Free creation is only available in free creation projects",
     "free_creation_reference_invalid": "The reference file path is invalid",
+    "free_creation_reference_not_found": "Reference '{id}' does not exist or is unavailable",
+    "free_creation_canvas_conflict": "The canvas changed elsewhere. Refresh and try again",
+    "free_creation_export_empty": "The selected scope has no completed work to export",
     "free_creation_reference_type_unsupported": "Free creation does not support {type} reference files",
     "free_creation_resolution_not_supported": "Model {model} does not support {resolution} resolution (supported: {supported})",
     "free_creation_parent_not_found": "Free creation parent image '{id}' does not exist or is unavailable",
@@ -427,6 +430,7 @@ MESSAGES = {
     "video_reference_media_exceeded": "Model {model} supports at most {limit} combined reference images and videos but received {count}; reduce the reference media",
     "video_reference_media_required": "Model {model} requires at least one reference image or video",
     "video_reference_videos_unreadable": "Model {model} has reference videos that are missing or unreadable; generation aborted: {names}",
+    "free_creation_capabilities_unavailable": "No generation model is configured for free creation. Go to Settings > Models to configure one",
     "free_creation_aspect_ratio_not_supported": "Model {model} does not support the {ratio} aspect ratio; choose one of: {supported}",
     "free_creation_aspect_ratio_capabilities_missing": "Model {model} does not declare supported aspect ratios, so this free creation cannot be submitted safely",
 }

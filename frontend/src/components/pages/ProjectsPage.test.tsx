@@ -61,19 +61,19 @@ describe("ProjectsPage", () => {
     vi.spyOn(API, "listProjects").mockResolvedValue({ projects: [] });
     vi.spyOn(API, "getModelCandidates").mockRejectedValue(new Error("offline"));
     vi.spyOn(API, "getSystemConfig").mockRejectedValue(new Error("offline"));
-    const createProject = vi.spyOn(API, "createProject").mockResolvedValue({
+    vi.spyOn(API, "getFreeCreationCapabilities").mockImplementation(async ({ outputType }) => ({
+      output_type: outputType,
+      model: "ark/image-model",
+      ratios: [],
+      resolutions: outputType === "image" ? ["1.5k", "2k", "4k"] : [],
+      durations: [],
+      max_reference_images: null,
+      max_reference_videos: null,
+      max_reference_media_count: null,
+    }));
+    const createProject = vi.spyOn(API, "createFreeProject").mockResolvedValue({
       success: true,
       name: "paper-plane",
-      project: {
-        title: "纸飞机穿过云层",
-        content_mode: "free",
-        style: "",
-        episodes: [],
-        characters: {},
-      },
-    });
-    const createCreation = vi.spyOn(API, "createFreeCreation").mockResolvedValue({
-      success: true,
       creation_id: "c_0123456789abcdef0123",
       task_id: "task-1",
     });
@@ -85,17 +85,10 @@ describe("ProjectsPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "立即生成" }));
 
-    await waitFor(() => expect(createCreation).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(createProject).toHaveBeenCalledTimes(1));
     expect(createProject).toHaveBeenCalledWith({
       title: "纸飞机穿过云层",
-      content_mode: "free",
-      generation_mode: null,
-      aspect_ratio: "16:9",
-      default_image_backend: null,
-    });
-    expect(createCreation).toHaveBeenCalledWith(
-      "paper-plane",
-      expect.objectContaining({
+      creation: expect.objectContaining({
         output_type: "image",
         prompt: "纸飞机穿过云层",
         aspect_ratio: "16:9",
@@ -103,7 +96,7 @@ describe("ProjectsPage", () => {
         size: "1536x864",
         quantity: 1,
       }),
-    );
+    });
     expect(location.history?.at(-1)).toBe("/app/projects/paper-plane");
   });
 

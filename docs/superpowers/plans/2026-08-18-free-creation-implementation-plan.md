@@ -239,24 +239,27 @@ The homepage composer now performs lane/model/resolution preflight where the sel
 - [x] `CreateProjectRequest`：自由项目允许空路线，固定项目仍拒绝空路线。
 - [x] `DataValidator`：自由项目无 episodes/scripts 仍合法；固定项目规则不回归。
 - [x] `WorkflowStateService`：自由项目不调用 `workflow_rule` 和脚本解析，并返回 `workflow_applicable=false`。
-- [ ] 任务执行：图片、视频、编辑三种任务正确选择 lane，且不解析未声明的媒体 lane。
-- [ ] 产物提交：provider 成功、下载失败、清单写入失败和取消竞争均保持可观测的一致状态。
-- [ ] 比例能力：六种预设、adaptive-only、custom ratio 和 unsupported ratio 均有明确测试。
+- [x] 任务执行：图片、视频、编辑三种任务正确选择 lane，且不解析未声明的媒体 lane。
+- [x] 产物提交：provider 成功、下载失败、清单写入失败和取消竞争均保持可观测的一致状态。
+- [x] 比例能力：六种预设、adaptive-only、custom ratio 和 unsupported ratio 均有明确测试。
+- [x] 型号时长：缺省值、可选档位和最大值来自所选型号能力，不设置自由创作全局最大秒数。
+- [x] 画布与引用：持久化视口/节点位置/隐藏集合，上传素材和既有产物通过结构化引用入队。
+- [x] 作品导出：按所选、请求组或全部范围导出清单中正式声明的已完成产物。
 - [x] 归档/导入：自由产物可在 `full`/`current` 范围往返，固定项目归档保持兼容。
 
 ### Frontend
 
 - [ ] 创建向导自由模式条件渲染和必填校验。
-- [ ] 自由画布提交、任务进度、错误、重试、下载和基于父版本编辑。
-- [ ] 比例选择器按 capability 响应渲染，不支持项不可提交。
+- [x] 自由画布提交、任务进度、错误、重试、下载和基于父版本编辑。
+- [x] 比例、分辨率与时长选择器按 capability 响应渲染，不支持项不可提交。
 - [x] 自由项目隐藏剧集侧栏和固定工作流步骤；固定项目 UI 回归测试继续通过。
-- [ ] `zh/en/vi` key 一致性和可访问性测试。
-- [ ] 品牌回归：默认品牌配置、HTML 加载期标题、PWA manifest、favicon/触控图标和文档站 Logo 均使用 MatrixSpooll；旧内部兼容标识仍可被配置和存量项目读取。
+- [x] `zh/en/vi` key 一致性和可访问性测试。
+- [x] 品牌回归：默认品牌配置、HTML 加载期标题、PWA manifest、favicon/触控图标和文档站 Logo 均使用 MatrixSpooll；旧内部兼容标识仍可被配置和存量项目读取。
 
 ### Verification commands
 
 ```bash
-uv run python -m pytest tests/test_free_creation*.py tests/test_workflow_state.py tests/test_project_archive.py
+uv run python -m pytest tests/server/test_free_creations.py tests/test_workflow_state.py tests/test_project_archive.py
 uv run basedpyright
 uv run lint-imports
 cd frontend

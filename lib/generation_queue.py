@@ -133,7 +133,14 @@ async def video_bucket_for_queued_task(
 
 
 def free_video_capability(payload: dict[str, Any] | None) -> VideoCapability | None:
-    """Choose the free-video bucket from its image or video references."""
+    """Choose the free-video bucket from explicit reference roles."""
+    claims = (payload or {}).get("reference_claims")
+    if isinstance(claims, list):
+        roles = {item.get("role") for item in claims if isinstance(item, dict)}
+        if roles & {"first_frame", "last_frame", "reference_image", "reference_video", "reference_audio"}:
+            return "r2v"
+        if claims:
+            return None
     references = (payload or {}).get("references")
     if not isinstance(references, list):
         return None

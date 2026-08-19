@@ -412,9 +412,12 @@ function TopBar({
   searchInputRef,
 }: TopBarProps) {
   const { t } = useTranslation(["common", "dashboard", "assets"]);
+  const topbarClassName = mode === "list"
+    ? "app-topbar-content app-topbar-inner app-lobby-topbar app-lobby-topbar--list"
+    : "app-topbar-content app-topbar-inner app-lobby-topbar";
   return (
     <header className="app-topbar-surface">
-      <div className="app-topbar-content app-topbar-inner app-lobby-topbar">
+      <div className={topbarClassName}>
         {mode === "list" ? (
           <Link
             href="/app"
@@ -1062,9 +1065,9 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
 
       {mode === "home" ? (
         <HomeHeroComposer
-          onCreated={(projectName) => {
+          onCreated={(projectName, outputType) => {
             void fetchProjects();
-            navigate(`/app/projects/${projectName}`);
+            navigate(`/app/projects/${projectName}?output=${outputType}`);
           }}
         />
       ) : null}

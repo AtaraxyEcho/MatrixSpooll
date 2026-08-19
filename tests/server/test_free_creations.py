@@ -1,3 +1,4 @@
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,6 +28,13 @@ from server.services.free_creation_tasks import (
     register_free_creation_artifact,
     write_creation_metadata,
 )
+from server.services.free_creation_workspace import (
+    build_creation_export,
+    load_canvas_state,
+    resolve_reference_claims,
+    save_canvas_state,
+    save_reference_upload,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -34,11 +42,9 @@ pytestmark = pytest.mark.unit
 def test_free_creation_request_validates_mode_specific_fields() -> None:
     request = FreeCreationRequest(output_type="video", prompt="city at night", aspect_ratio="21:9")
     assert request.aspect_ratio == "21:9"
-    assert FreeCreationRequest(output_type="video", prompt="city", duration_seconds=30).duration_seconds == 30
+    assert FreeCreationRequest(output_type="video", prompt="city", duration_seconds=60).duration_seconds == 60
     assert FreeCreationRequest(output_type="image", prompt="poster", quantity=4, size="1024x1024").quantity == 4
 
-    with pytest.raises(ValidationError):
-        FreeCreationRequest(output_type="video", prompt="city", duration_seconds=31)
     with pytest.raises(ValidationError):
         FreeCreationRequest(output_type="image", prompt="poster", duration_seconds=4)
     with pytest.raises(ValidationError):
@@ -132,6 +138,40 @@ async def test_video_reference_duration_is_rejected_from_backend_context_before_
 
     assert exc.value.key == "video_duration_not_supported"
     assert exc.value.params["supported"] == "2, 3, 4, 5, 6, 7, 8, 9, 10"
+
+
+@pytest.mark.asyncio
+async def test_video_duration_defaults_to_the_selected_models_first_declared_tier(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def _context(*_args, **_kwargs):
+        return SimpleNamespace(
+            video=SimpleNamespace(
+                supported_durations=(6, 10),
+                supported_durations_with_reference_video=(),
+                supported_aspect_ratios=("16:9",),
+                max_reference_images=0,
+                max_reference_videos=0,
+                max_reference_media_count=0,
+                provider_model=SimpleNamespace(provider_id="fake"),
+                backend_model="six-second-model",
+            )
+        )
+
+    monkeypatch.setattr("server.routers.free_creations.resolve_generation_context", _context)
+    request = FreeCreationRequest(output_type="video", prompt="city", aspect_ratio="16:9")
+
+    payload = await _preflight_free_creation(
+        "demo",
+        {"content_mode": "free", "aspect_ratio": "16:9"},
+        tmp_path,
+        request,
+        media_type="video",
+        user_id="user-1",
+    )
+
+    assert payload["duration_seconds"] == 6
 
 
 @pytest.mark.asyncio
@@ -446,3 +486,86 @@ def test_batch_compensation_records_cancelled_item_when_metadata_write_was_lost(
     assert stored is not None
     assert stored["status"] == "cancelled"
     assert stored["prompt"] == "a red kite"
+
+
+def test_canvas_state_persists_and_rejects_stale_revision(tmp_path: Path) -> None:
+    saved = save_canvas_state(
+        tmp_path,
+        viewport={"x": 12.0, "y": -8.0, "scale": 0.9},
+        positions={"c_0123456789abcdef0123": {"x": 120.0, "y": 80.0}},
+        hidden_creation_ids=["c_0123456789abcdef0123"],
+        expected_revision=0,
+    )
+
+    assert saved["revision"] == 1
+    assert load_canvas_state(tmp_path)["viewport"]["scale"] == 0.9
+    with pytest.raises(RuntimeError, match="revision conflict"):
+        save_canvas_state(
+            tmp_path,
+            viewport={"x": 0.0, "y": 0.0, "scale": 1.0},
+            positions={},
+            hidden_creation_ids=[],
+            expected_revision=0,
+        )
+
+
+def test_structured_references_resolve_without_exposing_paths(tmp_path: Path) -> None:
+    upload = save_reference_upload(tmp_path, original_filename="reference.png", content=b"png")
+    creation_id = "c_0123456789abcdef0123"
+    media = tmp_path / "creations" / f"{creation_id}.png"
+    media.parent.mkdir(parents=True, exist_ok=True)
+    media.write_bytes(b"generated")
+    write_creation_metadata(
+        tmp_path,
+        creation_id,
+        {
+            "creation_id": creation_id,
+            "status": "succeeded",
+            "version": 1,
+            "media_path": f"creations/{creation_id}.png",
+        },
+    )
+
+    paths, claims = resolve_reference_claims(
+        tmp_path,
+        [
+            {"type": "upload", "reference_id": upload["reference_id"]},
+            {"type": "creation", "creation_id": creation_id, "version": 1},
+        ],
+        load_creation=load_creation_metadata,
+    )
+
+    assert paths == [upload["path"], f"creations/{creation_id}.png"]
+    assert claims[1] == {"type": "creation", "creation_id": creation_id, "version": 1}
+
+
+def test_free_creation_export_uses_only_manifested_results(tmp_path: Path) -> None:
+    creation_id = "c_0123456789abcdef0123"
+    media = tmp_path / "creations" / f"{creation_id}.png"
+    media.parent.mkdir(parents=True)
+    media.write_bytes(b"generated image")
+    creation = {
+        "creation_id": creation_id,
+        "request_id": "q_0123456789abcdef0123",
+        "status": "succeeded",
+        "output_type": "image",
+        "media_type": "image",
+        "prompt": "a red kite",
+        "references": [],
+        "media_path": f"creations/{creation_id}.png",
+    }
+    register_free_creation_artifact(tmp_path, creation)
+
+    archive = build_creation_export(
+        tmp_path,
+        scope="selected",
+        creation_ids=[creation_id],
+        request_id=None,
+        creations=[creation],
+    )
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            assert f"media/{creation_id}.png" in bundle.namelist()
+            assert "manifest.json" in bundle.namelist()
+    finally:
+        archive.unlink(missing_ok=True)

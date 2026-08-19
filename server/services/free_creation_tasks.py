@@ -274,6 +274,7 @@ async def execute_free_image_task(
     )
     metadata = {
         "creation_id": resource_id,
+        "request_id": payload.get("request_id"),
         "status": "succeeded",
         "output_type": "image",
         "media_type": "image",
@@ -281,6 +282,7 @@ async def execute_free_image_task(
         "prompt_mode": "original",
         "model": f"{ctx.image.provider_model.provider_id}/{ctx.image.backend_model}",
         "references": payload.get("references") or [],
+        "reference_claims": payload.get("reference_claims") or [],
         "aspect_ratio": payload.get("aspect_ratio") or project.get("aspect_ratio") or "9:16",
         "resolution": payload.get("resolution"),
         "size": payload.get("size"),
@@ -316,9 +318,35 @@ async def execute_free_video_task(
     if not prompt:
         raise ValueError("prompt is required")
     references = await asyncio.to_thread(_reference_paths, project_path, payload)
-    reference_images = [path for path in references if path.suffix.lower() in _IMAGE_REFERENCE_SUFFIXES]
-    reference_videos = [path for path in references if path.suffix.lower() in _VIDEO_REFERENCE_SUFFIXES]
-    reference_audio = [path for path in references if path.suffix.lower() in _AUDIO_REFERENCE_SUFFIXES]
+    reference_images: list[Path] = []
+    reference_videos: list[Path] = []
+    reference_audio: list[Path] = []
+    start_image: Path | None = None
+    end_image: Path | None = None
+    claims = payload.get("reference_claims")
+    for index, path in enumerate(references):
+        claim = (
+            claims[index]
+            if isinstance(claims, list) and index < len(claims) and isinstance(claims[index], dict)
+            else {}
+        )
+        role = claim.get("role")
+        if role == "first_frame":
+            start_image = path
+        elif role == "last_frame":
+            end_image = path
+        elif role == "reference_image":
+            reference_images.append(path)
+        elif role == "reference_video":
+            reference_videos.append(path)
+        elif role == "reference_audio":
+            reference_audio.append(path)
+        elif path.suffix.lower() in _IMAGE_REFERENCE_SUFFIXES:
+            reference_images.append(path)
+        elif path.suffix.lower() in _VIDEO_REFERENCE_SUFFIXES:
+            reference_videos.append(path)
+        elif path.suffix.lower() in _AUDIO_REFERENCE_SUFFIXES:
+            reference_audio.append(path)
     ctx = await resolve_generation_context(
         project_name,
         payload,
@@ -338,6 +366,8 @@ async def execute_free_video_task(
         prompt=prompt,
         resource_type="free_videos",
         resource_id=resource_id,
+        start_image=start_image,
+        end_image=end_image,
         reference_images=reference_images or None,
         reference_videos=reference_videos or None,
         reference_audio_files=reference_audio or None,
@@ -350,6 +380,7 @@ async def execute_free_video_task(
     )
     metadata = {
         "creation_id": resource_id,
+        "request_id": payload.get("request_id"),
         "status": "succeeded",
         "output_type": output_type,
         "media_type": "video",
@@ -357,6 +388,7 @@ async def execute_free_video_task(
         "prompt_mode": "original",
         "model": f"{ctx.video.provider_model.provider_id}/{ctx.video.backend_model}",
         "references": payload.get("references") or [],
+        "reference_claims": payload.get("reference_claims") or [],
         "aspect_ratio": payload.get("aspect_ratio") or project.get("aspect_ratio") or "9:16",
         "resolution": payload.get("resolution"),
         "size": payload.get("size"),

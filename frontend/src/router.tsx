@@ -112,6 +112,10 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 function StudioWorkspace() {
   const params = useParams<{ projectName: string }>();
   const projectName = params.projectName ?? null;
+  const handoffOutputType = (() => {
+    const value = new URLSearchParams(window.location.search).get("output");
+    return value === "image" || value === "video" ? value : undefined;
+  })();
   const {
     currentProjectName,
     currentProjectData,
@@ -177,27 +181,39 @@ function StudioWorkspace() {
     };
   }, [projectName, setCurrentProject, setProjectDetailLoading]);
 
+  const workspaceLoading =
+    !projectName ||
+    currentProjectName !== projectName ||
+    projectDetailLoading ||
+    !currentProjectData;
+
   // 演示数据随界面语言走：`t` 换身份时重灌一遍常量，只影响演示项目
   useEffect(() => {
     if (!projectName || !isDemoProject(projectName)) return;
     setCurrentProject(projectName, buildDemoProjectData(t), buildDemoScripts(t));
   }, [projectName, setCurrentProject, t]);
 
-  if (
-    currentProjectName === projectName &&
-    !projectDetailLoading &&
-    currentProjectData?.content_mode === "free" &&
-    projectName
-  ) {
+  if (workspaceLoading) {
     return (
-      <FreeCreationLayout>
-        <FreeCreationWorkspace projectName={projectName} readOnly={isDemoProject(projectName)} />
+      <div className="flex h-screen flex-col bg-[var(--color-background)] text-[var(--color-text)]" data-testid="project-workspace-loading">
+        <div className="h-14 border-b border-[var(--color-hairline)] bg-[var(--color-surface)]" />
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-[var(--color-text-muted)]" aria-label="Loading project" />
+        </div>
+      </div>
+    );
+  }
+
+  if (currentProjectData.content_mode === "free" && projectName) {
+    return (
+      <FreeCreationLayout key={`free-${projectName}`}>
+        <FreeCreationWorkspace projectName={projectName} readOnly={isDemoProject(projectName)} initialOutputType={handoffOutputType} />
       </FreeCreationLayout>
     );
   }
 
   return (
-    <StudioLayout>
+    <StudioLayout key={`studio-${projectName}`}>
       <StudioCanvasRouter />
     </StudioLayout>
   );

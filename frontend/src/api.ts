@@ -68,6 +68,8 @@ import type {
   FreeCreation,
   CreateFreeCreationRequest,
   FreeCreationCapabilities,
+  FreeCreationCanvasState,
+  FreeCreationUpload,
 } from "@/types";
 import type { GenerationRoute } from "@/utils/generation-mode";
 import type { GridCapability, GridGeneration } from "@/types/grid";
@@ -934,9 +936,15 @@ class API {
     });
   }
 
-  static async listFreeCreations(projectName: string, limit = 40): Promise<{ creations: FreeCreation[] }> {
+  static async listFreeCreations(
+    projectName: string,
+    limit = 60,
+    cursor?: string,
+  ): Promise<{ creations: FreeCreation[]; next_cursor?: string | null; total?: number }> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
     return this.request(
-      `/projects/${encodeURIComponent(projectName)}/creations?limit=${encodeURIComponent(String(limit))}`,
+      `/projects/${encodeURIComponent(projectName)}/creations?${params.toString()}`,
     );
   }
 
@@ -945,6 +953,7 @@ class API {
     payload: CreateFreeCreationRequest,
   ): Promise<{
     success: boolean;
+    request_id?: string;
     creation_id: string;
     task_id: string;
     creations?: Array<{ creation_id: string; task_id: string }>;
@@ -974,12 +983,67 @@ class API {
     outputType: "image" | "video";
     model?: string;
     referenceKind?: "none" | "image" | "video";
+    projectName?: string;
     signal?: AbortSignal;
   }): Promise<FreeCreationCapabilities> {
     const params = new URLSearchParams({ output_type: options.outputType });
     if (options.model) params.set("model", options.model);
     if (options.referenceKind) params.set("reference_kind", options.referenceKind);
+    if (options.projectName) params.set("project_name", options.projectName);
     return this.request(`/free-creation-capabilities?${params.toString()}`, { signal: options.signal });
+  }
+
+  static async getFreeCreationCanvas(projectName: string): Promise<{ canvas: FreeCreationCanvasState }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-canvas`);
+  }
+
+  static async saveFreeCreationCanvas(
+    projectName: string,
+    canvas: Omit<FreeCreationCanvasState, "revision" | "updated_at"> & { expected_revision?: number },
+  ): Promise<{ success: boolean; canvas: FreeCreationCanvasState }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-canvas`, {
+      method: "PUT",
+      body: JSON.stringify(canvas),
+    });
+  }
+
+  static async uploadFreeCreationReference(
+    projectName: string,
+    file: File,
+  ): Promise<{ success: boolean; reference: FreeCreationUpload; url: string }> {
+    return this.postFileUpload(
+      `/projects/${encodeURIComponent(projectName)}/free-creation-references`,
+      file,
+    );
+  }
+
+  static async listFreeCreationReferences(
+    projectName: string,
+  ): Promise<{ references: FreeCreationUpload[] }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-references`);
+  }
+
+  static async deleteFreeCreationReference(
+    projectName: string,
+    referenceId: string,
+  ): Promise<{ success: boolean }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-references/${encodeURIComponent(referenceId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  static async exportFreeCreations(
+    projectName: string,
+    payload: { scope: "selected" | "request" | "all"; creation_ids?: string[]; request_id?: string },
+  ): Promise<Blob> {
+    const url = `/projects/${encodeURIComponent(projectName)}/free-creation-export`;
+    const response = await fetch(`${API_BASE}${url}`, withAuth(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }));
+    await throwIfNotOk(response, `HTTP ${response.status}`);
+    return response.blob();
   }
 
   static async cancelFreeCreation(
