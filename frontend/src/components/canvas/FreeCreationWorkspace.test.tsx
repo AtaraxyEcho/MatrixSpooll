@@ -112,6 +112,51 @@ describe("FreeCreationWorkspace", () => {
     );
   });
 
+  it("renders referenced files as localized chips while preserving role values", async () => {
+    vi.mocked(API.listFreeCreationReferences).mockResolvedValue({
+      references: [{
+        reference_id: "ref-1",
+        type: "upload",
+        original_filename: "hero.png",
+        media_type: "image",
+        path: "references/ref-1.png",
+        size_bytes: 1024,
+        created_at: "2026-08-19T00:00:00Z",
+      }],
+    });
+    render(<FreeCreationWorkspace projectName="demo" />);
+
+    const addButtons = await screen.findAllByRole("button", { name: t("free_creation_add_reference") });
+    fireEvent.click(addButtons[0]!);
+
+    const roleSelect = await screen.findByRole("combobox", {
+      name: t("free_creation_reference_role_label", { name: "hero.png" }),
+    });
+    const create = vi.spyOn(API, "createFreeCreation").mockResolvedValue({
+      success: true,
+      creation_id: "c_0123456789abcdef0127",
+      task_id: "task-reference-role",
+    });
+    expect(screen.getByText(t("free_creation_reference_role_reference_image"))).toBeInTheDocument();
+    expect(roleSelect).toHaveValue("reference_image");
+
+    fireEvent.change(roleSelect, { target: { value: "first_frame" } });
+    expect(roleSelect).toHaveValue("first_frame");
+    expect(screen.getByText(t("free_creation_reference_role_first_frame"))).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText(t("free_creation_prompt")), {
+      target: { value: "use the hero image as the opening frame" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_submit") }));
+
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({
+        references: [{ type: "upload", reference_id: "ref-1", role: "first_frame" }],
+      }),
+    );
+  });
+
   it("routes edits of video creations through video capabilities and model selection", async () => {
     vi.mocked(API.listFreeCreations).mockResolvedValue({
       creations: [{

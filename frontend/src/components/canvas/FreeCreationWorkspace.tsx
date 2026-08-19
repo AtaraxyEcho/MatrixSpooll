@@ -63,6 +63,15 @@ const VIDEO_REFERENCE_ROLES: FreeCreationReferenceRole[] = [
   "prompt_context",
 ];
 
+const REFERENCE_ROLE_LABEL_KEYS: Record<FreeCreationReferenceRole, string> = {
+  first_frame: "free_creation_reference_role_first_frame",
+  last_frame: "free_creation_reference_role_last_frame",
+  reference_image: "free_creation_reference_role_reference_image",
+  reference_video: "free_creation_reference_role_reference_video",
+  reference_audio: "free_creation_reference_role_reference_audio",
+  prompt_context: "free_creation_reference_role_prompt_context",
+};
+
 const IMAGE_RESOLUTION_PIXELS: Record<string, number> = {
   "1.5k": 1536,
   "2k": 2048,
@@ -476,15 +485,29 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialOu
           </div>
         ) : null}
 
-        {references.length ? (
-          <div className="mb-2 flex max-h-16 flex-wrap gap-1.5 overflow-y-auto">
-            {references.map((reference) => (
-              <span key={claimKey(reference.claim)} className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-[var(--color-background)] px-2 py-1 text-[11px] text-[var(--color-text-2)]"><Paperclip className="h-3 w-3 shrink-0" aria-hidden /><span className="max-w-32 truncate">{reference.label}</span><select value={reference.claim.role ?? "reference_image"} onChange={(event) => setReferences((current) => current.map((item) => claimKey(item.claim) === claimKey(reference.claim) ? { ...item, claim: { ...item.claim, role: event.target.value as FreeCreationReferenceRole } } : item))} className="h-6 max-w-32 border border-[var(--color-hairline)] bg-[var(--color-surface-2)] px-1 text-[10px] text-[var(--color-text-2)]" aria-label={reference.label}>{VIDEO_REFERENCE_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}</select><button type="button" onClick={() => setReferences((current) => current.filter((item) => claimKey(item.claim) !== claimKey(reference.claim)))} className="focus-ring grid h-4 w-4 shrink-0 place-items-center rounded-full" aria-label={t("free_creation_remove_reference")}><X className="h-3 w-3" aria-hidden /></button></span>
-            ))}
-          </div>
-        ) : null}
-
         <div className="rounded-md border border-[var(--color-hairline)] bg-[var(--color-background)] transition-colors focus-within:border-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent-dim)]">
+          {references.length ? (
+            <div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto border-b border-[var(--color-hairline)] px-2 py-2">
+              {references.map((reference) => {
+                const role = reference.claim.role ?? "reference_image";
+                return (
+                  <span key={claimKey(reference.claim)} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-[var(--color-hairline)] bg-[var(--color-surface-2)] px-2 py-1 text-[11px] text-[var(--color-text-2)]">
+                    <Paperclip className="h-3 w-3 shrink-0 text-[var(--color-accent-2)]" aria-hidden />
+                    <span className="min-w-0 max-w-36 truncate">{reference.label}</span>
+                    <select
+                      value={role}
+                      onChange={(event) => setReferences((current) => current.map((item) => claimKey(item.claim) === claimKey(reference.claim) ? { ...item, claim: { ...item.claim, role: event.target.value as FreeCreationReferenceRole } } : item))}
+                      className="h-6 max-w-28 min-w-0 rounded-full border border-[var(--color-hairline)] bg-[var(--color-background)] px-1.5 text-[10px] text-[var(--color-text-2)]"
+                      aria-label={t("free_creation_reference_role_label", { name: reference.label })}
+                    >
+                      {VIDEO_REFERENCE_ROLES.map((optionRole) => <option key={optionRole} value={optionRole}>{t(REFERENCE_ROLE_LABEL_KEYS[optionRole])}</option>)}
+                    </select>
+                    <button type="button" onClick={() => setReferences((current) => current.filter((item) => claimKey(item.claim) !== claimKey(reference.claim)))} className="focus-ring grid h-4 w-4 shrink-0 place-items-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)]" aria-label={t("free_creation_remove_reference")}><X className="h-3 w-3" aria-hidden /></button>
+                  </span>
+                );
+              })}
+            </div>
+          ) : null}
           <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void handleSubmit(); } }} rows={2} maxLength={10000} placeholder={t("free_creation_prompt")} className="min-h-[68px] w-full resize-none bg-transparent px-3 py-2.5 text-sm leading-5 outline-none placeholder:text-[var(--color-text-muted)]" disabled={readOnly || submitting} />
           <div className="flex items-center gap-1.5 border-t border-[var(--color-hairline)] px-2 py-2">
             <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,audio/wav,audio/mpeg,text/plain,text/markdown,application/rtf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,application/epub+zip,.txt,.text,.md,.markdown,.rtf,.doc,.docx,.pdf,.epub" className="sr-only" onChange={(event) => void uploadReferences(event.target.files)} />
