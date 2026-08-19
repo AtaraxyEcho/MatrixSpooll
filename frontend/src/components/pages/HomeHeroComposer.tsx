@@ -108,6 +108,7 @@ interface HomeSelectProps<T extends HomeSelectValue> {
   onChange: (value: T) => void;
   align?: "left" | "right";
   className?: string;
+  hint?: string;
 }
 
 export function HomeSelect<T extends HomeSelectValue>({
@@ -118,6 +119,7 @@ export function HomeSelect<T extends HomeSelectValue>({
   onChange,
   align = "left",
   className = "",
+  hint,
 }: HomeSelectProps<T>) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -127,6 +129,7 @@ export function HomeSelect<T extends HomeSelectValue>({
   const typeaheadRef = useRef("");
   const typeaheadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listboxId = useId();
+  const hintId = useId();
   const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));
   const selectedOption = options[selectedIndex] ?? options[0];
 
@@ -212,6 +215,7 @@ export function HomeSelect<T extends HomeSelectValue>({
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
         aria-haspopup="listbox"
+        aria-describedby={hint ? hintId : undefined}
         onClick={() => setOpen((current) => !current)}
         onKeyDown={(event) => {
           if (event.key.length === 1 && event.key !== " " && !event.altKey && !event.ctrlKey && !event.metaKey) {
@@ -280,6 +284,7 @@ export function HomeSelect<T extends HomeSelectValue>({
           })}
         </div>
       ) : null}
+      {hint ? <span id={hintId} className="home-param-hint">{hint}</span> : null}
     </div>
   );
 }
@@ -950,6 +955,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
             value={selectedModel}
             icon={Settings2}
             className="home-model-control"
+            hint={t("home_model_keyboard_hint")}
             options={[
               { value: "auto", label: t("home_model_auto") },
               ...models.map((item) => ({ value: item, label: modelLabel(item, t("home_model_auto")) })),

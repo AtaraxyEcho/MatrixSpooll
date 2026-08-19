@@ -98,6 +98,7 @@ export default {
   'home_video': '视频生成',
   'home_model': '模型',
   'home_model_auto': '自动选择',
+  'home_model_keyboard_hint': '按字母键可快速定位模型',
   'home_ratio': '比例',
   'home_resolution': '分辨率',
   'home_size': '尺寸',

@@ -98,6 +98,7 @@ export default {
   'home_video': 'Tạo video',
   'home_model': 'Mô hình',
   'home_model_auto': 'Tự động',
+  'home_model_keyboard_hint': 'Nhập chữ cái để chuyển nhanh đến mô hình',
   'home_ratio': 'Tỷ lệ',
   'home_resolution': 'Độ phân giải',
   'home_size': 'Kích thước',

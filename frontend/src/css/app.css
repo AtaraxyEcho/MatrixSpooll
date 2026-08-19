@@ -308,6 +308,17 @@ body {
     padding: 6px 8px;
 }
 
+.home-param-hint {
+    display: block;
+    margin-top: 4px;
+    overflow: hidden;
+    color: var(--color-text-4);
+    font-size: 9px;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .home-generation-parameters {
     width: max-content;
     max-width: 100%;

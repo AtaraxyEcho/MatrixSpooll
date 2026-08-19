@@ -97,6 +97,7 @@ export default {
   'home_video': 'Video',
   'home_model': 'Model',
   'home_model_auto': 'Automatic',
+  'home_model_keyboard_hint': 'Type a letter to jump to a model',
   'home_ratio': 'Ratio',
   'home_resolution': 'Resolution',
   'home_size': 'Size',
