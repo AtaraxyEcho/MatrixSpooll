@@ -15,6 +15,13 @@ vi.mock("@/components/layout", () => ({
   StudioLayout: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="studio-layout">{children}</div>
   ),
+  FreeCreationLayout: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="free-creation-layout">{children}</div>
+  ),
+}));
+
+vi.mock("@/components/canvas/FreeCreationWorkspace", () => ({
+  FreeCreationWorkspace: () => <div data-testid="free-creation-canvas">Free Creation Canvas</div>,
 }));
 
 vi.mock("@/components/canvas/StudioCanvasRouter", () => ({
@@ -143,6 +150,28 @@ describe("AppRoutes", () => {
     view.unmount();
     expect(useProjectsStore.getState().currentProjectName).toBeNull();
     expect(useProjectsStore.getState().currentProjectData).toBeNull();
+  });
+
+  it("uses the canvas-only shell for free creation projects", async () => {
+    vi.spyOn(API, "getProject").mockResolvedValue({
+      project: {
+        title: "Free Canvas",
+        content_mode: "free",
+        style: "",
+        episodes: [],
+        characters: {},
+        scenes: {},
+        props: {},
+      },
+      scripts: {},
+    });
+
+    renderAt("/app/projects/free-canvas");
+
+    expect(await screen.findByTestId("free-creation-layout")).toBeInTheDocument();
+    expect(screen.getByTestId("free-creation-canvas")).toBeInTheDocument();
+    expect(screen.queryByTestId("studio-layout")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("studio-canvas-router")).not.toBeInTheDocument();
   });
 
   it("切换界面语言不重跑真实项目的加载", async () => {

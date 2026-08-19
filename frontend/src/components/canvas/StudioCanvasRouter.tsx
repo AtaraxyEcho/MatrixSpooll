@@ -22,7 +22,7 @@ import { useActiveResourceIds } from "@/stores/tasks-store";
 import { useCurrentEpisode, EPISODE_ROUTE_PATH } from "@/hooks/useCurrentEpisode";
 import { TimelineCanvas } from "./timeline/TimelineCanvas";
 import { OverviewCanvas } from "./OverviewCanvas";
-import { FreeCreationCanvas } from "./FreeCreationCanvas";
+import { FreeCreationWorkspace } from "./FreeCreationWorkspace";
 import { SourceFileViewer } from "./SourceFileViewer";
 import { SourceFilesPage } from "./SourceFilesPage";
 import { CharactersPage } from "./lorebook/CharactersPage";
@@ -635,7 +635,7 @@ export function StudioCanvasRouter() {
   }
 
   if (currentProjectData?.content_mode === "free") {
-    return <FreeCreationCanvas projectName={currentProjectName} readOnly={demoMode} />;
+    return <FreeCreationWorkspace projectName={currentProjectName} readOnly={demoMode} />;
   }
 
   return (
