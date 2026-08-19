@@ -66,6 +66,7 @@ import type {
   ReferenceStep1Draft,
   VideoCapabilities,
   FreeCreation,
+  FreeCreationRequestSummary,
   CreateFreeCreationRequest,
   FreeCreationCapabilities,
   FreeCreationCanvasState,
@@ -947,6 +948,18 @@ class API {
     if (cursor) params.set("cursor", cursor);
     return this.request(
       `/projects/${encodeURIComponent(projectName)}/creations?${params.toString()}`,
+    );
+  }
+
+  static async listFreeCreationRequests(
+    projectName: string,
+    limit = 40,
+    cursor?: string,
+  ): Promise<{ requests: FreeCreationRequestSummary[]; next_cursor?: string | null; total?: number }> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/free-creation-requests?${params.toString()}`,
     );
   }
 

@@ -16,6 +16,7 @@ describe("FreeCreationWorkspace", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(API, "listFreeCreations").mockResolvedValue({ creations: [] });
+    vi.spyOn(API, "listFreeCreationRequests").mockResolvedValue({ requests: [] });
     vi.spyOn(API, "getFreeCreationCanvas").mockResolvedValue({
       canvas: {
         revision: 0,

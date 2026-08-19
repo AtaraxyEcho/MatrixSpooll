@@ -40,6 +40,7 @@ from server.services.free_creation_workspace import (
     create_storyboard_plan,
     delete_reference_upload,
     detach_reference_upload,
+    list_creation_requests,
     list_reference_uploads,
     load_canvas_state,
     load_storyboard_plan,
@@ -235,6 +236,74 @@ class StoryboardShotUpdate(BaseModel):
 class StoryboardPlanUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     shots: list[StoryboardShotUpdate] = Field(min_length=1, max_length=MAX_STORYBOARD_SHOTS)
+
+
+def _free_creation_request_status(creations: Sequence[dict[str, Any]]) -> str:
+    statuses = [str(item.get("status") or "queued") for item in creations]
+    if not statuses:
+        return "queued"
+    if "running" in statuses:
+        return "running"
+    if "cancelling" in statuses:
+        return "cancelling"
+    if "queued" in statuses:
+        return "queued"
+    if all(status == "succeeded" for status in statuses):
+        return "succeeded"
+    if all(status == "failed" for status in statuses):
+        return "failed"
+    if all(status == "cancelled" for status in statuses):
+        return "cancelled"
+    return "partial"
+
+
+def _free_creation_request_summary(
+    request: dict[str, Any],
+    creations_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    creation_ids = [item for item in request.get("creation_ids", []) if isinstance(item, str)]
+    creations = [creations_by_id[item] for item in creation_ids if item in creations_by_id]
+    representative = creations[0] if creations else {}
+    reference_claims = request.get("reference_claims")
+    if not isinstance(reference_claims, list):
+        reference_claims = representative.get("reference_claims")
+    if not isinstance(reference_claims, list):
+        reference_claims = []
+    status_counts: dict[str, int] = {}
+    for creation in creations:
+        status = str(creation.get("status") or "queued")
+        status_counts[status] = status_counts.get(status, 0) + 1
+    timestamps = [
+        value
+        for value in [request.get("created_at"), *(item.get("updated_at") for item in creations)]
+        if isinstance(value, str)
+    ]
+
+    def value(name: str, default: Any = None) -> Any:
+        request_value = request.get(name)
+        return request_value if request_value is not None else representative.get(name, default)
+
+    return {
+        "request_id": request.get("request_id"),
+        "prompt": value("prompt", ""),
+        "output_type": value("output_type", "video"),
+        "media_type": value("media_type", "video"),
+        "effective_mode": value("effective_mode"),
+        "model": value("model"),
+        "reference_claims": reference_claims,
+        "reference_count": len(reference_claims),
+        "aspect_ratio": value("aspect_ratio"),
+        "resolution": value("resolution"),
+        "size": value("size"),
+        "duration_seconds": value("duration_seconds"),
+        "quantity": value("quantity", len(creation_ids)),
+        "creation_ids": creation_ids,
+        "result_count": status_counts.get("succeeded", 0),
+        "status": _free_creation_request_status(creations),
+        "status_counts": status_counts,
+        "created_at": request.get("created_at"),
+        "updated_at": max(timestamps) if timestamps else None,
+    }
 
 
 def _load_free_project(project_name: str) -> tuple[dict, Path]:
@@ -852,7 +921,14 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
                 "media_type": media_type,
                 "prompt": execution_req.prompt,
                 "reference_claims": reference_claims,
+                "effective_mode": effective_mode,
+                "model": request_payload.get("model"),
+                "aspect_ratio": execution_req.aspect_ratio or project.get("aspect_ratio") or "9:16",
+                "resolution": execution_req.resolution,
+                "size": execution_req.size,
+                "quantity": execution_req.quantity,
                 "duration_seconds": request_payload.get("duration_seconds"),
+                "parent_creation_id": execution_req.parent_creation_id,
                 "storyboard_plan_id": execution_req.storyboard_plan_id,
                 "storyboard_shot_id": execution_req.storyboard_shot_id,
                 "sequence_index": execution_req.sequence_index,
@@ -926,6 +1002,25 @@ async def list_free_creations(
     page = creations[start : start + limit]
     next_cursor = page[-1].get("creation_id") if start + limit < len(creations) and page else None
     return {"creations": page, "next_cursor": next_cursor, "total": len(creations)}
+
+
+@router.get("/projects/{project_name}/free-creation-requests")
+async def list_free_creation_requests(
+    project_name: str,
+    limit: int = Query(default=40, ge=1, le=100),
+    cursor: str | None = Query(default=None, pattern=r"^q_[a-f0-9]{20}$"),
+):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    requests = await asyncio.to_thread(list_creation_requests, project_path, None)
+    creations = await asyncio.to_thread(list_creation_metadata, project_path, None)
+    creations_by_id = {str(item["creation_id"]): item for item in creations if isinstance(item.get("creation_id"), str)}
+    summaries = [_free_creation_request_summary(item, creations_by_id) for item in requests]
+    start = 0
+    if cursor:
+        start = next((index + 1 for index, item in enumerate(summaries) if item.get("request_id") == cursor), 0)
+    page = summaries[start : start + limit]
+    next_cursor = page[-1].get("request_id") if start + limit < len(summaries) and page else None
+    return {"requests": page, "next_cursor": next_cursor, "total": len(summaries)}
 
 
 @router.post("/projects/{project_name}/free-creation-storyboards/plan")

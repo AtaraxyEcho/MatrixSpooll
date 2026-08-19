@@ -67,6 +67,30 @@ export interface FreeCreation {
   updated_at?: string;
 }
 
+export type FreeCreationRequestStatus = FreeCreation["status"] | "partial";
+
+export interface FreeCreationRequestSummary {
+  request_id: string;
+  prompt: string;
+  output_type: FreeCreationOutputType;
+  media_type: FreeCreationMediaType;
+  effective_mode?: string | null;
+  model?: string | null;
+  reference_claims: FreeCreationReferenceClaim[];
+  reference_count: number;
+  aspect_ratio?: string | null;
+  resolution?: string | null;
+  size?: string | null;
+  duration_seconds?: number | null;
+  quantity: number;
+  creation_ids: string[];
+  result_count: number;
+  status: FreeCreationRequestStatus;
+  status_counts: Partial<Record<FreeCreation["status"], number>>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface FreeCreationCapabilities {
   output_type: "image" | "video";
   model: string;

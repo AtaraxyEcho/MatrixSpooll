@@ -29,6 +29,7 @@ import type {
   FreeCreationCapabilities,
   FreeCreationMediaType,
   FreeCreationReferenceClaim,
+  FreeCreationRequestSummary,
   FreeCreationUpload,
 } from "@/types";
 import { freeCreationUploadRole } from "@/types";
@@ -167,6 +168,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
   const [duration, setDuration] = useState(4);
   const [parentId, setParentId] = useState("");
   const [creations, setCreations] = useState<FreeCreation[]>([]);
+  const [requests, setRequests] = useState<FreeCreationRequestSummary[]>([]);
   const [totalCreations, setTotalCreations] = useState(0);
   const [capabilities, setCapabilities] = useState<FreeCreationCapabilities | null>(null);
   const [capabilityError, setCapabilityError] = useState<string | null>(null);
@@ -285,6 +287,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
   const loadCreations = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
     try {
+      const requestsPromise = API.listFreeCreationRequests(projectName, 40);
       const loaded: FreeCreation[] = [];
       const seen = new Set<string>();
       let cursor: string | undefined;
@@ -297,8 +300,10 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
         seen.add(response.next_cursor);
         cursor = response.next_cursor;
       } while (loaded.length < total && loaded.length < 500);
+      const requestResponse = await requestsPromise;
       if (loadSequenceRef.current !== sequence) return;
       setCreations(loaded);
+      setRequests(requestResponse.requests);
       setTotalCreations(total);
       setError(null);
     } catch (loadError) {
@@ -642,7 +647,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
           />
         </section>
       ) : (
-        <FreeCreationSessionSummary creations={creations} />
+        <FreeCreationSessionSummary requests={requests} />
       )}
       <div className="absolute inset-0 hidden md:block">
         <FreeCreationInfiniteCanvas
