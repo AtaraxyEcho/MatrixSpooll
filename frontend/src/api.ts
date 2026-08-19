@@ -67,6 +67,7 @@ import type {
   VideoCapabilities,
   FreeCreation,
   CreateFreeCreationRequest,
+  FreeCreationCapabilities,
 } from "@/types";
 import type { GenerationRoute } from "@/utils/generation-mode";
 import type { GridCapability, GridGeneration } from "@/types/grid";
@@ -952,6 +953,33 @@ class API {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  }
+
+  static async createFreeProject(
+    payload: { title: string; creation: CreateFreeCreationRequest },
+  ): Promise<{
+    success: boolean;
+    name: string;
+    creation_id: string;
+    task_id: string;
+    creations?: Array<{ creation_id: string; task_id: string }>;
+  }> {
+    return this.request("/free-projects", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  static async getFreeCreationCapabilities(options: {
+    outputType: "image" | "video";
+    model?: string;
+    referenceKind?: "none" | "image" | "video";
+    signal?: AbortSignal;
+  }): Promise<FreeCreationCapabilities> {
+    const params = new URLSearchParams({ output_type: options.outputType });
+    if (options.model) params.set("model", options.model);
+    if (options.referenceKind) params.set("reference_kind", options.referenceKind);
+    return this.request(`/free-creation-capabilities?${params.toString()}`, { signal: options.signal });
   }
 
   static async cancelFreeCreation(

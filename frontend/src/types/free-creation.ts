@@ -1,9 +1,11 @@
 export type FreeCreationOutputType = "image" | "video" | "edit";
+export type FreeCreationMediaType = "image" | "video";
 
 export interface FreeCreation {
   creation_id: string;
   status: "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
   output_type: FreeCreationOutputType;
+  media_type?: FreeCreationMediaType;
   prompt?: string;
   prompt_mode?: "original";
   references?: string[];
@@ -20,6 +22,17 @@ export interface FreeCreation {
   error_code?: string;
   error?: string;
   updated_at?: string;
+}
+
+export interface FreeCreationCapabilities {
+  output_type: "image" | "video";
+  model: string;
+  ratios: string[];
+  resolutions: string[];
+  durations: number[];
+  max_reference_images: number | null;
+  max_reference_videos: number | null;
+  max_reference_media_count: number | null;
 }
 
 export interface CreateFreeCreationRequest {

@@ -2,6 +2,10 @@
 
 This backlog records UI work intentionally left outside the top-bar pass.
 
+## Free creation workspace
+
+The complete proposal for the free creation infinite-canvas workspace is documented in [2026-08-19-free-creation-infinite-canvas.md](2026-08-19-free-creation-infinite-canvas.md). The proposal is intentionally scoped to `content_mode=free`; it must not alter the existing drama, narration, or ad workspaces.
+
 ## Deferred
 
 - Add an account menu and explicit log-out action to every authenticated surface.

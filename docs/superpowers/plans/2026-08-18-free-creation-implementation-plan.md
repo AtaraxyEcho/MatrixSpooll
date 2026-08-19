@@ -6,6 +6,8 @@
 
 **Design source:** [`docs/adr/0064-free-creation-project-mode-and-model-orchestration.md`](../../adr/0064-free-creation-project-mode-and-model-orchestration.md)
 
+**UI workspace source:** [`自由创作无限画布工作区方案`](../../proposals/2026-08-19-free-creation-infinite-canvas.md)。自由项目的前端工作区必须按该方案与固定工作流项目分流；实现计划中的 `FreeCreationCanvas`、会话和首页交接任务不得重新引入标准侧边栏或右侧固定助手面板。
+
 **Model rule:** 文本模型负责聊天理解、意图分流和工具调用；图片模型负责最终图片或图片编辑；视频模型负责最终视频。直接文生视频不经过图片模型，直连生成入口可以跳过文本模型。
 
 ## Branding and icon requirements

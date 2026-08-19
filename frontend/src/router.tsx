@@ -4,7 +4,8 @@ import { useEffect, useRef } from "react";
 import { Route, Switch, Redirect, useParams } from "wouter";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
-import { StudioLayout } from "@/components/layout";
+import { FreeCreationLayout, StudioLayout } from "@/components/layout";
+import { FreeCreationWorkspace } from "@/components/canvas/FreeCreationWorkspace";
 import { StudioCanvasRouter } from "@/components/canvas/StudioCanvasRouter";
 import { ProjectsPage } from "@/components/pages/ProjectsPage";
 import { SystemConfigPage } from "@/components/pages/SystemConfigPage";
@@ -111,7 +112,13 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 function StudioWorkspace() {
   const params = useParams<{ projectName: string }>();
   const projectName = params.projectName ?? null;
-  const { setCurrentProject, setProjectDetailLoading } = useProjectsStore();
+  const {
+    currentProjectName,
+    currentProjectData,
+    projectDetailLoading,
+    setCurrentProject,
+    setProjectDetailLoading,
+  } = useProjectsStore();
   const { t } = useTranslation("onboarding");
   // 把 t 通过 ref 暴露给首屏加载的 onError 回调，避免切语言触发 t 重建 → effect
   // 依赖跟着重建 → 真实项目整条加载重跑（下方 effect 依赖里刻意不含 t，理由见下）。
@@ -175,6 +182,19 @@ function StudioWorkspace() {
     if (!projectName || !isDemoProject(projectName)) return;
     setCurrentProject(projectName, buildDemoProjectData(t), buildDemoScripts(t));
   }, [projectName, setCurrentProject, t]);
+
+  if (
+    currentProjectName === projectName &&
+    !projectDetailLoading &&
+    currentProjectData?.content_mode === "free" &&
+    projectName
+  ) {
+    return (
+      <FreeCreationLayout>
+        <FreeCreationWorkspace projectName={projectName} readOnly={isDemoProject(projectName)} />
+      </FreeCreationLayout>
+    );
+  }
 
   return (
     <StudioLayout>
