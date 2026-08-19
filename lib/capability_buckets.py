@@ -47,11 +47,20 @@ def _image_buckets_from_capabilities(has_t2i: bool, has_i2i: bool) -> frozenset[
     return frozenset(buckets)
 
 
-def _video_buckets(has_i2v: bool, max_reference_images: int) -> frozenset[CapabilityBucket]:
+def _video_buckets(
+    has_i2v: bool,
+    max_reference_images: int,
+    max_reference_videos: int = 0,
+) -> frozenset[CapabilityBucket]:
     return frozenset(
         cap
         for cap in ("i2v", "r2v")
-        if video_capability_satisfied(capability=cap, first_frame=has_i2v, max_reference_images=max_reference_images)
+        if video_capability_satisfied(
+            capability=cap,
+            first_frame=has_i2v,
+            max_reference_images=max_reference_images,
+            max_reference_videos=max_reference_videos,
+        )
     )
 
 
@@ -70,7 +79,7 @@ def builtin_model_buckets(provider_id: str, model_id: str, model_info: ModelInfo
         caps = builtin_video_capabilities_for_model(spec.registry_backend, model_id)
     except ValueError:
         return frozenset()
-    return _video_buckets(caps.first_frame, caps.max_reference_images)
+    return _video_buckets(caps.first_frame, caps.max_reference_images, caps.max_reference_videos)
 
 
 def custom_model_buckets(
@@ -98,4 +107,8 @@ def custom_model_buckets(
         video_caps = synthesize_video_capabilities(endpoint=endpoint, model_id=model_id, overrides=capability_overrides)
     except ValueError:
         return frozenset()
-    return _video_buckets(video_caps.first_frame, video_caps.max_reference_images)
+    return _video_buckets(
+        video_caps.first_frame,
+        video_caps.max_reference_images,
+        video_caps.max_reference_videos,
+    )

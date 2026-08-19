@@ -31,11 +31,15 @@ const IMAGE_RESOLUTION_PIXELS: Record<string, number> = {
   "4k": 4096,
 };
 
-const VIDEO_DURATIONS = [4, 5, 6, 8, 10, 12, 15] as const;
 const IMAGE_RESOLUTIONS = ["1.5k", "2k", "4k"] as const;
-const VIDEO_RESOLUTIONS = ["480p", "720p", "1080p", "4k"] as const;
 const IMAGE_REFERENCE_SUFFIXES = [".png", ".jpg", ".jpeg", ".webp"] as const;
 const VIDEO_REFERENCE_SUFFIXES = [".mp4", ".mov"] as const;
+
+interface CapabilityResult {
+  key: string;
+  value: FreeCreationCapabilities | null;
+  error: string | null;
+}
 
 export function FreeCreationWorkspace({ projectName, readOnly = false }: FreeCreationWorkspaceProps) {
   const { t } = useTranslation("dashboard");
@@ -50,7 +54,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false }: FreeCre
   const [duration, setDuration] = useState("4");
   const [parentId, setParentId] = useState("");
   const [creations, setCreations] = useState<FreeCreation[]>([]);
-  const [capabilities, setCapabilities] = useState<FreeCreationCapabilities | null>(null);
+  const [capabilityResult, setCapabilityResult] = useState<CapabilityResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +88,9 @@ export function FreeCreationWorkspace({ projectName, readOnly = false }: FreeCre
     if (paths.some((item) => IMAGE_REFERENCE_SUFFIXES.some((suffix) => item.endsWith(suffix)))) return "image";
     return "none";
   }, [references, selectedParent, usesVideo]);
+  const capabilityRequestKey = `${usesVideo ? "video" : "image"}:${selectedModel}:${referenceKind}`;
+  const capabilities = capabilityResult?.key === capabilityRequestKey ? capabilityResult.value : null;
+  const capabilityError = capabilityResult?.key === capabilityRequestKey ? capabilityResult.error : null;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -93,34 +100,45 @@ export function FreeCreationWorkspace({ projectName, readOnly = false }: FreeCre
       referenceKind,
       signal: controller.signal,
     })
-      .then(setCapabilities)
-      .catch(() => {
-        // The submit preflight remains authoritative if capabilities cannot be loaded.
+      .then((next) => {
+        setCapabilityResult({ key: capabilityRequestKey, value: next, error: null });
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setCapabilityResult({
+            key: capabilityRequestKey,
+            value: null,
+            error: usesVideo ? errMsg(err) : null,
+          });
+        }
       });
     return () => controller.abort();
-  }, [referenceKind, selectedModel, usesVideo]);
+  }, [capabilityRequestKey, referenceKind, selectedModel, usesVideo]);
 
   const ratioOptions = useMemo<string[]>(
-    () => capabilities?.ratios.length
+    () => capabilities?.output_type === (usesVideo ? "video" : "image") && capabilities.ratios.length
       ? capabilities.ratios
-      : ASPECT_RATIO_OPTIONS.map(({ value }) => value),
-    [capabilities],
+      : usesVideo
+        ? []
+        : ASPECT_RATIO_OPTIONS.map(({ value }) => value),
+    [capabilities, usesVideo],
   );
   const resolutionOptions = useMemo<string[]>(
-    () => capabilities?.resolutions.length
+    () => capabilities?.output_type === (usesVideo ? "video" : "image") && capabilities.resolutions.length
       ? capabilities.resolutions
-      : [...(usesVideo ? VIDEO_RESOLUTIONS : IMAGE_RESOLUTIONS)],
+      : usesVideo
+        ? []
+        : [...IMAGE_RESOLUTIONS],
     [capabilities, usesVideo],
   );
   const durationOptions = useMemo<readonly number[]>(
     () => capabilities?.output_type === "video" && capabilities.durations.length
       ? capabilities.durations
-      : VIDEO_DURATIONS,
+      : [],
     [capabilities],
   );
   const selectableDurationOptions = useMemo<readonly number[]>(() => {
-    const supported = durationOptions.filter((value) => value >= 4 && value <= 15);
-    return supported.length ? supported : VIDEO_DURATIONS;
+    return durationOptions.filter((value) => Number.isInteger(value) && value > 0);
   }, [durationOptions]);
   const effectiveAspectRatio = ratioOptions.includes(aspectRatio) ? aspectRatio : ratioOptions[0] ?? "9:16";
   const selectedResolution = resolutionOptions.includes(resolution) ? resolution : "";
@@ -132,6 +150,11 @@ export function FreeCreationWorkspace({ projectName, readOnly = false }: FreeCre
     ),
     selectableDurationOptions[0] ?? 4,
   );
+  const minimumDuration = selectableDurationOptions[0] ?? 1;
+  const maximumDuration = selectableDurationOptions[selectableDurationOptions.length - 1] ?? minimumDuration;
+  const durationProgress = ((safeDuration - minimumDuration) / Math.max(1, maximumDuration - minimumDuration)) * 100;
+  const videoCapabilitiesReady = !usesVideo
+    || (capabilities?.output_type === "video" && ratioOptions.length > 0 && selectableDurationOptions.length > 0);
 
   const loadCreations = useCallback(async () => {
     try {
@@ -195,7 +218,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false }: FreeCre
 
   const handleSubmit = async () => {
     const cleanPrompt = prompt.trim();
-    if (!cleanPrompt || readOnly) return;
+    if (!cleanPrompt || readOnly || !videoCapabilitiesReady) return;
     setSubmitting(true);
     setError(null);
     const payload: CreateFreeCreationRequest = {
@@ -344,35 +367,34 @@ export function FreeCreationWorkspace({ projectName, readOnly = false }: FreeCre
               </span>
               <input
                 type="range"
-                min={0}
-                max={15}
+                min={minimumDuration}
+                max={maximumDuration}
                 step={1}
                 value={safeDuration}
                 onChange={(event) => {
-                  const requested = Math.max(4, event.currentTarget.valueAsNumber);
+                  const requested = event.currentTarget.valueAsNumber;
                   const next = selectableDurationOptions.reduce(
                     (closest, candidate) => (
                       Math.abs(candidate - requested) < Math.abs(closest - requested)
                         ? candidate
                         : closest
                     ),
-                    selectableDurationOptions[0] ?? 4,
+                    minimumDuration,
                   );
                   setDuration(String(next));
                 }}
                 className="home-duration-slider mt-1 h-2 w-full accent-[var(--color-accent)]"
                 disabled={readOnly || submitting}
                 aria-label={t("free_creation_duration")}
-                aria-valuemin={4}
-                aria-valuemax={15}
+                aria-valuemin={minimumDuration}
+                aria-valuemax={maximumDuration}
                 style={{
-                  background: `linear-gradient(90deg, oklch(0.34 0.006 265) 0 26.67%, var(--color-accent) 26.67% ${(safeDuration / 15) * 100}%, oklch(0.27 0.012 265) ${(safeDuration / 15) * 100}% 100%)`,
+                  background: `linear-gradient(90deg, var(--color-accent) 0 ${durationProgress}%, oklch(0.27 0.012 265) ${durationProgress}% 100%)`,
                 }}
               />
               <span className="mt-1 flex justify-between text-[9px] text-[var(--color-text-muted)]" aria-hidden="true">
-                <span>0s</span>
-                <span>4s</span>
-                <span>15s</span>
+                <span>{minimumDuration}s</span>
+                <span>{maximumDuration}s</span>
               </span>
             </label>
           ) : (
@@ -424,12 +446,12 @@ export function FreeCreationWorkspace({ projectName, readOnly = false }: FreeCre
           </label>
           <div className="flex items-center gap-3 sm:pl-3">
             <p className="min-h-5 max-w-[280px] text-[11px] text-[var(--color-danger)]" role="alert">
-              {error}
+              {error ?? capabilityError}
             </p>
             <button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={readOnly || submitting || !prompt.trim() || (outputType === "edit" && !parentId)}
+              disabled={readOnly || submitting || !prompt.trim() || !videoCapabilitiesReady || (outputType === "edit" && !parentId)}
               className="inline-flex min-h-9 shrink-0 items-center gap-1.5 bg-[var(--color-accent)] px-3 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}

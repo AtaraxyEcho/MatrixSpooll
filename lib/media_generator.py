@@ -784,6 +784,7 @@ class MediaGenerator:
         start_image: str | Path | Image.Image | None = None,
         end_image: Path | None = None,
         reference_images: list[Path] | None = None,
+        reference_videos: list[Path] | None = None,
         reference_audio_files: list[Path] | None = None,
         reference_audio_targets: list[int] | None = None,
         aspect_ratio: str = "9:16",
@@ -821,6 +822,7 @@ class MediaGenerator:
                 start_image=start_image,
                 end_image=end_image,
                 reference_images=reference_images,
+                reference_videos=reference_videos,
                 reference_audio_files=reference_audio_files,
                 reference_audio_targets=reference_audio_targets,
                 aspect_ratio=aspect_ratio,
@@ -838,6 +840,7 @@ class MediaGenerator:
         start_image: str | Path | Image.Image | None = None,
         end_image: Path | None = None,
         reference_images: list[Path] | None = None,
+        reference_videos: list[Path] | None = None,
         reference_audio_files: list[Path] | None = None,
         reference_audio_targets: list[int] | None = None,
         aspect_ratio: str = "9:16",
@@ -946,6 +949,7 @@ class MediaGenerator:
             prompt=prompt,
             end_image=end_image,
             reference_images=reference_images,
+            reference_videos=reference_videos,
             reference_audio_files=reference_audio_files,
             reference_audio_total_seconds=reference_audio_total_seconds,
         )
@@ -1043,6 +1047,7 @@ class MediaGenerator:
                         start_image=start_arg,
                         end_image=end_arg,
                         reference_images=ref_arg,
+                        reference_videos=reference_videos,
                         # 音频不进压缩器（specs 只收图片），故直接透传原列表：顺序即 prompt
                         # 「音频N」的指认顺序，任何重排都会把 A 角色的音色安到 B 角色头上。
                         reference_audio_files=reference_audio_files,

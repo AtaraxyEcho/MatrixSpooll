@@ -372,4 +372,11 @@ MESSAGES = {
     "free_creation_media_not_found": "自由创作「{id}」的媒体文件不存在",
     "free_creation_cancel_not_ready": "只有排队中或生成中的自由创作可以取消",
     "free_creation_retry_not_ready": "只有失败或已取消的自由创作可以重试",
+    "video_reference_videos_unsupported": "模型 {model} 不支持参考视频；请移除参考视频或改用兼容模型",
+    "video_reference_videos_exceeded": "模型 {model} 最多支持 {limit} 个参考视频，收到 {count} 个；请减少参考视频数量",
+    "video_reference_media_exceeded": "模型 {model} 最多支持 {limit} 个参考图和视频，收到 {count} 个；请减少参考素材",
+    "video_reference_media_required": "模型 {model} 至少需要一个参考图或参考视频",
+    "video_reference_videos_unreadable": "模型 {model} 有参考视频缺失或无法读取，已中止生成：{names}",
+    "free_creation_aspect_ratio_not_supported": "模型 {model} 不支持 {ratio} 画面比例；请选择：{supported}",
+    "free_creation_aspect_ratio_capabilities_missing": "模型 {model} 未声明支持的画面比例，无法安全提交自由创作",
 }

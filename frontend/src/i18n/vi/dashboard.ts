@@ -34,7 +34,7 @@ export default {
   'free_creation_prompt': 'Mô tả sáng tạo',
   'free_creation_image': 'Hình ảnh',
   'free_creation_video': 'Video',
-  'free_creation_edit': 'Chỉnh sửa ảnh',
+  'free_creation_edit': 'Chỉnh sửa',
   'free_creation_reference_paths': 'Đường dẫn tham chiếu (mỗi dòng một đường dẫn)',
   'free_creation_aspect_ratio': 'Tỷ lệ khung hình',
   'free_creation_model': 'Mô hình',

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 _VIDEO_EXECUTION_IDENTITY_KEYS = frozenset({"video_provider_i2v", "video_provider_r2v"})
 _REFERENCE_VIDEO_ENQUEUE_PAYLOAD_KEYS = frozenset({"script_file", "reference_request_options"})
-_FREE_VIDEO_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+_FREE_VIDEO_REFERENCE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov"})
 _NARRATION_REQUEST_KEY_BY_TASK_TYPE = {
     "video": "narration_delivery_options",
     "reference_video": "reference_request_options",
@@ -118,7 +118,7 @@ async def video_bucket_for_queued_task(
     """
     from lib.config.resolver import VIDEO_BUCKET_BY_TASK_TYPE
 
-    if task_type == "free_video":
+    if task_type == "free_video" or (task_type == "free_edit" and (payload or {}).get("media_type") == "video"):
         return free_video_capability(payload)
     if task_type != "reference_video":
         return VIDEO_BUCKET_BY_TASK_TYPE.get(task_type)
@@ -133,11 +133,11 @@ async def video_bucket_for_queued_task(
 
 
 def free_video_capability(payload: dict[str, Any] | None) -> VideoCapability | None:
-    """Choose the free-video bucket from its image references without resolving project state."""
+    """Choose the free-video bucket from its image or video references."""
     references = (payload or {}).get("references")
     if not isinstance(references, list):
         return None
-    return "r2v" if any(Path(item).suffix.lower() in _FREE_VIDEO_IMAGE_SUFFIXES for item in references) else None
+    return "r2v" if any(Path(item).suffix.lower() in _FREE_VIDEO_REFERENCE_SUFFIXES for item in references) else None
 
 
 async def reference_projection_for_queued_task(
@@ -217,6 +217,7 @@ async def resolve_video_execution_for_queued_task(
     execution_payload = (
         without_video_execution_identity(payload)
         if task_type in ("video", "reference_video", "free_video")
+        or (task_type == "free_edit" and (payload or {}).get("media_type") == "video")
         else payload
     )
     resolved = await resolver.resolve_video_backend(project, execution_payload or {}, capability=capability)

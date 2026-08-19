@@ -231,6 +231,10 @@ class VideoLaneResult:
     # 自定义供应商解析出的 endpoint（ENDPOINT_REGISTRY 键）；内置供应商无该维度，为 None。
     # 续跑据此与提交时持久化的 endpoint 比对，见 server.services.resume_executor。
     endpoint: str | None = None
+    max_reference_videos: int | None = None
+    max_reference_media_count: int | None = None
+    supported_aspect_ratios: tuple[str, ...] = ()
+    supported_durations_with_reference_video: tuple[int, ...] = ()
 
     @property
     def is_silent(self) -> bool:
@@ -366,6 +370,10 @@ async def resolve_generation_context(
             supported_durations: tuple[int, ...] = ()
             max_duration: int | None = None
             max_reference_images: int | None = None
+            max_reference_videos: int | None = None
+            max_reference_media_count: int | None = None
+            supported_aspect_ratios: tuple[str, ...] = ()
+            supported_durations_with_reference_video: tuple[int, ...] = ()
             generate_audio = False
             voice_consistency: VoiceConsistency = "soft"
             max_reference_audio_count = 0
@@ -378,6 +386,12 @@ async def resolve_generation_context(
                 supported_durations = tuple(int(d) for d in caps.get("supported_durations") or [])
                 max_duration = caps.get("max_duration")
                 max_reference_images = caps.get("max_reference_images")
+                max_reference_videos = caps.get("max_reference_videos")
+                max_reference_media_count = caps.get("max_reference_media_count")
+                supported_aspect_ratios = tuple(str(item) for item in caps.get("supported_aspect_ratios") or [])
+                supported_durations_with_reference_video = tuple(
+                    int(item) for item in caps.get("supported_durations_with_reference_video") or []
+                )
                 generate_audio = bool(caps.get("generate_audio"))
                 voice_consistency = caps.get("voice_consistency") or "soft"
                 max_reference_audio_count = int(caps.get("max_reference_audio_count") or 0)
@@ -398,6 +412,10 @@ async def resolve_generation_context(
                 supported_durations=supported_durations,
                 max_duration=max_duration,
                 max_reference_images=max_reference_images,
+                max_reference_videos=max_reference_videos,
+                max_reference_media_count=max_reference_media_count,
+                supported_aspect_ratios=supported_aspect_ratios,
+                supported_durations_with_reference_video=supported_durations_with_reference_video,
                 generate_audio=generate_audio,
                 voice_consistency=voice_consistency,
                 requested_generate_audio=requested_generate_audio,

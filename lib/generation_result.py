@@ -172,6 +172,13 @@ _TASK_FAILURE_ACTIONS: dict[str, GenerationAction] = {
     "video_last_frame_requires_pro": GenerationAction.CONFIGURE_PROVIDER,
     "video_last_frame_unsupported": GenerationAction.CONFIGURE_PROVIDER,
     "video_reference_images_unsupported": GenerationAction.CONFIGURE_PROVIDER,
+    "video_reference_videos_unsupported": GenerationAction.CONFIGURE_PROVIDER,
+    "video_reference_videos_exceeded": GenerationAction.FIX_INPUT,
+    "video_reference_media_exceeded": GenerationAction.FIX_INPUT,
+    "video_reference_media_required": GenerationAction.GENERATE_DEPENDENCY,
+    "video_reference_videos_unreadable": GenerationAction.GENERATE_DEPENDENCY,
+    "free_creation_aspect_ratio_not_supported": GenerationAction.FIX_INPUT,
+    "free_creation_aspect_ratio_capabilities_missing": GenerationAction.CONFIGURE_PROVIDER,
     "video_reference_images_with_frames_unsupported": GenerationAction.CONFIGURE_PROVIDER,
     "video_reference_audio_unsupported": GenerationAction.CONFIGURE_PROVIDER,
     # 请求本身不合法（超限、缺配套字段、档位不匹配）：改请求。

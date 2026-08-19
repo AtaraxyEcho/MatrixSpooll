@@ -25,6 +25,10 @@ class TestOverrideFieldSchema:
             "first_frame",
             "last_frame",
             "max_reference_images",
+            "max_reference_videos",
+            "max_reference_media_count",
+            "supported_aspect_ratios",
+            "supported_durations_with_reference_video",
             "reference_audio_mode",
             "max_reference_audio_count",
             "max_reference_audio_total_seconds",
@@ -207,7 +211,12 @@ class TestTolerance:
                 overrides={"last_frame": True, "audio_track": True},
             )
         assert caps.last_frame is True
-        assert caps == VideoCapabilities(first_frame=True, last_frame=True, max_reference_images=0)
+        assert caps == VideoCapabilities(
+            first_frame=True,
+            last_frame=True,
+            max_reference_images=0,
+            supported_aspect_ratios=("16:9", "4:3", "1:1", "3:4", "9:16", "21:9"),
+        )
         assert "audio_track" in caplog.text
 
     @pytest.mark.unit

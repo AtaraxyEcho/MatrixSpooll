@@ -33,7 +33,7 @@ export default {
   'free_creation_prompt': 'Creation prompt',
   'free_creation_image': 'Image',
   'free_creation_video': 'Video',
-  'free_creation_edit': 'Edit image',
+  'free_creation_edit': 'Edit',
   'free_creation_reference_paths': 'Reference paths (one per line)',
   'free_creation_aspect_ratio': 'Aspect ratio',
   'free_creation_model': 'Model',

@@ -633,6 +633,10 @@ class VideoCapabilities:
     first_frame: bool = True
     last_frame: bool = False
     max_reference_images: int = 0
+    max_reference_videos: int = 0
+    max_reference_media_count: int | None = None
+    supported_aspect_ratios: tuple[str, ...] | None = None
+    supported_durations_with_reference_video: tuple[int, ...] | None = None
     reference_audio_mode: ReferenceAudioMode = ReferenceAudioMode.NONE
     max_reference_audio_count: int = 0
     max_reference_audio_total_seconds: float | None = None
@@ -653,6 +657,7 @@ class VideoGenerationRequest:
     start_image: Path | None = None
     end_image: Path | None = None  # For first_last mode
     reference_images: list[Path] | None = None  # For multi-reference mode
+    reference_videos: list[Path] | None = None  # For video-to-video/reference-video mode
     # 参考音频（音色复刻）。列表顺序即 prompt 中「音频N」的指认契约：编排层按该顺序拼指认
     # 文本，后端按同一顺序下发，故任何一侧都不得重排或跳过。哪个角色对应哪段音频不进请求
     # ——绑定由 prompt 文本表达，供应商 API 均无结构化的「角色-音频」字段。

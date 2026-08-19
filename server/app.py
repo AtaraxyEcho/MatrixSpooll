@@ -575,6 +575,12 @@ app.include_router(products.router, prefix="/api/v1", dependencies=[Depends(get_
 app.include_router(presentations.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["成片演示"])
 app.include_router(files.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["文件管理"])
 app.include_router(
+    free_creations.entry_router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user)],
+    tags=["自由创作"],
+)
+app.include_router(
     free_creations.router,
     prefix="/api/v1",
     dependencies=[Depends(get_current_user), Depends(require_project_migration_ok)],

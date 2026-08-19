@@ -191,6 +191,38 @@ class TestReferenceImageGating:
         assert exc.value.code == "video_reference_images_unsupported"
 
 
+class TestReferenceVideoGating:
+    def test_reference_videos_beyond_limit_raise(self):
+        caps = VideoCapabilities(max_reference_videos=2)
+        with pytest.raises(VideoCapabilityError) as exc:
+            _gate(caps, reference_videos=[Path(f"r{i}.mp4") for i in range(3)])
+
+        assert exc.value.code == "video_reference_videos_exceeded"
+        assert exc.value.params == {"provider": "acme", "model": "acme-v1", "limit": 2, "count": 3}
+
+    def test_reference_videos_on_zero_capacity_model_raise(self):
+        with pytest.raises(VideoCapabilityError) as exc:
+            _gate(VideoCapabilities(), reference_videos=[Path("r.mp4")])
+
+        assert exc.value.code == "video_reference_videos_unsupported"
+
+    def test_combined_reference_media_limit_is_enforced(self):
+        caps = VideoCapabilities(
+            max_reference_images=5,
+            max_reference_videos=5,
+            max_reference_media_count=5,
+        )
+        with pytest.raises(VideoCapabilityError) as exc:
+            _gate(
+                caps,
+                reference_images=[Path(f"i{i}.png") for i in range(3)],
+                reference_videos=[Path(f"v{i}.mp4") for i in range(3)],
+            )
+
+        assert exc.value.code == "video_reference_media_exceeded"
+        assert exc.value.params == {"provider": "acme", "model": "acme-v1", "limit": 5, "count": 6}
+
+
 class TestReferenceAudioGating:
     def test_audio_on_model_without_capability_raises(self):
         """无音色输入能力的模型收到音频：硬失败，不静默丢弃后照常扣费生成随机音色。"""
