@@ -1,5 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Bot } from "lucide-react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentParameterControl, HomeSelect } from "@/components/pages/HomeHeroComposer";
 import { useAssistantSession } from "@/hooks/useAssistantSession";
 import { useAppStore } from "@/stores/app-store";
 import { useAssistantStore } from "@/stores/assistant-store";
@@ -165,6 +167,69 @@ describe("AgentCopilot", () => {
     await waitFor(() => {
       expect(useAssistantStore.getState().input).toBe("");
     });
+  });
+
+  it("consumes a prefill queued before the embedded composer mounts", async () => {
+    useAssistantStore.getState().setInput("Plan a short launch video");
+
+    render(<AgentCopilot embedded />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("助手输入")).toHaveValue("Plan a short launch video");
+    });
+    await waitFor(() => expect(useAssistantStore.getState().input).toBe(""));
+  });
+
+  it("detaches only the composer while leaving the conversation in its panel", () => {
+    const { container } = render(<AgentCopilot embedded detachedComposer />);
+
+    expect(container.querySelector(".agent-copilot-composer--detached")).toBeInTheDocument();
+    expect(container.querySelector(".agent-copilot-composer--detached")?.parentElement).toBe(container.firstElementChild);
+  });
+
+  it("uses the compact parameter strip for detached Agent controls", () => {
+    render(
+      <AgentCopilot
+        embedded
+        detachedComposer
+        footerStart={(
+          <>
+            <HomeSelect
+              label="创作模式"
+              value="agent"
+              options={[{ value: "agent", label: "Agent 模式" }]}
+              icon={Bot}
+              onChange={vi.fn()}
+              className="free-creation-mode-control"
+              hideLabel
+              placement="top"
+            />
+            <AgentParameterControl
+              label="Agent 参数"
+              preferenceLabel="生成偏好"
+              imageLabel="图片"
+              videoLabel="视频"
+              ratioLabel="比例"
+              preference="video"
+              ratio="16:9"
+              ratioOptions={[{ value: "16:9", label: "16:9" }]}
+              onPreferenceChange={vi.fn()}
+              onRatioChange={vi.fn()}
+              hideLabel
+              placement="top"
+            />
+          </>
+        )}
+      />,
+    );
+
+    const modeTrigger = screen.getByRole("button", { name: "创作模式" });
+    const parameterStrip = modeTrigger.parentElement?.parentElement;
+    expect(parameterStrip).toHaveClass("composer-param-strip");
+
+    fireEvent.click(screen.getByRole("button", { name: "Agent 参数" }));
+    expect(screen.getByRole("dialog", { name: "Agent 参数" })).toBeInTheDocument();
+    expect(parameterStrip).toContainElement(screen.getByRole("button", { name: "Agent 参数" }));
   });
 
 });

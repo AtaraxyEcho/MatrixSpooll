@@ -1,4 +1,8 @@
 MESSAGES = {
+    "free_creation_storyboard_source_invalid": "Nguồn storyboard trống hoặc không phải tài nguyên văn bản được hỗ trợ",
+    "free_creation_storyboard_not_found": "Không tìm thấy kế hoạch storyboard '{id}'",
+    "free_creation_storyboard_order_invalid": "Thứ tự cảnh storyboard không hợp lệ",
+    "free_creation_storyboard_shot_not_found": "Không tìm thấy cảnh storyboard",
     "project_migration_failed": "Dự án '{name}' chưa hoàn tất nâng cấp dữ liệu nên không thể tạo nội dung. Lý do: {reason}. Hãy sửa trong cuộc trò chuyện với trợ lý rồi thử nâng cấp lại",
     "project_not_found": "Dự án '{name}' không tồn tại hoặc chưa được khởi tạo",
     "resource_not_found": "Tài nguyên được yêu cầu không tồn tại",

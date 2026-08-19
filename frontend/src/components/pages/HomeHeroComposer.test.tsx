@@ -4,11 +4,13 @@ import { Settings2 } from "lucide-react";
 import { API } from "@/api";
 import i18n from "@/i18n";
 import { HomeHeroComposer, HomeSelect } from "@/components/pages/HomeHeroComposer";
+import { useAssistantStore } from "@/stores/assistant-store";
 
 const t = i18n.getFixedT("zh", "dashboard");
 
 describe("HomeHeroComposer", () => {
   beforeEach(() => {
+    useAssistantStore.setState(useAssistantStore.getInitialState(), true);
     vi.restoreAllMocks();
     vi.spyOn(API, "getModelCandidates").mockRejectedValue(new Error("offline"));
     vi.spyOn(API, "getSystemConfig").mockRejectedValue(new Error("offline"));
@@ -27,7 +29,8 @@ describe("HomeHeroComposer", () => {
   it("updates the image dimensions from the grouped ratio and resolution controls", () => {
     render(<HomeHeroComposer onCreated={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: t("home_image") }));
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_mode") }));
+    fireEvent.click(screen.getByRole("option", { name: t("free_creation_mode_image") }));
     fireEvent.click(screen.getByRole("button", { name: t("home_image_settings") }));
     fireEvent.click(screen.getByRole("button", { name: t("aspect_ratio_1_1") }));
     fireEvent.click(screen.getByRole("button", { name: "2K" }));
@@ -80,6 +83,123 @@ describe("HomeHeroComposer", () => {
 
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("option", { name: "veo-3" })).toHaveFocus();
+  });
+
+  it("filters a long model list through the search input", () => {
+    render(
+      <HomeSelect
+        label={t("home_model")}
+        value="auto"
+        icon={Settings2}
+        searchable
+        searchPlaceholder={t("home_model_search")}
+        emptyLabel={t("home_model_no_results")}
+        className="home-model-control"
+        options={[
+          { value: "auto", label: t("home_model_auto") },
+          { value: "veo-3", label: "veo-3-fast-preview" },
+          { value: "seedance", label: "seedance-1-5-pro-ultra-long-model-name" },
+          { value: "sora-2", label: "sora-2" },
+        ]}
+        onChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: t("home_model") }));
+    const search = screen.getByRole("searchbox", { name: t("home_model_search") });
+    expect(screen.getByRole("listbox", { name: t("home_model") })).toHaveClass("home-param-options");
+
+    fireEvent.change(search, { target: { value: "seedance" } });
+    expect(screen.getByRole("option", { name: "seedance-1-5-pro-ultra-long-model-name" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "sora-2" })).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: "missing-model" } });
+    expect(screen.getByText(t("home_model_no_results"))).toBeInTheDocument();
+  });
+
+  it("creates an agent project and carries the prompt into the embedded agent composer", async () => {
+    const createProject = vi.spyOn(API, "createProject").mockResolvedValue({
+      success: true,
+      name: "agent-project",
+      project: {} as never,
+    });
+    const createFreeProject = vi.spyOn(API, "createFreeProject");
+    const onCreated = vi.fn();
+    render(<HomeHeroComposer onCreated={onCreated} />);
+
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_mode") }));
+    fireEvent.click(screen.getByRole("option", { name: t("free_creation_mode_agent") }));
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_agent_parameters") }));
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_agent_preference_image") }));
+    fireEvent.click(screen.getByRole("button", { name: t("aspect_ratio_1_1") }));
+    fireEvent.change(screen.getByLabelText(t("home_prompt_label")), {
+      target: { value: "Plan a short launch video" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("home_generate") }));
+
+    await waitFor(() => expect(createProject).toHaveBeenCalledTimes(1));
+    expect(createProject).toHaveBeenCalledWith({
+      title: "Plan a short launch video",
+      content_mode: "free",
+      generation_mode: null,
+      aspect_ratio: "1:1",
+    });
+    expect(createFreeProject).not.toHaveBeenCalled();
+    expect(useAssistantStore.getState().input).toContain("Plan a short launch video");
+    expect(useAssistantStore.getState().input).toContain("1:1");
+    expect(onCreated).toHaveBeenCalledWith("agent-project", "agent");
+  });
+
+  it("uploads homepage references before creating the first free task", async () => {
+    const createProject = vi.spyOn(API, "createProject").mockResolvedValue({
+      success: true,
+      name: "reference-project",
+      project: {} as never,
+    });
+    const upload = vi.spyOn(API, "uploadFreeCreationReference").mockResolvedValue({
+      success: true,
+      reference: {
+        reference_id: "ref-home",
+        type: "upload",
+        original_filename: "opening.png",
+        media_type: "image",
+        path: "references/ref-home.png",
+        size_bytes: 128,
+        created_at: "2026-08-19T00:00:00Z",
+      },
+      url: "/files/ref-home.png",
+    });
+    const createCreation = vi.spyOn(API, "createFreeCreation").mockResolvedValue({
+      success: true,
+      creation_id: "c_0123456789abcdef0123",
+      task_id: "task-reference",
+    });
+    const createFreeProject = vi.spyOn(API, "createFreeProject");
+    const onCreated = vi.fn();
+    render(<HomeHeroComposer onCreated={onCreated} />);
+
+    const file = new File(["image"], "opening.png", { type: "image/png", lastModified: 1 });
+    fireEvent.change(screen.getByLabelText(t("free_creation_upload_reference"), { selector: "input" }), {
+      target: { files: [file] },
+    });
+    fireEvent.change(screen.getByLabelText(t("home_prompt_label")), {
+      target: { value: "Animate the opening frame" },
+    });
+    const submit = screen.getByRole("button", { name: t("home_generate") });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(createCreation).toHaveBeenCalledTimes(1));
+    expect(createProject).toHaveBeenCalledWith(expect.objectContaining({ content_mode: "free" }));
+    expect(upload).toHaveBeenCalledWith("reference-project", file);
+    expect(createCreation).toHaveBeenCalledWith(
+      "reference-project",
+      expect.objectContaining({
+        references: [{ type: "upload", reference_id: "ref-home", role: "reference_image" }],
+      }),
+    );
+    expect(createFreeProject).not.toHaveBeenCalled();
+    expect(onCreated).toHaveBeenCalledWith("reference-project", "video");
   });
 
   it("shows the disabled pre-minimum interval and clamps to model-supported durations", async () => {

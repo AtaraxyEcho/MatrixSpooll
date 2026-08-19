@@ -56,6 +56,9 @@ export interface FreeCreation {
   quantity?: number;
   duration_seconds?: number | null;
   parent_creation_id?: string | null;
+  storyboard_plan_id?: string | null;
+  storyboard_shot_id?: string | null;
+  sequence_index?: number | null;
   media_path?: string;
   version?: number;
   task_id?: string | null;
@@ -94,4 +97,27 @@ export interface CreateFreeCreationRequest {
   parent_creation_id?: string;
   prompt_mode?: "original";
   context?: Array<{ type: string; resource_id: string; role: "prompt_context" }>;
+  storyboard_plan_id?: string;
+  storyboard_shot_id?: string;
+  sequence_index?: number;
+}
+
+export interface FreeStoryboardShot {
+  shot_id: string;
+  sequence_index: number;
+  title: string;
+  prompt: string;
+  duration_seconds: number;
+  image_creation_id?: string | null;
+  video_creation_id?: string | null;
+}
+
+export interface FreeStoryboardPlan {
+  plan_id: string;
+  title: string;
+  source?: { type: "upload"; reference_id: string } | null;
+  status: "draft" | "generating" | "ready" | "failed";
+  shots: FreeStoryboardShot[];
+  created_at: string;
+  updated_at: string;
 }

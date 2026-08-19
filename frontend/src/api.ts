@@ -70,6 +70,8 @@ import type {
   FreeCreationCapabilities,
   FreeCreationCanvasState,
   FreeCreationUpload,
+  FreeStoryboardPlan,
+  FreeStoryboardShot,
 } from "@/types";
 import type { GenerationRoute } from "@/utils/generation-mode";
 import type { GridCapability, GridGeneration } from "@/types/grid";
@@ -991,6 +993,36 @@ class API {
     if (options.referenceKind) params.set("reference_kind", options.referenceKind);
     if (options.projectName) params.set("project_name", options.projectName);
     return this.request(`/free-creation-capabilities?${params.toString()}`, { signal: options.signal });
+  }
+
+  static async createFreeStoryboardPlan(
+    projectName: string,
+    payload: { prompt?: string; reference_id?: string; title?: string; max_shots?: number },
+  ): Promise<{ success: boolean; plan: FreeStoryboardPlan }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-storyboards/plan`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  static async getFreeStoryboardPlan(
+    projectName: string,
+    planId: string,
+  ): Promise<{ plan: FreeStoryboardPlan }> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/free-creation-storyboards/${encodeURIComponent(planId)}`,
+    );
+  }
+
+  static async updateFreeStoryboardPlan(
+    projectName: string,
+    planId: string,
+    payload: { title: string; shots: FreeStoryboardShot[] },
+  ): Promise<{ success: boolean; plan: FreeStoryboardPlan }> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/free-creation-storyboards/${encodeURIComponent(planId)}`,
+      { method: "PUT", body: JSON.stringify(payload) },
+    );
   }
 
   static async getFreeCreationCanvas(projectName: string): Promise<{ canvas: FreeCreationCanvasState }> {

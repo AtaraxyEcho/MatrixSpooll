@@ -112,9 +112,12 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 function StudioWorkspace() {
   const params = useParams<{ projectName: string }>();
   const projectName = params.projectName ?? null;
-  const handoffOutputType = (() => {
-    const value = new URLSearchParams(window.location.search).get("output");
-    return value === "image" || value === "video" ? value : undefined;
+  const handoffMode = (() => {
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get("mode");
+    if (mode === "agent" || mode === "image" || mode === "video") return mode;
+    const legacyOutput = params.get("output");
+    return legacyOutput === "image" || legacyOutput === "video" ? legacyOutput : undefined;
   })();
   const {
     currentProjectName,
@@ -207,7 +210,7 @@ function StudioWorkspace() {
   if (currentProjectData.content_mode === "free" && projectName) {
     return (
       <FreeCreationLayout key={`free-${projectName}`}>
-        <FreeCreationWorkspace projectName={projectName} readOnly={isDemoProject(projectName)} initialOutputType={handoffOutputType} />
+        <FreeCreationWorkspace projectName={projectName} readOnly={isDemoProject(projectName)} initialMode={handoffMode} />
       </FreeCreationLayout>
     );
   }

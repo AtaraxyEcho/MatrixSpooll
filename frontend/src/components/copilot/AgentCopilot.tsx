@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useId } from "react";
+import { useState, useRef, useCallback, useEffect, useId, type ReactNode } from "react";
 import { voidCall, voidPromise } from "@/utils/async";
 import { Bot, Send, Square, Plus, ChevronDown, Trash2, MessageSquare, PanelRightClose, Paperclip, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -166,7 +166,19 @@ function formatTime(isoStr: string | undefined, t: TFunction): string {
 // AgentCopilot — 主面板
 // ---------------------------------------------------------------------------
 
-export function AgentCopilot() {
+interface AgentCopilotProps {
+  embedded?: boolean;
+  detachedComposer?: boolean;
+  footerStart?: ReactNode;
+  messageContext?: string;
+}
+
+export function AgentCopilot({
+  embedded = false,
+  detachedComposer = false,
+  footerStart,
+  messageContext,
+}: AgentCopilotProps = {}) {
   const { t } = useTranslation(["dashboard", "common"]);
   const {
     turns, draftTurn, messagesLoading, editingTurnUuid, setEditingTurnUuid,
@@ -248,7 +260,10 @@ export function AgentCopilot() {
     setShowSlashMenu(false);
     // 发送期间输入锁定（sending 置位）；受理成功才清空，失败保留内容供重试
     voidCall(
-      sendMessage(localInput.trim(), attachedImages.length > 0 ? attachedImages : undefined).then(
+      sendMessage(
+        messageContext ? `${localInput.trim()}\n\n${messageContext}` : localInput.trim(),
+        attachedImages.length > 0 ? attachedImages : undefined,
+      ).then(
         (accepted) => {
           if (!accepted) return;
           setLocalInput("");
@@ -268,6 +283,7 @@ export function AgentCopilot() {
     sendMessage,
     invalidatePendingReaders,
     resetImages,
+    messageContext,
   ]);
 
   // 改写成功后由会话切换重建时间线（编辑态随 resetTimeline 清空）；失败保留编辑态，
@@ -361,7 +377,17 @@ export function AgentCopilot() {
   // 写入本地输入框后清空 store 字段，避免残留触发重复预填。
   // 覆盖而非追加——预填来自用户的明确点击意图。
   useEffect(() => {
-    return useAssistantStore.subscribe((state, prev) => {
+    let active = true;
+    const initialInput = useAssistantStore.getState().input;
+    if (initialInput) {
+      void Promise.resolve().then(() => {
+        if (!active) return;
+        setLocalInput(initialInput);
+        useAssistantStore.getState().setInput("");
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      });
+    }
+    const unsubscribe = useAssistantStore.subscribe((state, prev) => {
       if (!state.input || state.input === prev.input) return;
       setLocalInput(state.input);
       // 延后到微任务清空，避免在 zustand 订阅通知期间嵌套 dispatch
@@ -371,6 +397,10 @@ export function AgentCopilot() {
       // 面板可能同帧刚被打开（inert 尚未移除），等一帧再聚焦
       requestAnimationFrame(() => textareaRef.current?.focus());
     });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -390,24 +420,26 @@ export function AgentCopilot() {
         style={{ borderBottom: "1px solid var(--color-hairline)" }}
       >
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <button
-            type="button"
-            onClick={toggleAssistantPanel}
-            className="shrink-0 rounded p-1 transition-colors focus-ring"
-            style={{ color: "var(--color-text-3)" }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "oklch(0.28 0.012 265 / 0.6)";
-              e.currentTarget.style.color = "var(--color-text)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.color = "var(--color-text-3)";
-            }}
-            title={t("collapse_panel")}
-            aria-label={t("collapse_panel")}
-          >
-            <PanelRightClose aria-hidden className="h-4 w-4" />
-          </button>
+          {!embedded ? (
+            <button
+              type="button"
+              onClick={toggleAssistantPanel}
+              className="shrink-0 rounded p-1 transition-colors focus-ring"
+              style={{ color: "var(--color-text-3)" }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "oklch(0.28 0.012 265 / 0.6)";
+                e.currentTarget.style.color = "var(--color-text)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = "var(--color-text-3)";
+              }}
+              title={t("collapse_panel")}
+              aria-label={t("collapse_panel")}
+            >
+              <PanelRightClose aria-hidden className="h-4 w-4" />
+            </button>
+          ) : null}
           <div
             className="grid h-6 w-6 shrink-0 place-items-center rounded-md"
             style={{
@@ -549,7 +581,7 @@ export function AgentCopilot() {
 
       {/* Input area */}
       <div
-        className="p-3"
+        className={`p-3${detachedComposer ? " agent-copilot-composer--detached" : ""}`}
         style={{ borderTop: "1px solid var(--color-hairline-soft)" }}
       >
         {/* Thumbnail strip */}
@@ -723,6 +755,7 @@ export function AgentCopilot() {
           className="hidden"
           onChange={handleFileSelect}
         />
+        {footerStart ? <div className="composer-param-strip mt-2 flex min-w-0 gap-2 pb-1">{footerStart}</div> : null}
       </div>
 
       {lightboxSrc && (

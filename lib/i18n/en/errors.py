@@ -433,4 +433,8 @@ MESSAGES = {
     "free_creation_capabilities_unavailable": "No generation model is configured for free creation. Go to Settings > Models to configure one",
     "free_creation_aspect_ratio_not_supported": "Model {model} does not support the {ratio} aspect ratio; choose one of: {supported}",
     "free_creation_aspect_ratio_capabilities_missing": "Model {model} does not declare supported aspect ratios, so this free creation cannot be submitted safely",
+    "free_creation_storyboard_source_invalid": "The storyboard source is empty or is not a supported text resource",
+    "free_creation_storyboard_not_found": "Storyboard plan '{id}' does not exist",
+    "free_creation_storyboard_order_invalid": "Storyboard shot order is invalid",
+    "free_creation_storyboard_shot_not_found": "The storyboard shot does not exist",
 }
