@@ -309,18 +309,23 @@ body {
 .home-reference-card {
     position: relative;
     display: flex;
-    width: 72px;
-    height: 72px;
-    flex: 0 0 72px;
+    width: 116px;
+    min-height: 84px;
+    flex: 0 0 116px;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 5px;
     overflow: hidden;
     border: 1px solid var(--color-hairline-strong);
     border-radius: 8px;
     background: oklch(0.15 0.009 265 / 0.86);
     color: var(--color-text-3);
+}
+
+.home-reference-card > select {
+    width: calc(100% - 10px);
+    flex: 0 0 26px;
 }
 
 .home-reference-card > span {

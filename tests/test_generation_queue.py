@@ -33,6 +33,19 @@ def test_free_video_capability_uses_visual_references(references, expected):
     assert free_video_capability({"references": references}) == expected
 
 
+def test_free_video_capability_uses_i2v_for_explicit_frame_roles() -> None:
+    assert (
+        free_video_capability(
+            {
+                "reference_claims": [
+                    {"type": "upload", "reference_id": "r_0123456789abcdef0123", "role": "first_frame"}
+                ],
+            }
+        )
+        == "i2v"
+    )
+
+
 @pytest.fixture
 async def queue():
     """Create a GenerationQueue backed by in-memory SQLite."""

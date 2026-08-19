@@ -28,10 +28,15 @@ import type {
   FreeCreationCapabilities,
   FreeCreationReferenceClaim,
   FreeCreationReferenceRole,
+  FreeCreationUploadMediaType,
 } from "@/types";
 import { errMsg } from "@/utils/async";
 import { useAppStore } from "@/stores/app-store";
 import { useAssistantStore } from "@/stores/assistant-store";
+import {
+  FreeCreationReferenceRoleSelect,
+  referenceCompatibilityIssue,
+} from "./FreeCreationReferenceRoleSelect";
 
 interface HomeHeroComposerProps {
   onCreated: (projectName: string, mode: HomeComposerMode) => void;
@@ -134,6 +139,18 @@ function referenceRoleForFile(file: File): FreeCreationReferenceRole {
   if (file.type.startsWith("audio/")) return "reference_audio";
   if (file.type.startsWith("text/") || /\.(?:txt|md|markdown|pdf)$/i.test(file.name)) return "prompt_context";
   return "reference_image";
+}
+
+function referenceMediaTypeForFile(file: File): FreeCreationUploadMediaType {
+  if (file.type.startsWith("video/")) return "video";
+  if (file.type.startsWith("audio/")) return "audio";
+  if (file.type.startsWith("text/") || /\.(?:txt|md|markdown|pdf)$/i.test(file.name)) return "text";
+  return "image";
+}
+
+interface HomeReferenceFile {
+  file: File;
+  role?: FreeCreationReferenceRole;
 }
 
 export function HomeSelect<T extends HomeSelectValue>({
@@ -981,7 +998,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const [composerMode, setComposerMode] = useState<HomeComposerMode>("video");
   const [agentPreference, setAgentPreference] = useState<AgentGenerationPreference>("video");
   const [agentAspectRatio, setAgentAspectRatio] = useState("16:9");
-  const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
+  const [referenceFiles, setReferenceFiles] = useState<HomeReferenceFile[]>([]);
   const [outputType, setOutputType] = useState<"image" | "video">("video");
   const [prompt, setPrompt] = useState("");
   const [videoAspectRatio, setVideoAspectRatio] = useState("16:9");
@@ -1022,7 +1039,13 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
     () => (model === "auto" || models.includes(model) ? model : "auto"),
     [model, models],
   );
-  const capabilityRequestKey = `${outputType}:${selectedModel}`;
+  const referenceKind = useMemo<"none" | "frame" | "image" | "video">(() => {
+    if (referenceFiles.some((item) => item.role === "reference_video")) return "video";
+    if (referenceFiles.some((item) => item.role === "first_frame" || item.role === "last_frame")) return "frame";
+    if (referenceFiles.some((item) => item.role === "reference_image")) return "image";
+    return "none";
+  }, [referenceFiles]);
+  const capabilityRequestKey = `${outputType}:${selectedModel}:${referenceKind}`;
   const capabilities = capabilityResult?.key === capabilityRequestKey ? capabilityResult.value : null;
   const capabilityError = capabilityResult?.key === capabilityRequestKey ? capabilityResult.error : null;
 
@@ -1031,6 +1054,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
     void API.getFreeCreationCapabilities({
       outputType,
       model: selectedModel === "auto" ? undefined : selectedModel,
+      referenceKind,
       signal: controller.signal,
     })
       .then((next) => {
@@ -1041,12 +1065,12 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
           setCapabilityResult({
             key: capabilityRequestKey,
             value: null,
-            error: outputType === "video" ? errMsg(err) : null,
+            error: errMsg(err),
           });
         }
       });
     return () => controller.abort();
-  }, [capabilityRequestKey, outputType, selectedModel]);
+  }, [capabilityRequestKey, outputType, referenceKind, selectedModel]);
   const ratioValues = useMemo(
     () => capabilities?.output_type === outputType && capabilities.ratios.length
       ? capabilities.ratios
@@ -1071,8 +1095,9 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       : [],
     [capabilities],
   );
-  const videoCapabilitiesReady = outputType !== "video"
-    || (capabilities?.output_type === "video" && capabilities.ratios.length > 0 && capabilities.durations.length > 0);
+  const generationCapabilitiesReady = outputType !== "video"
+    ? referenceKind !== "image" || capabilities?.output_type === "image"
+    : capabilities?.output_type === "video" && capabilities.ratios.length > 0 && capabilities.durations.length > 0;
   const effectiveVideoAspectRatio = ratioValues.includes(videoAspectRatio) ? videoAspectRatio : ratioValues[0] ?? "16:9";
   const effectiveImageAspectRatio = ratioValues.includes(imageAspectRatio) ? imageAspectRatio : ratioValues[0] ?? "16:9";
   const effectiveVideoResolution = videoResolutionOptions.includes(videoResolution)
@@ -1084,6 +1109,17 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const videoDurations = capabilities?.output_type === "video" ? capabilities.durations : [];
   const effectiveDuration = videoDurations.includes(duration) ? duration : videoDurations[0] ?? 4;
   const aspectRatio = outputType === "image" ? effectiveImageAspectRatio : effectiveVideoAspectRatio;
+  const referenceIssue = composerMode === "agent" ? null : referenceCompatibilityIssue(
+    referenceFiles.map((item) => ({ mediaType: referenceMediaTypeForFile(item.file), role: item.role })),
+    capabilities,
+  );
+  const referenceIssueMessage = referenceIssue === "missing_role"
+    ? t("free_creation_reference_roles_incomplete")
+    : referenceIssue === "slot_limit"
+      ? t("free_creation_reference_role_limit")
+      : referenceIssue
+        ? t("free_creation_reference_roles_incompatible")
+        : null;
   const agentRatioOptions = useMemo(() => ASPECT_RATIO_OPTIONS.map(({ value, labelKey }) => ({
     value,
     label: t(labelKey),
@@ -1095,9 +1131,11 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       const next = [...current];
       for (const file of Array.from(files)) {
         const duplicate = next.some((item) => (
-          item.name === file.name && item.size === file.size && item.lastModified === file.lastModified
+          item.file.name === file.name
+          && item.file.size === file.size
+          && item.file.lastModified === file.lastModified
         ));
-        if (!duplicate && next.length < MAX_HOME_REFERENCES) next.push(file);
+        if (!duplicate && next.length < MAX_HOME_REFERENCES) next.push({ file });
       }
       return next;
     });
@@ -1125,7 +1163,11 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
 
   const handleSubmit = async () => {
     const cleanPrompt = prompt.trim();
-    if (!cleanPrompt || submitting || (composerMode !== "agent" && !videoCapabilitiesReady)) return;
+    if (
+      !cleanPrompt
+      || submitting
+      || (composerMode !== "agent" && (!generationCapabilitiesReady || referenceIssue))
+    ) return;
     setSubmitting(true);
     setError(null);
 
@@ -1143,12 +1185,13 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       };
       const uploadReferences = async (projectName: string): Promise<FreeCreationReferenceClaim[]> => {
         const claims: FreeCreationReferenceClaim[] = [];
-        for (const file of referenceFiles) {
+        for (const reference of referenceFiles) {
+          const { file } = reference;
           const uploaded = await API.uploadFreeCreationReference(projectName, file);
           claims.push({
             type: "upload",
             reference_id: uploaded.reference.reference_id,
-            role: referenceRoleForFile(file),
+            role: reference.role ?? referenceRoleForFile(file),
           });
         }
         return claims;
@@ -1165,7 +1208,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
           ratio: agentAspectRatio,
         });
         const referenceContext = referenceFiles.length
-          ? `\n${t("free_creation_agent_reference_context", { files: referenceFiles.map((file) => file.name).join(", ") })}`
+          ? `\n${t("free_creation_agent_reference_context", { files: referenceFiles.map((item) => item.file.name).join(", ") })}`
           : "";
         useAssistantStore.getState().queueHandoff({
           projectName: project.name,
@@ -1236,7 +1279,8 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       <div className="home-composer-shell rounded-[14px] p-3 sm:p-5">
         <div className="home-composer-input-row">
           <div className="home-reference-tray" aria-label={t("free_creation_reference_content")}>
-            {referenceFiles.map((file) => {
+            {referenceFiles.map((reference) => {
+              const { file } = reference;
               const isImage = file.type.startsWith("image/");
               const isVideo = file.type.startsWith("video/");
               const ReferenceIcon = isImage ? ImageIcon : isVideo ? Video : FileText;
@@ -1244,9 +1288,21 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
                 <div key={`${file.name}:${file.size}:${file.lastModified}`} className="home-reference-card">
                   <ReferenceIcon className="h-5 w-5 text-accent-2" aria-hidden />
                   <span title={file.name}>{file.name}</span>
+                  {composerMode !== "agent" ? (
+                    <FreeCreationReferenceRoleSelect
+                      name={file.name}
+                      mediaType={referenceMediaTypeForFile(file)}
+                      outputType={outputType}
+                      capabilities={capabilities}
+                      value={reference.role}
+                      onChange={(role) => setReferenceFiles((current) => current.map((item) => (
+                        item === reference ? { ...item, role } : item
+                      )))}
+                    />
+                  ) : null}
                   <button
                     type="button"
-                    onClick={() => setReferenceFiles((current) => current.filter((item) => item !== file))}
+                    onClick={() => setReferenceFiles((current) => current.filter((item) => item !== reference))}
                     aria-label={`${t("free_creation_remove_reference")}: ${file.name}`}
                   >
                     <X className="h-3 w-3" aria-hidden />
@@ -1404,11 +1460,15 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
 
         <div className="mt-3 flex flex-col gap-3 border-t border-hairline-soft pt-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-h-5 text-[11px] text-danger-2" role="status" aria-live="polite">
-            {error ?? (composerMode === "agent" ? null : capabilityError)}
+            {error ?? (composerMode === "agent" ? null : referenceIssueMessage ?? capabilityError)}
           </div>
           <button
             type="button"
-            disabled={!prompt.trim() || submitting || (composerMode !== "agent" && !videoCapabilitiesReady)}
+            disabled={
+              !prompt.trim()
+              || submitting
+              || (composerMode !== "agent" && (!generationCapabilitiesReady || Boolean(referenceIssue)))
+            }
             onClick={() => void handleSubmit()}
             className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] px-5 text-[13px] font-semibold transition-transform motion-safe:hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-45"
             style={{ color: "oklch(0.14 0 0)", background: "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))" }}

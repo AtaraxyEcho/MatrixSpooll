@@ -349,7 +349,7 @@ def _validate_references(
 
 
 def _validate_reference_roles(
-    claims: list[str | FreeCreationReference],
+    claims: Sequence[str | FreeCreationReference | dict[str, Any]],
     resolved_paths: list[str],
     media_type: Literal["image", "video"],
 ) -> None:
@@ -357,9 +357,9 @@ def _validate_reference_roles(
     for claim, path in zip(claims, resolved_paths, strict=False):
         if isinstance(claim, str):
             continue
-        role = claim.role
+        role = claim.role if isinstance(claim, FreeCreationReference) else claim.get("role")
         if role is None:
-            continue
+            raise BadRequestError("free_creation_reference_role_required")
         role_counts[role] = role_counts.get(role, 0) + 1
         suffix = Path(path).suffix.lower()
         accepted = {
@@ -372,8 +372,13 @@ def _validate_reference_roles(
         }.get(role)
         if accepted is not None and suffix not in accepted:
             raise BadRequestError("free_creation_reference_type_unsupported", type=suffix or "unknown")
-        if media_type != "video" and role != "prompt_context":
-            raise BadRequestError("request_invalid")
+        allowed_roles = (
+            {"first_frame", "last_frame", "reference_image", "reference_video", "reference_audio", "prompt_context"}
+            if media_type == "video"
+            else {"reference_image", "prompt_context"}
+        )
+        if role not in allowed_roles:
+            raise BadRequestError("free_creation_reference_role_unsupported", role=role)
     for role in ("first_frame", "last_frame"):
         if role_counts.get(role, 0) > 1:
             raise BadRequestError("request_invalid")
@@ -463,6 +468,7 @@ def _free_request_payload(req: FreeCreationRequest, media_type: Literal["image",
         "resolution": req.resolution,
         "size": req.size,
         "duration_seconds": req.duration_seconds,
+        "quantity": req.quantity,
         "parent_creation_id": req.parent_creation_id,
         "prompt_mode": req.prompt_mode,
         "storyboard_plan_id": req.storyboard_plan_id,
@@ -514,6 +520,11 @@ async def _preflight_free_creation(
         "references": ([parent_media_path] if parent_media_path else []) + list(req.references),
         "reference_claims": reference_claims or [],
     }
+    role_counts: dict[str, int] = {}
+    for claim in reference_claims or []:
+        role = claim.get("role")
+        if isinstance(role, str):
+            role_counts[role] = role_counts.get(role, 0) + 1
     try:
         if media_type == "video":
             ctx = await resolve_generation_context(
@@ -525,15 +536,34 @@ async def _preflight_free_creation(
                 video=VideoLaneRequest(capability=free_video_capability(capability_payload)),
             )
             reference_names = capability_payload["references"]
-            image_count = sum(Path(item).suffix.lower() in _IMAGE_REFERENCE_SUFFIXES for item in reference_names)
-            video_count = sum(Path(item).suffix.lower() in _VIDEO_REFERENCE_SUFFIXES for item in reference_names)
-            audio_count = sum(Path(item).suffix.lower() in _AUDIO_REFERENCE_SUFFIXES for item in reference_names)
-            if image_count == 0 and video_count == 0 and not getattr(ctx.video, "text_to_video", True):
+            if reference_claims:
+                first_frame_count = role_counts.get("first_frame", 0)
+                last_frame_count = role_counts.get("last_frame", 0)
+                image_count = role_counts.get("reference_image", 0)
+                video_count = role_counts.get("reference_video", 0)
+                audio_count = role_counts.get("reference_audio", 0)
+            else:
+                first_frame_count = 0
+                last_frame_count = 0
+                image_count = sum(Path(item).suffix.lower() in _IMAGE_REFERENCE_SUFFIXES for item in reference_names)
+                video_count = sum(Path(item).suffix.lower() in _VIDEO_REFERENCE_SUFFIXES for item in reference_names)
+                audio_count = sum(Path(item).suffix.lower() in _AUDIO_REFERENCE_SUFFIXES for item in reference_names)
+            has_visual_input = bool(
+                parent_media_path or first_frame_count or last_frame_count or image_count or video_count
+            )
+            model_name = f"{ctx.video.provider_model.provider_id}/{ctx.video.backend_model}"
+            if not has_visual_input and not getattr(ctx.video, "text_to_video", True):
                 raise VideoCapabilityError(
-                    "video_capability_missing_t2v",
+                    "free_creation_t2v_unsupported",
                     provider=ctx.video.provider_model.provider_id,
                     model=ctx.video.backend_model,
                 )
+            if first_frame_count and not getattr(ctx.video, "first_frame", True):
+                raise VideoCapabilityError("free_creation_first_frame_unsupported", model=model_name)
+            if last_frame_count and not first_frame_count:
+                raise VideoCapabilityError("free_creation_input_combination_unsupported", model=model_name)
+            if last_frame_count and not getattr(ctx.video, "last_frame", False):
+                raise VideoCapabilityError("free_creation_last_frame_unsupported", model=model_name)
             supported = (
                 ctx.video.supported_durations_with_reference_video
                 if video_count and ctx.video.supported_durations_with_reference_video
@@ -565,7 +595,7 @@ async def _preflight_free_creation(
             if ctx.video.max_reference_images is not None and image_count:
                 if ctx.video.max_reference_images <= 0:
                     raise VideoCapabilityError(
-                        "video_reference_images_unsupported",
+                        "free_creation_reference_images_unsupported",
                         provider=ctx.video.provider_model.provider_id,
                         model=ctx.video.backend_model,
                     )
@@ -579,7 +609,7 @@ async def _preflight_free_creation(
             if ctx.video.max_reference_videos is not None and video_count:
                 if ctx.video.max_reference_videos <= 0:
                     raise VideoCapabilityError(
-                        "video_reference_videos_unsupported",
+                        "free_creation_reference_videos_unsupported",
                         provider=ctx.video.provider_model.provider_id,
                         model=ctx.video.backend_model,
                     )
@@ -593,7 +623,7 @@ async def _preflight_free_creation(
             if audio_count:
                 if ctx.video.max_reference_audio_count <= 0:
                     raise VideoCapabilityError(
-                        "video_reference_audio_unsupported",
+                        "free_creation_reference_audio_unsupported",
                         provider=ctx.video.provider_model.provider_id,
                         model=ctx.video.backend_model,
                     )
@@ -621,13 +651,16 @@ async def _preflight_free_creation(
             )
             payload["model"] = f"{ctx.video.provider_model.provider_id}/{ctx.video.backend_model}"
         else:
+            image_reference_count = role_counts.get("reference_image", 0)
             ctx = await resolve_generation_context(
                 project_name,
                 payload,
                 project=project,
                 project_path=project_path,
                 user_id=user_id,
-                image=ImageLaneRequest(capability="i2i" if req.output_type == "edit" else "t2i"),
+                image=ImageLaneRequest(
+                    capability="i2i" if req.output_type == "edit" or image_reference_count else "t2i"
+                ),
             )
             _validate_declared_resolution(
                 ctx.image.provider_model.provider_id,
@@ -646,7 +679,7 @@ async def _preflight_free_creation(
 async def get_free_creation_capabilities(
     output_type: Literal["image", "video"] = Query(default="video"),
     model: str | None = Query(default=None, max_length=200),
-    reference_kind: Literal["none", "image", "video"] = Query(default="none"),
+    reference_kind: Literal["none", "frame", "image", "video"] = Query(default="none"),
     project_name: str | None = None,
 ):
     """Return the effective model capabilities used by the free composer."""
@@ -668,7 +701,7 @@ async def get_free_creation_capabilities(
     )
     try:
         if output_type == "video":
-            capability = "r2v" if reference_kind in {"image", "video"} else None
+            capability = "i2v" if reference_kind == "frame" else "r2v" if reference_kind in {"image", "video"} else None
             resolved = await resolver.resolve_video_backend(project, payload, capability=capability)
             caps = await resolver.video_capabilities_for_model(resolved.provider_id, resolved.model_id, project)
             info = model_info_for(resolved.provider_id, resolved.model_id)
@@ -694,7 +727,7 @@ async def get_free_creation_capabilities(
             if caps.get("first_frame"):
                 modes.append("first_frame")
                 input_slots.append({"role": "first_frame", "accepted_types": ["image"], "max_count": 1})
-            if caps.get("last_frame"):
+            if caps.get("first_frame") and caps.get("last_frame"):
                 modes.append("first_last_frame")
                 input_slots.append({"role": "last_frame", "accepted_types": ["image"], "max_count": 1})
             if (caps.get("max_reference_images") or 0) > 0:
@@ -725,7 +758,16 @@ async def get_free_creation_capabilities(
                         "max_count": max_reference_audio_count,
                     }
                 )
-            combinations = [["first_frame", "last_frame"], ["reference_image"], ["reference_video"]]
+            input_slots.append({"role": "prompt_context", "accepted_types": ["text"], "max_count": 1})
+            combinations: list[list[str]] = []
+            if caps.get("first_frame"):
+                combinations.append(["first_frame"])
+            if caps.get("first_frame") and caps.get("last_frame"):
+                combinations.append(["first_frame", "last_frame"])
+            if (caps.get("max_reference_images") or 0) > 0:
+                combinations.append(["reference_image"])
+            if (caps.get("max_reference_videos") or 0) > 0:
+                combinations.append(["reference_video"])
             if max_reference_audio_count > 0:
                 combinations.append(["reference_audio"])
             return {
@@ -748,7 +790,8 @@ async def get_free_creation_capabilities(
                 "combinations": combinations,
                 "quantity": {"min": 1, "max": 4},
             }
-        resolved = await resolver.resolve_image_backend(project, payload, capability="t2i")
+        image_capability = "i2i" if reference_kind == "image" else "t2i"
+        resolved = await resolver.resolve_image_backend(project, payload, capability=image_capability)
         info = model_info_for(resolved.provider_id, resolved.model_id)
         return {
             "output_type": "image",
@@ -759,6 +802,17 @@ async def get_free_creation_capabilities(
             "max_reference_images": None,
             "max_reference_videos": None,
             "max_reference_media_count": None,
+            "modes": [image_capability],
+            "input_slots": (
+                [
+                    {"role": "reference_image", "accepted_types": ["image"], "max_count": 32},
+                    {"role": "prompt_context", "accepted_types": ["text"], "max_count": 1},
+                ]
+                if image_capability == "i2i"
+                else [{"role": "prompt_context", "accepted_types": ["text"], "max_count": 1}]
+            ),
+            "combinations": [["reference_image"]] if image_capability == "i2i" else [],
+            "quantity": {"min": 1, "max": 4},
         }
     except (ValueError, ImageCapabilityError, VideoCapabilityError, VideoBucketCapabilityError) as exc:
         code = getattr(exc, "code", "free_creation_capabilities_unavailable")
@@ -777,6 +831,8 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
         shot_ids = {item.get("shot_id") for item in storyboard_plan.get("shots", []) if isinstance(item, dict)}
         if req.storyboard_shot_id not in shot_ids:
             raise BadRequestError("free_creation_storyboard_shot_not_found")
+    if any(isinstance(item, str) or item.role is None for item in req.references):
+        raise BadRequestError("free_creation_reference_role_required")
     public_references = [
         item if isinstance(item, str) else item.model_dump(exclude_none=True) for item in req.references
     ]
@@ -892,6 +948,7 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
                 "size": execution_req.size,
                 "model": request_payload.get("model"),
                 "duration_seconds": request_payload.get("duration_seconds"),
+                "quantity": execution_req.quantity,
                 "parent_creation_id": execution_req.parent_creation_id,
                 "storyboard_plan_id": execution_req.storyboard_plan_id,
                 "storyboard_shot_id": execution_req.storyboard_shot_id,
@@ -1316,6 +1373,7 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
         size=creation.get("size"),
         model=creation.get("model"),
         duration_seconds=creation.get("duration_seconds"),
+        quantity=creation.get("quantity", 1),
         parent_creation_id=creation.get("parent_creation_id"),
         storyboard_plan_id=creation.get("storyboard_plan_id"),
         storyboard_shot_id=creation.get("storyboard_shot_id"),
@@ -1328,6 +1386,7 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
         retry_request,
         media_type=media_type,
         parent_media_path=parent_media_path,
+        reference_claims=validation_claims,
         user_id=user.id,
     )
     task_type = {"image": "free_image", "video": "free_video", "edit": "free_edit"}[output_type]
@@ -1342,6 +1401,7 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
             "media_type": media_type,
             "request_id": creation.get("request_id"),
             "reference_claims": creation.get("reference_claims") or [],
+            "effective_mode": creation.get("effective_mode"),
             "references": ([parent_media_path] if parent_media_path else []) + request_references,
             **request_payload,
         },

@@ -1,7 +1,6 @@
 /* eslint-disable jsx-a11y/media-has-caption */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeftRight,
   AudioLines,
   Bot,
   Clapperboard,
@@ -32,7 +31,6 @@ import type {
   FreeCreationRequestSummary,
   FreeCreationUpload,
 } from "@/types";
-import { freeCreationUploadRole } from "@/types";
 import { errMsg } from "@/utils/async";
 import { FreeCreationInfiniteCanvas } from "./FreeCreationInfiniteCanvas";
 import { FreeCreationPreviewDialog, type FreeCreationPreviewTarget } from "./FreeCreationPreviewDialog";
@@ -48,6 +46,10 @@ import {
   modelLabel,
   VideoParameterControl,
 } from "@/components/generation/GenerationComposer";
+import {
+  FreeCreationReferenceRoleSelect,
+  referenceCompatibilityIssue,
+} from "@/components/generation/FreeCreationReferenceRoleSelect";
 
 export interface FreeCreationWorkspaceProps {
   projectName: string;
@@ -61,8 +63,6 @@ interface ComposerReference {
 }
 
 type ComposerMode = "agent" | FreeCreationMediaType;
-type ReferenceMode = "all" | "frames";
-type ReferenceUploadTarget = "all" | "first" | "last";
 
 const IMAGE_RESOLUTION_PIXELS: Record<string, number> = {
   "1.5k": 1536,
@@ -83,13 +83,6 @@ function claimKey(claim: FreeCreationReferenceClaim): string {
   return claim.type === "upload"
     ? `upload:${claim.reference_id}:${claim.role ?? "unassigned"}`
     : `creation:${claim.creation_id}:${claim.version ?? "current"}:${claim.role ?? "unassigned"}`;
-}
-
-function withReferenceRole(
-  reference: ComposerReference,
-  role: "first_frame" | "last_frame",
-): ComposerReference {
-  return { ...reference, claim: { ...reference.claim, role } };
 }
 
 interface ReferenceCardProps {
@@ -142,20 +135,14 @@ function ReferenceCard({ label, removeLabel, reference, mediaType, previewUrl, b
 export function FreeCreationWorkspace({ projectName, readOnly = false, initialMode = "video" }: FreeCreationWorkspaceProps) {
   const { t } = useTranslation("dashboard");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const uploadTargetRef = useRef<ReferenceUploadTarget>("all");
   const loadSequenceRef = useRef(0);
   const initialMediaType: FreeCreationMediaType = initialMode === "image" ? "image" : "video";
   const [mediaType, setMediaType] = useState<FreeCreationMediaType>(initialMediaType);
   const [composerMode, setComposerMode] = useState<ComposerMode>(initialMode);
   const [agentPreference, setAgentPreference] = useState<AgentGenerationPreference>("video");
   const [agentAspectRatio, setAgentAspectRatio] = useState("16:9");
-  const [referenceMode, setReferenceMode] = useState<ReferenceMode>("all");
   const [prompt, setPrompt] = useState("");
   const [allReferences, setAllReferences] = useState<ComposerReference[]>([]);
-  const [frameReferences, setFrameReferences] = useState<{
-    first: ComposerReference | null;
-    last: ComposerReference | null;
-  }>({ first: null, last: null });
   const [uploads, setUploads] = useState<FreeCreationUpload[]>([]);
   const [aspectRatio, setAspectRatio] = useState("16:9");
   const [resolution, setResolution] = useState("1080p");
@@ -192,35 +179,25 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
   const effectiveMediaType: FreeCreationMediaType = selectedParent
     ? selectedParent.media_type ?? (selectedParent.output_type === "video" ? "video" : "image")
     : mediaType;
-  const references = useMemo(
-    () => effectiveMediaType === "video" && referenceMode === "frames"
-      ? [frameReferences.first, frameReferences.last].filter((item): item is ComposerReference => Boolean(item))
-      : allReferences,
-    [allReferences, effectiveMediaType, frameReferences.first, frameReferences.last, referenceMode],
-  );
+  const references = allReferences;
   const modelOptions = useMemo(() => {
     const values = effectiveMediaType === "video" ? candidates?.video.default : candidates?.image.default;
     return [...new Set(values ?? [])];
   }, [candidates, effectiveMediaType]);
   const selectedModel = model === "auto" || modelOptions.includes(model) ? model : "auto";
 
-  const referenceKind = useMemo<"none" | "image" | "video">(() => {
-    if (effectiveMediaType !== "video") return "none";
-    if (selectedParent && (selectedParent.media_type === "video" || selectedParent.output_type === "video")) return "video";
-    for (const reference of references) {
-      const claim = reference.claim;
-      if (claim.type === "upload") {
-        const upload = uploads.find((item) => item.reference_id === claim.reference_id);
-        if (upload?.media_type === "video") return "video";
-        if (upload?.media_type === "image") return "image";
-      } else {
-        const creation = creations.find((item) => item.creation_id === claim.creation_id);
-        if (creation?.media_type === "video" || creation?.output_type === "video") return "video";
-        if (creation) return "image";
-      }
+  const referenceKind = useMemo<"none" | "frame" | "image" | "video">(() => {
+    if (effectiveMediaType !== "video") {
+      return references.some((reference) => reference.claim.role === "reference_image") ? "image" : "none";
     }
+    if (selectedParent && (selectedParent.media_type === "video" || selectedParent.output_type === "video")) return "video";
+    if (references.some((reference) => (
+      reference.claim.role === "first_frame" || reference.claim.role === "last_frame"
+    ))) return "frame";
+    if (references.some((reference) => reference.claim.role === "reference_video")) return "video";
+    if (references.some((reference) => reference.claim.role === "reference_image")) return "image";
     return "none";
-  }, [creations, effectiveMediaType, references, selectedParent, uploads]);
+  }, [effectiveMediaType, references, selectedParent]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -266,12 +243,9 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
   const safeDuration = durationOptions.reduce((closest, candidate) => (
     Math.abs(candidate - duration) < Math.abs(closest - duration) ? candidate : closest
   ), durationOptions[0] ?? duration);
-  const capabilitiesReady = effectiveMediaType !== "video"
-    || (capabilities?.output_type === "video" && ratioOptions.length > 0 && durationOptions.length > 0);
-  const supportsFirstLast = capabilities?.output_type === "video"
-    && Boolean(capabilities.modes?.includes("first_last_frame"))
-    && capabilities.input_slots?.some((slot) => slot.role === "first_frame")
-    && capabilities.input_slots.some((slot) => slot.role === "last_frame");
+  const capabilitiesReady = effectiveMediaType === "video"
+    ? capabilities?.output_type === "video" && ratioOptions.length > 0 && durationOptions.length > 0
+    : referenceKind !== "image" || capabilities?.output_type === "image";
 
   const parameterRatioOptions = useMemo(
     () => ratioOptions.map((value) => ({
@@ -335,44 +309,34 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
     return creation?.media_type === "video" || creation?.output_type === "video" ? "video" : "image";
   }, [creations, uploads]);
 
+  const referenceIssue = referenceCompatibilityIssue(
+    references.map((reference) => ({
+      mediaType: referenceMediaType(reference.claim),
+      role: reference.claim.role,
+    })),
+    capabilities,
+  );
+  const referenceIssueMessage = referenceIssue === "missing_role"
+    ? t("free_creation_reference_roles_incomplete")
+    : referenceIssue === "slot_limit"
+      ? t("free_creation_reference_role_limit")
+      : referenceIssue
+        ? t("free_creation_reference_roles_incompatible")
+        : null;
+
   const addAllReference = useCallback((claim: FreeCreationReferenceClaim, label: string) => {
-    const inferredMediaType = referenceMediaType(claim);
     const normalized: FreeCreationReferenceClaim = {
       ...claim,
-      role: freeCreationUploadRole(inferredMediaType),
+      role: undefined,
     };
     setAllReferences((current) => current.some((item) => claimKey(item.claim) === claimKey(normalized))
       ? current
       : [...current, { claim: normalized, label }]);
-  }, [referenceMediaType]);
-
-  const addFrameReference = useCallback((
-    target: "first" | "last" | "next",
-    claim: FreeCreationReferenceClaim,
-    label: string,
-  ) => {
-    if (referenceMediaType(claim) !== "image") {
-      useAppStore.getState().pushToast(t("free_creation_frames_require_images"), "error");
-      return;
-    }
-    setFrameReferences((current) => {
-      const slot = target === "next" ? (!current.first ? "first" : !current.last ? "last" : null) : target;
-      if (!slot) {
-        useAppStore.getState().pushToast(t("free_creation_frame_slots_full"), "error");
-        return current;
-      }
-      const reference = withReferenceRole({ claim, label }, slot === "first" ? "first_frame" : "last_frame");
-      return { ...current, [slot]: reference };
-    });
-  }, [referenceMediaType, t]);
+  }, []);
 
   const addReference = useCallback((claim: FreeCreationReferenceClaim, label: string) => {
-    if (effectiveMediaType === "video" && referenceMode === "frames" && supportsFirstLast) {
-      addFrameReference("next", claim, label);
-      return;
-    }
     addAllReference(claim, label);
-  }, [addAllReference, addFrameReference, effectiveMediaType, referenceMode, supportsFirstLast]);
+  }, [addAllReference]);
 
   const referenceFromShortcut = (
     event: React.MouseEvent<HTMLElement> | React.KeyboardEvent<HTMLElement>,
@@ -456,49 +420,32 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
     }
   };
 
-  const openReferencePicker = (target: ReferenceUploadTarget) => {
-    uploadTargetRef.current = target;
+  const openReferencePicker = () => {
     if (fileInputRef.current) {
-      fileInputRef.current.accept = target === "all"
-        ? "image/png,image/jpeg,image/webp,video/mp4,video/quicktime,audio/wav,audio/mpeg,text/plain,text/markdown,application/rtf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,application/epub+zip,.txt,.text,.md,.markdown,.rtf,.doc,.docx,.pdf,.epub"
-        : "image/png,image/jpeg,image/webp";
-      fileInputRef.current.multiple = target === "all";
+      fileInputRef.current.accept = "image/png,image/jpeg,image/webp,video/mp4,video/quicktime,audio/wav,audio/mpeg,text/plain,text/markdown,application/rtf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,application/epub+zip,.txt,.text,.md,.markdown,.rtf,.doc,.docx,.pdf,.epub";
+      fileInputRef.current.multiple = true;
       fileInputRef.current.click();
     }
   };
 
   const uploadReferences = async (files: FileList | null) => {
     if (!files?.length || readOnly) return;
-    const target = uploadTargetRef.current;
     const selectedFiles = Array.from(files);
-    if (target !== "all" && selectedFiles.some((file) => !file.type.startsWith("image/"))) {
-      useAppStore.getState().pushToast(t("free_creation_frames_require_images"), "error");
-      return;
-    }
     setUploading(true);
     try {
-      for (const file of target === "all" ? selectedFiles : selectedFiles.slice(0, 1)) {
+      for (const file of selectedFiles) {
         const result = await API.uploadFreeCreationReference(projectName, file);
         setUploads((current) => [result.reference, ...current.filter((item) => item.reference_id !== result.reference.reference_id)]);
         const uploadedReference: ComposerReference = {
           claim: {
             type: "upload",
             reference_id: result.reference.reference_id,
-            role: target === "first"
-              ? "first_frame"
-              : target === "last"
-                ? "last_frame"
-                : freeCreationUploadRole(result.reference.media_type),
           },
           label: result.reference.original_filename,
         };
-        if (target === "all") {
-          setAllReferences((current) => current.some((item) => claimKey(item.claim) === claimKey(uploadedReference.claim))
-            ? current
-            : [...current, uploadedReference]);
-        } else {
-          setFrameReferences((current) => ({ ...current, [target]: uploadedReference }));
-        }
+        setAllReferences((current) => current.some((item) => claimKey(item.claim) === claimKey(uploadedReference.claim))
+          ? current
+          : [...current, uploadedReference]);
       }
     } catch (uploadError) {
       useAppStore.getState().pushToast(errMsg(uploadError), "error");
@@ -514,10 +461,6 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
       await API.deleteFreeCreationReference(projectName, referenceId);
       setUploads((current) => current.filter((item) => item.reference_id !== referenceId));
       setAllReferences((current) => current.filter((item) => item.claim.type !== "upload" || item.claim.reference_id !== referenceId));
-      setFrameReferences((current) => ({
-        first: current.first?.claim.type === "upload" && current.first.claim.reference_id === referenceId ? null : current.first,
-        last: current.last?.claim.type === "upload" && current.last.claim.reference_id === referenceId ? null : current.last,
-      }));
     } catch (deleteError) {
       useAppStore.getState().pushToast(errMsg(deleteError), "error");
     }
@@ -529,10 +472,6 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
       await API.detachFreeCreationReference(projectName, referenceId);
       setUploads((current) => current.filter((item) => item.reference_id !== referenceId));
       setAllReferences((current) => current.filter((item) => item.claim.type !== "upload" || item.claim.reference_id !== referenceId));
-      setFrameReferences((current) => ({
-        first: current.first?.claim.type === "upload" && current.first.claim.reference_id === referenceId ? null : current.first,
-        last: current.last?.claim.type === "upload" && current.last.claim.reference_id === referenceId ? null : current.last,
-      }));
     } catch (detachError) {
       useAppStore.getState().pushToast(errMsg(detachError), "error");
     }
@@ -540,7 +479,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
 
   const handleSubmit = async () => {
     const cleanPrompt = prompt.trim();
-    if (!cleanPrompt || readOnly || submitting || !capabilitiesReady) return;
+    if (!cleanPrompt || readOnly || submitting || !capabilitiesReady || referenceIssue) return;
     setSubmitting(true);
     setError(null);
     const editing = Boolean(parentId);
@@ -671,12 +610,12 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
           {uploads.map((upload) => (
             <article key={upload.reference_id} className="overflow-hidden rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]" onDoubleClick={(event) => { event.preventDefault(); setPreviewTarget({ kind: "upload", upload }); }}>
               <div className="flex h-10 items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-3 text-xs"><span className="truncate font-medium">{upload.original_filename}</span><span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{t("free_creation_reference")}</span></div>
-              <div role={upload.media_type === "audio" || upload.media_type === "video" ? undefined : "button"} tabIndex={upload.media_type === "audio" || upload.media_type === "video" ? undefined : 0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id, role: freeCreationUploadRole(upload.media_type) }, upload.original_filename)} onKeyDown={upload.media_type === "audio" || upload.media_type === "video" ? undefined : (event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id, role: freeCreationUploadRole(upload.media_type) }, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
+              <div role={upload.media_type === "audio" || upload.media_type === "video" ? undefined : "button"} tabIndex={upload.media_type === "audio" || upload.media_type === "video" ? undefined : 0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id }, upload.original_filename)} onKeyDown={upload.media_type === "audio" || upload.media_type === "video" ? undefined : (event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id }, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
                 {upload.media_type === "image" ? <img src={API.getFileUrl(projectName, upload.path)} alt={upload.original_filename} className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
-                  <video src={API.getFileUrl(projectName, upload.path)} className="h-full w-full object-contain" aria-label={upload.original_filename} controls onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id, role: freeCreationUploadRole(upload.media_type) }, upload.original_filename)} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "upload", upload }); }} />
+                  <video src={API.getFileUrl(projectName, upload.path)} className="h-full w-full object-contain" aria-label={upload.original_filename} controls onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id }, upload.original_filename)} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "upload", upload }); }} />
                 ) : upload.media_type === "audio" ? <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={API.getFileUrl(projectName, upload.path)} className="w-full" aria-label={upload.original_filename} controls /></div> : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto pt-12 h-8 w-8 text-[var(--color-text-muted)]" aria-hidden />}
               </div>
-              <div className="flex justify-end px-3 py-2"><button type="button" onClick={() => addReference({ type: "upload", reference_id: upload.reference_id, role: freeCreationUploadRole(upload.media_type) }, upload.original_filename)} className="focus-ring inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button></div>
+              <div className="flex justify-end px-3 py-2"><button type="button" onClick={() => addReference({ type: "upload", reference_id: upload.reference_id }, upload.original_filename)} className="focus-ring inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button></div>
             </article>
           ))}
           {mobileCreations.map((creation) => {
@@ -709,82 +648,43 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
         <div className="rounded-md border border-[var(--color-hairline)] bg-[var(--color-background)] transition-colors focus-within:border-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent-dim)]">
           <div className="flex min-h-[96px] flex-col gap-2 p-2 sm:flex-row">
             <div className="flex max-w-full shrink-0 items-center gap-2 overflow-x-auto pb-1 sm:max-w-[45%] sm:pb-0">
-              {effectiveMediaType === "video" && referenceMode === "frames" && supportsFirstLast ? (
-                <>
-                  <ReferenceCard
-                    label={t("free_creation_first_frame")}
-                    removeLabel={t("free_creation_remove_reference")}
-                    reference={frameReferences.first}
-                    {...referenceCardData(frameReferences.first)}
-                    busy={uploading}
-                    onPick={() => openReferencePicker("first")}
-                    onRemove={() => setFrameReferences((current) => ({ ...current, first: null }))}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setFrameReferences((current) => ({
-                      first: current.last ? withReferenceRole(current.last, "first_frame") : null,
-                      last: current.first ? withReferenceRole(current.first, "last_frame") : null,
-                    }))}
-                    disabled={!frameReferences.first && !frameReferences.last}
-                    className="focus-ring grid h-8 w-8 shrink-0 place-items-center rounded-full border border-[var(--color-hairline)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] disabled:opacity-30"
-                    aria-label={t("free_creation_swap_frames")}
-                    title={t("free_creation_swap_frames")}
-                  >
-                    <ArrowLeftRight className="h-4 w-4" aria-hidden />
-                  </button>
-                  <ReferenceCard
-                    label={t("free_creation_last_frame")}
-                    removeLabel={t("free_creation_remove_reference")}
-                    reference={frameReferences.last}
-                    {...referenceCardData(frameReferences.last)}
-                    busy={uploading}
-                    onPick={() => openReferencePicker("last")}
-                    onRemove={() => setFrameReferences((current) => ({ ...current, last: null }))}
-                  />
-                </>
-              ) : (
-                <>
-                  {allReferences.map((reference) => (
+              <>
+                {allReferences.map((reference) => (
+                  <div key={claimKey(reference.claim)} className="flex w-[124px] shrink-0 flex-col items-center gap-1">
                     <ReferenceCard
-                      key={claimKey(reference.claim)}
                       label={t("free_creation_reference_content")}
                       removeLabel={t("free_creation_remove_reference")}
                       reference={reference}
                       {...referenceCardData(reference)}
                       busy={uploading}
-                      onPick={() => openReferencePicker("all")}
+                      onPick={openReferencePicker}
                       onRemove={() => setAllReferences((current) => current.filter((item) => claimKey(item.claim) !== claimKey(reference.claim)))}
                     />
-                  ))}
-                  <ReferenceCard
-                    label={t("free_creation_reference_content")}
-                    removeLabel={t("free_creation_remove_reference")}
-                    busy={uploading}
-                    onPick={() => openReferencePicker("all")}
-                  />
-                </>
-              )}
+                    <FreeCreationReferenceRoleSelect
+                      name={reference.label}
+                      mediaType={referenceMediaType(reference.claim)}
+                      outputType={effectiveMediaType}
+                      capabilities={capabilities}
+                      value={reference.claim.role}
+                      onChange={(role) => setAllReferences((current) => current.map((item) => (
+                        item === reference ? { ...item, claim: { ...item.claim, role } } : item
+                      )))}
+                    />
+                  </div>
+                ))}
+                <ReferenceCard
+                  label={t("free_creation_reference_content")}
+                  removeLabel={t("free_creation_remove_reference")}
+                  busy={uploading}
+                  onPick={openReferencePicker}
+                />
+              </>
             </div>
             <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void handleSubmit(); } }} rows={3} maxLength={10000} placeholder={t("free_creation_prompt")} className="min-h-[76px] min-w-0 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm leading-5 outline-none placeholder:text-[var(--color-text-muted)]" disabled={readOnly || submitting} />
           </div>
           <div className="composer-param-strip free-creation-parameter-strip flex items-center gap-1.5 border-t border-[var(--color-hairline)] px-2 py-2">
             <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,audio/wav,audio/mpeg,text/plain,text/markdown,application/rtf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,application/epub+zip,.txt,.text,.md,.markdown,.rtf,.doc,.docx,.pdf,.epub" className="sr-only" onChange={(event) => void uploadReferences(event.target.files)} />
             {composerModeControl}
-            {effectiveMediaType === "video" ? (
-              <HomeSelect
-                label={t("free_creation_reference_mode")}
-                value={referenceMode}
-                icon={Link2}
-                hideLabel
-                className="free-creation-reference-mode-control"
-                options={[
-                  { value: "all", label: t("free_creation_reference_mode_all") },
-                  ...(supportsFirstLast ? [{ value: "frames" as const, label: t("free_creation_reference_mode_frames") }] : []),
-                ]}
-                onChange={setReferenceMode}
-              />
-            ) : null}
             <div className="contents">
               <HomeSelect
                 label={t("home_model")}
@@ -799,10 +699,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
                   { value: "auto", label: t("home_model_auto") },
                   ...modelOptions.map((option) => ({ value: option, label: modelLabel(option, t("home_model_auto")) })),
                 ]}
-                onChange={(nextModel) => {
-                  setModel(nextModel);
-                  setReferenceMode("all");
-                }}
+                onChange={setModel}
               />
               {effectiveMediaType === "image" ? (
                 <ImageParameterControl
@@ -905,12 +802,12 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
             className={`min-h-4 min-w-0 flex-1 truncate text-xs ${capabilityError || error ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"}`}
             role={capabilityError || error ? "alert" : "status"}
           >
-            {capabilityError || error || t("free_creation_result_count", { count: totalCreations })}
+            {capabilityError || error || referenceIssueMessage || t("free_creation_result_count", { count: totalCreations })}
           </p>
           <button
             type="button"
             onClick={() => void handleSubmit()}
-            disabled={!prompt.trim() || readOnly || submitting || !capabilitiesReady}
+            disabled={!prompt.trim() || readOnly || submitting || !capabilitiesReady || Boolean(referenceIssue)}
             className="focus-ring inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-[9px] px-3 text-xs font-semibold text-[oklch(0.15_0_0)] transition-transform motion-safe:hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-40"
             style={{ background: "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))" }}
             aria-label={t("free_creation_submit")}
