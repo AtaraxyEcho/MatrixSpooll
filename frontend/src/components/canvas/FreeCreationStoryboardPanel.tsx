@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, Clapperboard, Loader2, Save, Sparkles, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Clapperboard, Film, Loader2, Save, Sparkles, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { API } from "@/api";
 import type { FreeStoryboardPlan, FreeStoryboardShot } from "@/types";
@@ -102,28 +102,35 @@ export function FreeCreationStoryboardPanel({
     setError(null);
     try {
       if (!await save()) return;
-      const generated = [] as Array<{ shotId: string; creationId: string }>;
-      for (const shot of sortedShots) {
-        const result = await API.createFreeCreation(projectName, {
-          output_type: "image",
-          prompt: shot.prompt.trim(),
-          aspect_ratio: aspectRatio,
-          resolution,
-          quantity: 1,
-          storyboard_plan_id: plan.plan_id,
-          storyboard_shot_id: shot.shot_id,
-          sequence_index: shot.sequence_index,
-        });
-        generated.push({ shotId: shot.shot_id, creationId: result.creation_id });
-      }
-      setPlan((current) => current ? {
-        ...current,
-        status: "ready",
-        shots: current.shots.map((shot) => {
-          const created = generated.find((item) => item.shotId === shot.shot_id);
-          return created ? { ...shot, image_creation_id: created.creationId } : shot;
-        }),
-      } : current);
+      const result = await API.generateFreeStoryboardBatch(projectName, plan.plan_id, {
+        shot_ids: sortedShots.map((shot) => shot.shot_id),
+        output_type: "image",
+        aspect_ratio: aspectRatio,
+        resolution,
+        expected_revision: plan.revision + 1,
+      });
+      setPlan(result.plan);
+      onCreated();
+    } catch (generationError) {
+      setError(errMsg(generationError));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const generateVideos = async () => {
+    if (!plan || generating || !sortedShots.length || sortedShots.some((shot) => !shot.image_creation_id)) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const result = await API.generateFreeStoryboardBatch(projectName, plan.plan_id, {
+        shot_ids: sortedShots.map((shot) => shot.shot_id),
+        output_type: "video",
+        aspect_ratio: aspectRatio,
+        resolution,
+        expected_revision: plan.revision,
+      });
+      setPlan(result.plan);
       onCreated();
     } catch (generationError) {
       setError(errMsg(generationError));
@@ -184,6 +191,7 @@ export function FreeCreationStoryboardPanel({
         {plan ? <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--color-hairline)] px-5 py-3">
           <button type="button" onClick={() => void save()} disabled={saving || generating} className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--color-hairline-strong)] px-3 text-xs font-medium text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.06)] disabled:opacity-50"><Save className="h-3.5 w-3.5" aria-hidden />{saving ? t("free_creation_storyboard_saving") : t("free_creation_storyboard_save")}</button>
           <button type="button" onClick={() => void generateImages()} disabled={generating || saving || !sortedShots.length} className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-xs font-semibold text-[oklch(0.15 0 0)] disabled:opacity-50" style={{ background: "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))" }}>{generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="h-3.5 w-3.5" aria-hidden />}{t("free_creation_storyboard_generate_images")}</button>
+          <button type="button" onClick={() => void generateVideos()} disabled={generating || saving || !sortedShots.length || sortedShots.some((shot) => !shot.image_creation_id)} className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--color-hairline-strong)] px-3 text-xs font-medium text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.06)] disabled:opacity-50"><Film className="h-3.5 w-3.5" aria-hidden />{t("free_creation_storyboard_generate_videos")}</button>
         </footer> : null}
       </section>
     </div>

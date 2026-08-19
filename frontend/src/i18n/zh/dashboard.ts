@@ -133,6 +133,7 @@ export default {
   'free_creation_storyboard_save': '保存分镜计划',
   'free_creation_storyboard_saving': '保存中…',
   'free_creation_storyboard_generate_images': '生成分镜图',
+  'free_creation_storyboard_generate_videos': '生成镜头视频',
   'free_creation_storyboard_image_ready': '分镜图已生成',
   'free_creation_storyboard_shot_badge': '镜头 {{index}}',
   'home_hero_eyebrow': '输入即所得',

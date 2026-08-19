@@ -4,6 +4,7 @@ MESSAGES = {
     "free_creation_storyboard_order_invalid": "分镜顺序无效",
     "free_creation_storyboard_shot_not_found": "分镜镜头不存在",
     "free_creation_storyboard_conflict": "分镜已在其他位置发生变化，请刷新后再保存",
+    "free_creation_storyboard_image_required": "请先为所有选中的镜头生成分镜图",
     "project_migration_failed": "项目 '{name}' 的数据升级未完成，暂时无法生成内容。原因：{reason}。请在智能体对话中修复后重试升级",
     "project_not_found": "项目 '{name}' 不存在或未初始化",
     "resource_not_found": "请求的资源不存在",

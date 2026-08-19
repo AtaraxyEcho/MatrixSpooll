@@ -241,6 +241,29 @@ class StoryboardPlanUpdate(BaseModel):
     expected_revision: int | None = Field(default=None, ge=1)
 
 
+class StoryboardBatchRequest(BaseModel):
+    shot_ids: list[str] = Field(min_length=1, max_length=MAX_STORYBOARD_SHOTS)
+    output_type: Literal["image", "video"] = "image"
+    model: str | None = Field(default=None, max_length=200)
+    aspect_ratio: str | None = Field(default=None, min_length=3, max_length=32)
+    resolution: str | None = Field(default=None, max_length=32)
+    duration_seconds: int | None = Field(default=None, gt=0)
+    expected_revision: int | None = Field(default=None, ge=1)
+
+    @field_validator("aspect_ratio")
+    @classmethod
+    def validate_batch_aspect_ratio(cls, value: str | None) -> str | None:
+        if value is not None and not is_valid_aspect_ratio(value):
+            raise ValueError("aspect_ratio must be a positive width:height ratio")
+        return value.strip() if value else value
+
+    @model_validator(mode="after")
+    def validate_batch_duration(self) -> StoryboardBatchRequest:
+        if self.output_type == "image" and self.duration_seconds is not None:
+            raise ValueError("duration_seconds is only supported for video")
+        return self
+
+
 def _free_creation_request_status(creations: Sequence[dict[str, Any]]) -> str:
     statuses = [str(item.get("status") or "queued") for item in creations]
     if not statuses:
@@ -1174,6 +1197,167 @@ async def delete_free_storyboard_plan(project_name: str, plan_id: str):
     except FileNotFoundError as exc:
         raise NotFoundError("free_creation_storyboard_not_found", id=plan_id) from exc
     return {"success": True}
+
+
+async def _preflight_storyboard_batch_item(
+    project_name: str,
+    project: dict[str, Any],
+    project_path: Path,
+    request: FreeCreationRequest,
+    *,
+    user_id: str,
+) -> None:
+    public_references = [
+        item if isinstance(item, str) else item.model_dump(exclude_none=True) for item in request.references
+    ]
+    try:
+        resolved_references, reference_claims = await asyncio.to_thread(
+            resolve_reference_claims,
+            project_path,
+            public_references,
+            load_creation=load_creation_metadata,
+        )
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_reference_not_found", id=str(exc)) from exc
+    except ValueError as exc:
+        raise BadRequestError("free_creation_reference_invalid") from exc
+    media_type: Literal["image", "video"] = "video" if request.output_type == "video" else "image"
+    await asyncio.to_thread(_validate_references, project_path, resolved_references, media_type, reference_claims)
+    _validate_reference_roles(request.references, resolved_references, media_type)
+    await _preflight_free_creation(
+        project_name,
+        project,
+        project_path,
+        request.model_copy(update={"references": resolved_references}),
+        media_type=media_type,
+        reference_claims=reference_claims,
+        user_id=user_id,
+    )
+
+
+@router.post("/projects/{project_name}/free-creation-storyboards/{plan_id}/generate")
+async def generate_free_storyboard_batch(
+    project_name: str,
+    plan_id: str,
+    req: StoryboardBatchRequest,
+    user: CurrentUser,
+):
+    project, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    plan = await asyncio.to_thread(load_storyboard_plan, project_path, plan_id)
+    if plan is None:
+        raise NotFoundError("free_creation_storyboard_not_found", id=plan_id)
+    if req.expected_revision is not None and req.expected_revision != plan["revision"]:
+        raise ConflictError("free_creation_storyboard_conflict")
+    if len(set(req.shot_ids)) != len(req.shot_ids):
+        raise BadRequestError("free_creation_storyboard_order_invalid")
+    shots_by_id = {
+        item.get("shot_id"): item
+        for item in plan.get("shots", [])
+        if isinstance(item, dict) and isinstance(item.get("shot_id"), str)
+    }
+    if any(shot_id not in shots_by_id for shot_id in req.shot_ids):
+        raise BadRequestError("free_creation_storyboard_shot_not_found")
+    ordered_shots = [shots_by_id[shot_id] for shot_id in req.shot_ids]
+    requests: list[FreeCreationRequest] = []
+    for shot in ordered_shots:
+        references: list[str | FreeCreationReference] = []
+        duration = req.duration_seconds or int(shot.get("duration_seconds") or 5)
+        if req.output_type == "video":
+            image_creation_id = shot.get("image_creation_id")
+            if not isinstance(image_creation_id, str):
+                raise BadRequestError("free_creation_storyboard_image_required")
+            image_creation = await asyncio.to_thread(load_creation_metadata, project_path, image_creation_id)
+            version = image_creation.get("version") if isinstance(image_creation, dict) else None
+            if (
+                not isinstance(image_creation, dict)
+                or image_creation.get("status") != "succeeded"
+                or not isinstance(version, int)
+            ):
+                raise BadRequestError("free_creation_storyboard_image_required")
+            references.append(
+                FreeCreationReference(
+                    type="creation",
+                    creation_id=image_creation_id,
+                    version=version,
+                    role="first_frame",
+                )
+            )
+        requests.append(
+            FreeCreationRequest(
+                output_type=req.output_type,
+                prompt=str(shot.get("prompt") or "").strip(),
+                references=references,
+                model=req.model,
+                aspect_ratio=req.aspect_ratio,
+                resolution=req.resolution,
+                duration_seconds=duration if req.output_type == "video" else None,
+                storyboard_plan_id=plan_id,
+                storyboard_shot_id=str(shot["shot_id"]),
+                sequence_index=int(shot.get("sequence_index") or 0),
+            )
+        )
+    for request in requests:
+        await _preflight_storyboard_batch_item(
+            project_name,
+            project,
+            project_path,
+            request,
+            user_id=user.id,
+        )
+
+    results: list[dict[str, Any]] = []
+    try:
+        for request in requests:
+            results.append(await create_free_creation(project_name, request, user))
+    except BaseException:
+        compensated: list[dict[str, Any]] = []
+        for result in results:
+            for item in result.get("creations", []):
+                creation_id = item.get("creation_id")
+                if not isinstance(creation_id, str):
+                    continue
+                metadata = await asyncio.to_thread(load_creation_metadata, project_path, creation_id)
+                if isinstance(metadata, dict) and isinstance(metadata.get("task_id"), str):
+                    compensated.append(
+                        {
+                            "creation_id": creation_id,
+                            "task_id": metadata["task_id"],
+                            "metadata": metadata,
+                        }
+                    )
+        await _compensate_partial_batch(project_path, compensated)
+        raise
+
+    creation_by_shot: dict[str, str] = {}
+    request_ids: list[str] = []
+    task_ids: list[str] = []
+    for request, result in zip(requests, results, strict=True):
+        shot_id = str(request.storyboard_shot_id)
+        creation_by_shot[shot_id] = result["creation_id"]
+        if isinstance(result.get("request_id"), str):
+            request_ids.append(result["request_id"])
+        if isinstance(result.get("task_id"), str):
+            task_ids.append(result["task_id"])
+    updated_shots = []
+    output_key = "image_creation_id" if req.output_type == "image" else "video_creation_id"
+    for shot in plan["shots"]:
+        shot_id = shot.get("shot_id")
+        updated_shots.append(
+            {**shot, **({output_key: creation_by_shot[shot_id]} if shot_id in creation_by_shot else {})}
+        )
+    updated_plan = await asyncio.to_thread(
+        save_storyboard_plan,
+        project_path,
+        {**plan, "shots": updated_shots, "status": "generating"},
+        expected_revision=plan["revision"],
+    )
+    return {
+        "success": True,
+        "plan": updated_plan,
+        "request_ids": request_ids,
+        "task_ids": task_ids,
+        "creation_ids": list(creation_by_shot.values()),
+    }
 
 
 @router.get("/projects/{project_name}/free-creation-canvas")

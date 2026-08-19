@@ -132,6 +132,7 @@ export default {
   'free_creation_storyboard_save': 'Save storyboard plan',
   'free_creation_storyboard_saving': 'Saving…',
   'free_creation_storyboard_generate_images': 'Generate storyboard images',
+  'free_creation_storyboard_generate_videos': 'Generate shot videos',
   'free_creation_storyboard_image_ready': 'Storyboard image ready',
   'free_creation_storyboard_shot_badge': 'Shot {{index}}',
   'home_hero_eyebrow': 'Prompt to result',
