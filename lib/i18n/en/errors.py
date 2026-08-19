@@ -447,4 +447,5 @@ MESSAGES = {
     "free_creation_storyboard_order_invalid": "Storyboard shot order is invalid",
     "free_creation_storyboard_shot_not_found": "The storyboard shot does not exist",
     "free_creation_storyboard_conflict": "This storyboard changed elsewhere. Reload it before saving",
+    "free_creation_storyboard_image_required": "Generate a storyboard image for every selected shot first",
 }

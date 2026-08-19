@@ -73,6 +73,7 @@ import type {
   FreeCreationUpload,
   FreeStoryboardPlan,
   FreeStoryboardShot,
+  FreeStoryboardBatchResult,
 } from "@/types";
 import type { GenerationRoute } from "@/utils/generation-mode";
 import type { GridCapability, GridGeneration } from "@/types/grid";
@@ -1054,6 +1055,25 @@ class API {
     return this.request(
       `/projects/${encodeURIComponent(projectName)}/free-creation-storyboards/${encodeURIComponent(planId)}`,
       { method: "DELETE" },
+    );
+  }
+
+  static async generateFreeStoryboardBatch(
+    projectName: string,
+    planId: string,
+    payload: {
+      shot_ids: string[];
+      output_type: "image" | "video";
+      model?: string;
+      aspect_ratio?: string;
+      resolution?: string;
+      duration_seconds?: number;
+      expected_revision?: number;
+    },
+  ): Promise<FreeStoryboardBatchResult> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/free-creation-storyboards/${encodeURIComponent(planId)}/generate`,
+      { method: "POST", body: JSON.stringify(payload) },
     );
   }
 

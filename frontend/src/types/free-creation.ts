@@ -146,3 +146,11 @@ export interface FreeStoryboardPlan {
   created_at: string;
   updated_at: string;
 }
+
+export interface FreeStoryboardBatchResult {
+  success: boolean;
+  plan: FreeStoryboardPlan;
+  request_ids: string[];
+  task_ids: string[];
+  creation_ids: string[];
+}

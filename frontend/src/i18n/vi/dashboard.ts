@@ -1908,6 +1908,7 @@ export default {
   'free_creation_storyboard_save': 'Lưu storyboard',
   'free_creation_storyboard_saving': 'Đang lưu…',
   'free_creation_storyboard_generate_images': 'Tạo ảnh storyboard',
+  'free_creation_storyboard_generate_videos': 'Tạo video cảnh',
   'free_creation_storyboard_image_ready': 'Ảnh storyboard đã sẵn sàng',
   'free_creation_storyboard_shot_badge': 'Cảnh {{index}}',
 } satisfies Record<keyof typeof enDashboard, string>;
