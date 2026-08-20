@@ -29,6 +29,7 @@ from lib.project_manager import get_project_manager
 from lib.video_backends.base import VideoCapabilityError
 from server.auth import CurrentUser, CurrentUserFlexible
 from server.services.free_creation_merge import merge_video_creations
+from server.services.free_creation_planner import effective_free_creation_mode
 from server.services.free_creation_tasks import (
     list_creation_metadata,
     load_creation_metadata,
@@ -44,6 +45,7 @@ from server.services.free_creation_workspace import (
     delete_reference_upload,
     delete_storyboard_plan,
     delete_subtitle_track,
+    derive_storyboard_plan_status,
     detach_reference_upload,
     list_creation_requests,
     list_reference_uploads,
@@ -594,7 +596,6 @@ async def _preflight_free_creation(
     req: FreeCreationRequest,
     *,
     media_type: Literal["image", "video"],
-    parent_media_path: str | None = None,
     reference_claims: list[dict[str, Any]] | None = None,
     user_id: str,
 ) -> dict[str, Any]:
@@ -603,7 +604,7 @@ async def _preflight_free_creation(
     payload = _free_request_payload(req, media_type)
     capability_payload = {
         **payload,
-        "references": ([parent_media_path] if parent_media_path else []) + list(req.references),
+        "references": list(req.references),
         "reference_claims": reference_claims or [],
     }
     role_counts: dict[str, int] = {}
@@ -634,9 +635,7 @@ async def _preflight_free_creation(
                 image_count = sum(Path(item).suffix.lower() in _IMAGE_REFERENCE_SUFFIXES for item in reference_names)
                 video_count = sum(Path(item).suffix.lower() in _VIDEO_REFERENCE_SUFFIXES for item in reference_names)
                 audio_count = sum(Path(item).suffix.lower() in _AUDIO_REFERENCE_SUFFIXES for item in reference_names)
-            has_visual_input = bool(
-                parent_media_path or first_frame_count or last_frame_count or image_count or video_count
-            )
+            has_visual_input = bool(first_frame_count or last_frame_count or image_count or video_count)
             model_name = f"{ctx.video.provider_model.provider_id}/{ctx.video.backend_model}"
             if not has_visual_input and not getattr(ctx.video, "text_to_video", True):
                 raise VideoCapabilityError(
@@ -765,7 +764,7 @@ async def _preflight_free_creation(
 async def get_free_creation_capabilities(
     output_type: Literal["image", "video"] = Query(default="video"),
     model: str | None = Query(default=None, max_length=200),
-    reference_kind: Literal["none", "frame", "image", "video"] = Query(default="none"),
+    reference_kind: Literal["none", "frame", "image", "video", "audio"] = Query(default="none"),
     project_name: str | None = None,
 ):
     """Return the effective model capabilities used by the free composer."""
@@ -787,7 +786,9 @@ async def get_free_creation_capabilities(
     )
     try:
         if output_type == "video":
-            capability = "i2v" if reference_kind == "frame" else "r2v" if reference_kind in {"image", "video"} else None
+            capability = (
+                "i2v" if reference_kind == "frame" else "r2v" if reference_kind in {"image", "video", "audio"} else None
+            )
             resolved = await resolver.resolve_video_backend(project, payload, capability=capability)
             caps = await resolver.video_capabilities_for_model(resolved.provider_id, resolved.model_id, project)
             info = model_info_for(resolved.provider_id, resolved.model_id)
@@ -933,25 +934,16 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
         raise NotFoundError("free_creation_reference_not_found", id=str(exc)) from exc
     except ValueError as exc:
         raise BadRequestError("free_creation_reference_invalid") from exc
-    roles = [claim.get("role") for claim in reference_claims if claim.get("role")]
-    if "first_frame" in roles and "last_frame" in roles:
-        effective_mode = "first_last_frame"
-    elif "first_frame" in roles:
-        effective_mode = "first_frame"
-    elif "reference_video" in roles:
-        effective_mode = "reference_video"
-    elif "reference_image" in roles:
-        effective_mode = "reference_image"
-    else:
-        effective_mode = "t2v" if req.output_type == "video" else req.output_type
-    execution_req = req.model_copy(update={"references": resolved_references})
+    execution_references = list(resolved_references)
+    execution_claims = list(reference_claims)
     parent: dict[str, Any] | None = None
-    parent_media_path: str | None = None
-    media_type: Literal["image", "video"] = "video" if execution_req.output_type == "video" else "image"
-    if execution_req.parent_creation_id:
-        parent = await asyncio.to_thread(load_creation_metadata, project_path, execution_req.parent_creation_id)
+    media_type: Literal["image", "video"] = "video" if req.output_type == "video" else "image"
+    if req.parent_creation_id:
+        parent = await asyncio.to_thread(load_creation_metadata, project_path, req.parent_creation_id)
         if not parent or parent.get("output_type") not in {"image", "video", "edit"}:
-            raise NotFoundError("free_creation_parent_not_found", id=execution_req.parent_creation_id)
+            raise NotFoundError("free_creation_parent_not_found", id=req.parent_creation_id)
+        if parent.get("status") != "succeeded":
+            raise NotFoundError("free_creation_parent_not_found", id=req.parent_creation_id)
         raw_media_type = parent.get("media_type")
         media_type = (
             raw_media_type
@@ -959,16 +951,40 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
             else ("video" if parent.get("output_type") == "video" else "image")
         )
         parent_media = parent.get("media_path")
-        parent_media_path = parent_media if isinstance(parent_media, str) else None
+        if not isinstance(parent_media, str):
+            raise NotFoundError("free_creation_parent_not_found", id=req.parent_creation_id)
         try:
-            parent_path = safe_join(project_path, parent_media) if isinstance(parent_media, str) else None
+            parent_path = safe_join(project_path, parent_media)
         except PathTraversalError as exc:
-            raise NotFoundError("free_creation_parent_not_found", id=execution_req.parent_creation_id) from exc
-        if parent_path is None or not parent_path.is_file():
-            raise NotFoundError("free_creation_parent_not_found", id=execution_req.parent_creation_id)
+            raise NotFoundError("free_creation_parent_not_found", id=req.parent_creation_id) from exc
+        if not parent_path.is_file():
+            raise NotFoundError("free_creation_parent_not_found", id=req.parent_creation_id)
+        if media_type == "video":
+            raise BadRequestError("free_creation_video_edit_unsupported")
+        parent_version = parent.get("version")
+        parent_reference = {
+            "type": "creation",
+            "creation_id": req.parent_creation_id,
+            **({"version": parent_version} if type(parent_version) is int and parent_version > 0 else {}),
+            "role": "reference_image",
+        }
+        try:
+            parent_paths, parent_claims = await asyncio.to_thread(
+                resolve_reference_claims,
+                project_path,
+                [parent_reference],
+                load_creation=load_creation_metadata,
+            )
+        except FileNotFoundError as exc:
+            raise NotFoundError("free_creation_parent_not_found", id=req.parent_creation_id) from exc
+        execution_references.insert(0, parent_paths[0])
+        execution_claims.insert(0, parent_claims[0])
 
-    await asyncio.to_thread(_validate_references, project_path, resolved_references, media_type, reference_claims)
-    _validate_reference_roles(req.references, resolved_references, media_type)
+    execution_req = req.model_copy(update={"references": execution_references})
+    effective_mode = effective_free_creation_mode(execution_req.output_type, execution_claims)
+
+    await asyncio.to_thread(_validate_references, project_path, execution_references, media_type, execution_claims)
+    _validate_reference_roles(execution_claims, execution_references, media_type)
     if media_type == "image" and execution_req.duration_seconds is not None:
         raise BadRequestError("request_invalid")
     if media_type == "video" and execution_req.size is not None:
@@ -980,8 +996,7 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
         project_path,
         execution_req,
         media_type=media_type,
-        parent_media_path=parent_media_path,
-        reference_claims=reference_claims,
+        reference_claims=execution_claims,
         user_id=user.id,
     )
     request_id = new_request_id()
@@ -991,8 +1006,8 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
         **request_payload,
         "request_id": request_id,
         "media_type": media_type,
-        "references": ([parent_media_path] if parent_media_path else []) + resolved_references,
-        "reference_claims": reference_claims,
+        "references": execution_references,
+        "reference_claims": execution_claims,
         "effective_mode": effective_mode,
     }
     try:
@@ -1027,7 +1042,7 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
                 "prompt": execution_req.prompt.strip(),
                 "prompt_mode": execution_req.prompt_mode,
                 "references": task_payload["references"],
-                "reference_claims": reference_claims,
+                "reference_claims": execution_claims,
                 "effective_mode": effective_mode,
                 "aspect_ratio": execution_req.aspect_ratio or project.get("aspect_ratio") or "9:16",
                 "resolution": execution_req.resolution,
@@ -1063,7 +1078,7 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
                 "output_type": execution_req.output_type,
                 "media_type": media_type,
                 "prompt": execution_req.prompt,
-                "reference_claims": reference_claims,
+                "reference_claims": execution_claims,
                 "effective_mode": effective_mode,
                 "model": request_payload.get("model"),
                 "aspect_ratio": execution_req.aspect_ratio or project.get("aspect_ratio") or "9:16",
@@ -1184,12 +1199,29 @@ async def create_free_creation_voice(project_name: str, req: FreeVoiceRequest, u
     if voice not in {item.id for item in ctx.audio.voices}:
         raise BadRequestError("free_creation_voice_unsupported", voice=voice)
     resource_id = new_creation_id()
+    request_id = new_request_id()
+    model = f"{ctx.audio.provider_model.provider_id}/{ctx.audio.backend_model}"
+    metadata = {
+        "creation_id": resource_id,
+        "request_id": request_id,
+        "output_type": "audio",
+        "media_type": "audio",
+        "prompt": req.text,
+        "prompt_mode": "original",
+        "model": model,
+        "references": [],
+        "reference_claims": [],
+        "effective_mode": "text_to_speech",
+        "voice": voice,
+        "text": req.text,
+        "quantity": 1,
+    }
     spec = TaskSpec.from_request(
         task_type="free_audio",
         media_type="audio",
         resource_id=resource_id,
         prompt=req.text,
-        extra_payload={"text": req.text, "voice": voice},
+        extra_payload={**metadata, "text": req.text, "voice": voice},
         source="webui",
     )
     result = await get_generation_queue().enqueue_task(
@@ -1201,7 +1233,27 @@ async def create_free_creation_voice(project_name: str, req: FreeVoiceRequest, u
         source=spec.source,
         user_id=user.id,
     )
-    return {"success": True, "task_id": result["task_id"], "voice": voice, "resource_id": resource_id}
+    task_id = str(result["task_id"])
+    enqueued = [{"creation_id": resource_id, "task_id": task_id, "metadata": metadata}]
+    try:
+        await asyncio.to_thread(_record_enqueued_metadata, project_path, resource_id, task_id, metadata)
+        await asyncio.to_thread(
+            write_creation_request,
+            project_path,
+            request_id,
+            {**metadata, "creation_ids": [resource_id]},
+        )
+    except BaseException:
+        await _compensate_partial_batch(project_path, enqueued)
+        raise
+    return {
+        "success": True,
+        "request_id": request_id,
+        "creation_id": resource_id,
+        "task_id": task_id,
+        "voice": voice,
+        "resource_id": resource_id,
+    }
 
 
 @router.post("/projects/{project_name}/free-creation-storyboards/plan")
@@ -1239,7 +1291,13 @@ async def create_free_storyboard_plan(project_name: str, req: StoryboardPlanRequ
 @router.get("/projects/{project_name}/free-creation-storyboards")
 async def list_free_storyboard_plans(project_name: str, limit: int = Query(default=50, ge=1, le=100)):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
-    return {"plans": await asyncio.to_thread(list_storyboard_plans, project_path, limit)}
+    plans = await asyncio.to_thread(list_storyboard_plans, project_path, limit)
+    return {
+        "plans": [
+            {**plan, "status": derive_storyboard_plan_status(project_path, plan, load_creation=load_creation_metadata)}
+            for plan in plans
+        ]
+    }
 
 
 @router.get("/projects/{project_name}/free-creation-storyboards/{plan_id}")
@@ -1248,7 +1306,12 @@ async def get_free_storyboard_plan(project_name: str, plan_id: str):
     plan = await asyncio.to_thread(load_storyboard_plan, project_path, plan_id)
     if plan is None:
         raise NotFoundError("free_creation_storyboard_not_found", id=plan_id)
-    return {"plan": plan}
+    return {
+        "plan": {
+            **plan,
+            "status": derive_storyboard_plan_status(project_path, plan, load_creation=load_creation_metadata),
+        }
+    }
 
 
 @router.put("/projects/{project_name}/free-creation-storyboards/{plan_id}")
@@ -1672,7 +1735,11 @@ async def get_free_creation_media(project_name: str, creation_id: CreationId, _u
     if not path.is_file():
         raise NotFoundError("free_creation_media_not_found", id=creation_id)
     media_type = (
-        "video/mp4" if creation.get("media_type") == "video" or creation.get("output_type") == "video" else "image/png"
+        "video/mp4"
+        if creation.get("media_type") == "video" or creation.get("output_type") == "video"
+        else "audio/wav"
+        if creation.get("media_type") == "audio" or creation.get("output_type") == "audio"
+        else "image/png"
     )
     return FileResponse(path, media_type=media_type)
 
@@ -1717,8 +1784,63 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
         raise ConflictError("free_creation_retry_not_ready")
     output_type = creation.get("output_type")
     prompt = creation.get("prompt")
-    if output_type not in {"image", "video", "edit"} or not isinstance(prompt, str) or not prompt.strip():
+    if output_type not in {"image", "video", "edit", "audio"} or not isinstance(prompt, str) or not prompt.strip():
         raise BadRequestError("request_invalid")
+    if output_type == "audio":
+        try:
+            ctx = await resolve_generation_context(
+                project_name,
+                None,
+                project=project,
+                project_path=project_path,
+                user_id=user.id,
+                audio=AudioLaneRequest(),
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise BadRequestError("free_creation_audio_unavailable") from exc
+        stored_voice = creation.get("voice")
+        voice = (
+            stored_voice.strip()
+            if isinstance(stored_voice, str) and stored_voice.strip()
+            else ctx.audio.narration_voice
+        )
+        if voice not in {item.id for item in ctx.audio.voices}:
+            raise BadRequestError("free_creation_voice_unsupported", voice=voice)
+        model = f"{ctx.audio.provider_model.provider_id}/{ctx.audio.backend_model}"
+        spec = TaskSpec.from_request(
+            task_type="free_audio",
+            media_type="audio",
+            resource_id=creation_id,
+            prompt=prompt,
+            source="webui",
+            extra_payload={
+                "output_type": "audio",
+                "media_type": "audio",
+                "request_id": creation.get("request_id"),
+                "effective_mode": "text_to_speech",
+                "model": model,
+                "text": prompt,
+                "voice": voice,
+            },
+        )
+        queue_result = await get_generation_queue().enqueue_task(
+            project_name=project_name,
+            task_type=spec.task_type,
+            media_type=spec.media_type,
+            resource_id=spec.resource_id,
+            payload=spec.payload,
+            source=spec.source,
+            user_id=user.id,
+        )
+        task_id = str(queue_result["task_id"])
+        await asyncio.to_thread(
+            _record_enqueued_metadata,
+            project_path,
+            creation_id,
+            task_id,
+            {"model": model, "text": prompt, "voice": voice},
+        )
+        return {"success": True, "creation_id": creation_id, "task_id": task_id}
     references = creation.get("references") or []
     if not isinstance(references, list) or not all(isinstance(item, str) for item in references):
         raise BadRequestError("free_creation_reference_invalid")
@@ -1726,13 +1848,18 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
     media_type: Literal["image", "video"] = (
         raw_media_type if raw_media_type in {"image", "video"} else ("video" if output_type == "video" else "image")
     )
-    parent_media_path: str | None = None
+    task_references = list(references)
+    parent_id: str | None = None
+    parent: dict[str, Any] | None = None
+    parent_media: str | None = None
     if output_type == "edit":
         parent_id = creation.get("parent_creation_id")
         if not isinstance(parent_id, str):
             raise BadRequestError("request_invalid")
         parent = await asyncio.to_thread(load_creation_metadata, project_path, parent_id)
         if not parent or parent.get("output_type") not in {"image", "video", "edit"}:
+            raise NotFoundError("free_creation_parent_not_found", id=parent_id)
+        if parent.get("status") != "succeeded":
             raise NotFoundError("free_creation_parent_not_found", id=parent_id)
         parent_type = parent.get("media_type")
         media_type = (
@@ -1741,21 +1868,66 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
             else ("video" if parent.get("output_type") == "video" else "image")
         )
         parent_media = parent.get("media_path")
+        if not isinstance(parent_media, str):
+            raise NotFoundError("free_creation_parent_not_found", id=parent_id)
         try:
-            parent_path = safe_join(project_path, parent_media) if isinstance(parent_media, str) else None
+            parent_path = safe_join(project_path, parent_media)
         except PathTraversalError as exc:
             raise NotFoundError("free_creation_parent_not_found", id=parent_id) from exc
-        if parent_path is None or not parent_path.is_file():
+        if not parent_path.is_file():
             raise NotFoundError("free_creation_parent_not_found", id=parent_id)
-        parent_media_path = parent_media
-    request_references = [item for item in references if item != parent_media_path]
+        if media_type == "video":
+            raise BadRequestError("free_creation_video_edit_unsupported")
     stored_claims = creation.get("reference_claims")
-    validation_claims = stored_claims if isinstance(stored_claims, list) else None
-    await asyncio.to_thread(_validate_references, project_path, request_references, media_type, validation_claims)
+    validation_claims = list(stored_claims) if isinstance(stored_claims, list) else None
+    if output_type == "edit":
+        assert parent_id is not None and parent is not None and parent_media is not None
+        parent_claim = next(
+            (
+                item
+                for item in validation_claims or []
+                if isinstance(item, dict) and item.get("creation_id") == parent_id
+            ),
+            None,
+        )
+        parent_version = parent_claim.get("version") if isinstance(parent_claim, dict) else parent.get("version")
+        public_parent_reference = {
+            "type": "creation",
+            "creation_id": parent_id,
+            **({"version": parent_version} if type(parent_version) is int and parent_version > 0 else {}),
+            "role": "reference_image",
+        }
+        try:
+            parent_paths, parent_claims = await asyncio.to_thread(
+                resolve_reference_claims,
+                project_path,
+                [public_parent_reference],
+                load_creation=load_creation_metadata,
+            )
+        except FileNotFoundError as exc:
+            raise NotFoundError("free_creation_parent_not_found", id=parent_id) from exc
+        stored_parent_index = next(
+            (
+                index
+                for index, item in enumerate(validation_claims or [])
+                if isinstance(item, dict) and item.get("creation_id") == parent_id
+            ),
+            None,
+        )
+        if stored_parent_index is not None and len(task_references) == len(validation_claims or []):
+            task_references.pop(stored_parent_index)
+            assert validation_claims is not None
+            validation_claims.pop(stored_parent_index)
+        elif task_references and task_references[0] == parent_media:
+            task_references.pop(0)
+        if validation_claims is not None:
+            validation_claims.insert(0, parent_claims[0])
+        task_references.insert(0, parent_paths[0])
+    await asyncio.to_thread(_validate_references, project_path, task_references, media_type, validation_claims)
     retry_request = FreeCreationRequest(
         output_type=output_type,
         prompt=prompt,
-        references=request_references,
+        references=task_references,
         aspect_ratio=creation.get("aspect_ratio") or project.get("aspect_ratio"),
         resolution=creation.get("resolution"),
         size=creation.get("size"),
@@ -1773,7 +1945,6 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
         project_path,
         retry_request,
         media_type=media_type,
-        parent_media_path=parent_media_path,
         reference_claims=validation_claims,
         user_id=user.id,
     )
@@ -1788,9 +1959,9 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
             "output_type": output_type,
             "media_type": media_type,
             "request_id": creation.get("request_id"),
-            "reference_claims": creation.get("reference_claims") or [],
+            "reference_claims": validation_claims or [],
             "effective_mode": creation.get("effective_mode"),
-            "references": ([parent_media_path] if parent_media_path else []) + request_references,
+            "references": task_references,
             **request_payload,
         },
     )
@@ -1804,7 +1975,13 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
         user_id=user.id,
     )
     task_id = str(queue_result["task_id"])
-    await asyncio.to_thread(_record_enqueued_metadata, project_path, creation_id, task_id, {})
+    await asyncio.to_thread(
+        _record_enqueued_metadata,
+        project_path,
+        creation_id,
+        task_id,
+        {"references": task_references, "reference_claims": validation_claims or []},
+    )
     return {"success": True, "creation_id": creation_id, "task_id": task_id}
 
 

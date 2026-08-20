@@ -13,3 +13,7 @@
 - [minimax](minimax.md)
 - [openai](openai.md)
 - [vidu](vidu.md)
+
+## 自定义 endpoint 协议
+
+- [anyfast](anyfast.md)

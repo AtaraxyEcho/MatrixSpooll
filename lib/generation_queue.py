@@ -137,7 +137,7 @@ def free_video_capability(payload: dict[str, Any] | None) -> VideoCapability | N
     claims = (payload or {}).get("reference_claims")
     if isinstance(claims, list):
         roles = {item.get("role") for item in claims if isinstance(item, dict)}
-        if roles & {"reference_image", "reference_video"}:
+        if roles & {"reference_image", "reference_video", "reference_audio"}:
             return "r2v"
         if roles & {"first_frame", "last_frame"}:
             return "i2v"

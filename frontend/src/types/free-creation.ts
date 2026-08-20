@@ -1,5 +1,6 @@
-export type FreeCreationOutputType = "image" | "video" | "edit";
+export type FreeCreationOutputType = "image" | "video" | "audio" | "edit";
 export type FreeCreationMediaType = "image" | "video";
+export type FreeCreationArtifactMediaType = FreeCreationMediaType | "audio";
 export type FreeCreationUploadMediaType = "image" | "video" | "audio" | "text";
 export type FreeCreationReferenceRole =
   | "first_frame"
@@ -44,7 +45,7 @@ export interface FreeCreation {
   request_id?: string;
   status: "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
   output_type: FreeCreationOutputType;
-  media_type?: FreeCreationMediaType;
+  media_type?: FreeCreationArtifactMediaType;
   prompt?: string;
   prompt_mode?: "original";
   references?: string[];
@@ -73,7 +74,7 @@ export interface FreeCreationRequestSummary {
   request_id: string;
   prompt: string;
   output_type: FreeCreationOutputType;
-  media_type: FreeCreationMediaType;
+  media_type: FreeCreationArtifactMediaType;
   effective_mode?: string | null;
   model?: string | null;
   reference_claims: FreeCreationReferenceClaim[];
@@ -141,7 +142,7 @@ export interface FreeStoryboardPlan {
   title: string;
   source?: { type: "upload"; reference_id: string } | { type: "prompt"; text: string } | null;
   revision: number;
-  status: "draft" | "generating" | "ready" | "failed";
+  status: "draft" | "generating" | "partial" | "ready" | "failed";
   shots: FreeStoryboardShot[];
   created_at: string;
   updated_at: string;

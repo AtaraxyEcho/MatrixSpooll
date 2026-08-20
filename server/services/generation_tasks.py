@@ -1460,6 +1460,7 @@ _TASK_CHANGE_SPECS: dict[str, tuple] = {
     "free_image": ("free_creation", "free_creation_ready", "「{}」", False),
     "free_video": ("free_creation", "free_creation_ready", "「{}」", False),
     "free_edit": ("free_creation", "free_creation_ready", "「{}」", False),
+    "free_audio": ("free_creation", "free_creation_ready", "「{}」", False),
     "voice_sample": ("character", "voice_sample_ready", "「{}」试听样本", False),
     **{atype: (atype, "updated", f"{spec.label_zh}「{{}}」设计图", False) for atype, spec in ASSET_SPECS.items()},
 }
@@ -3558,26 +3559,6 @@ async def _execute_free_creation_task_proxy(
         raise
 
 
-async def _execute_free_audio_task_proxy(
-    project_name: str,
-    resource_id: str,
-    payload: dict[str, Any],
-    *,
-    user_id: str,
-    task_id: str | None = None,
-    **_: Any,
-) -> dict[str, Any]:
-    from server.services.free_creation_tasks import execute_free_audio_task
-
-    return await execute_free_audio_task(
-        project_name,
-        resource_id,
-        payload,
-        user_id=user_id,
-        task_id=task_id,
-    )
-
-
 _TASK_EXECUTORS = {
     "storyboard": execute_storyboard_task,
     "video": execute_video_task,
@@ -3599,7 +3580,9 @@ _TASK_EXECUTORS = {
     "free_edit": lambda project_name, resource_id, payload, **kwargs: _execute_free_creation_task_proxy(
         "free_edit", project_name, resource_id, payload, **kwargs
     ),
-    "free_audio": _execute_free_audio_task_proxy,
+    "free_audio": lambda project_name, resource_id, payload, **kwargs: _execute_free_creation_task_proxy(
+        "free_audio", project_name, resource_id, payload, **kwargs
+    ),
 }
 
 

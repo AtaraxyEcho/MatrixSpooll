@@ -446,6 +446,7 @@ MESSAGES = {
     "free_creation_input_combination_unsupported": "Mô hình {model} không hỗ trợ tổ hợp vai trò tài liệu này",
     "free_creation_resolution_not_supported": "Mô hình {model} không hỗ trợ độ phân giải {resolution} (được hỗ trợ: {supported})",
     "free_creation_parent_not_found": "Không tìm thấy hoặc không thể dùng ảnh cha tạo tác tự do '{id}'",
+    "free_creation_video_edit_unsupported": "Mô hình video hiện tại không thể chỉnh sửa trực tiếp video có sẵn; hãy dùng tạo video từ video tham chiếu",
     "free_creation_not_found": "Không tìm thấy tạo tác tự do '{id}'",
     "free_creation_media_not_found": "Không tìm thấy tệp phương tiện của tạo tác tự do '{id}'",
     "free_creation_cancel_not_ready": "Chỉ có thể hủy tạo tác tự do đang chờ hoặc đang tạo",
@@ -458,4 +459,8 @@ MESSAGES = {
     "free_creation_capabilities_unavailable": "Chưa cấu hình mô hình tạo nội dung cho sáng tạo tự do. Hãy vào Cài đặt > Mô hình để cấu hình",
     "free_creation_aspect_ratio_not_supported": "Mô hình {model} không hỗ trợ tỷ lệ khung hình {ratio}; hãy chọn: {supported}",
     "free_creation_aspect_ratio_capabilities_missing": "Mô hình {model} chưa khai báo các tỷ lệ khung hình được hỗ trợ, nên không thể gửi tác vụ sáng tạo tự do một cách an toàn",
+    "video_model_unsupported": "Điểm cuối video này không hỗ trợ {provider}/{model}; hãy chọn mô hình tương thích",
+    "video_aspect_ratio_unsupported": "Mô hình {model} không hỗ trợ tỷ lệ {ratio} cho tổ hợp đầu vào này",
+    "video_resolution_unsupported": "Mô hình {model} không hỗ trợ độ phân giải {resolution}",
+    "video_prompt_required": "Mô hình {model} cần câu lệnh hoặc nội dung tham chiếu được hỗ trợ",
 }

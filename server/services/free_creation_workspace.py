@@ -17,10 +17,11 @@ from lib.artifact_manifest import ArtifactKey, ProjectArtifactManifestAdapter
 from lib.formal_write import project_metadata_lock
 from lib.json_io import atomic_write_bytes, atomic_write_json, load_json_or_none
 from lib.path_safety import safe_join
+from lib.version_manager import VersionManager
 
 ReferenceType = Literal["upload", "creation"]
 ExportScope = Literal["selected", "request", "all"]
-StoryboardPlanStatus = Literal["draft", "generating", "ready", "failed"]
+StoryboardPlanStatus = Literal["draft", "generating", "partial", "ready", "failed"]
 
 _TEXT_REFERENCE_EXTENSIONS = frozenset({".txt", ".text", ".md", ".markdown", ".rtf", ".doc", ".docx", ".pdf", ".epub"})
 _REFERENCE_EXTENSIONS = (
@@ -143,6 +144,46 @@ def create_storyboard_plan(
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(path, plan)
     return plan
+
+
+def derive_storyboard_plan_status(
+    project_path: Path,
+    plan: dict[str, Any],
+    *,
+    load_creation: Any,
+) -> StoryboardPlanStatus:
+    """Compute a storyboard plan's current state from its linked creation artifacts."""
+
+    shots = [shot for shot in plan.get("shots", []) if isinstance(shot, dict)]
+    if not shots:
+        return "draft"
+
+    # Once video generation starts, it becomes the active stage. Missing output
+    # IDs still count as unfinished shots instead of making a partial batch look
+    # ready merely because every existing artifact succeeded.
+    active_key = (
+        "video_creation_id"
+        if any(isinstance(shot.get("video_creation_id"), str) for shot in shots)
+        else "image_creation_id"
+    )
+    creation_ids = [shot.get(active_key) for shot in shots]
+    if not any(isinstance(creation_id, str) for creation_id in creation_ids):
+        return "draft"
+
+    statuses: list[str] = []
+    for creation_id in creation_ids:
+        if not isinstance(creation_id, str):
+            statuses.append("missing")
+            continue
+        creation = load_creation(project_path, creation_id)
+        statuses.append(str(creation.get("status") or "queued") if isinstance(creation, dict) else "missing")
+    if any(status in {"queued", "running", "cancelling"} for status in statuses):
+        return "generating"
+    if all(status == "succeeded" for status in statuses):
+        return "ready"
+    if any(status == "succeeded" for status in statuses):
+        return "partial"
+    return "failed"
 
 
 def load_storyboard_plan(project_path: Path, plan_id: str) -> dict[str, Any] | None:
@@ -486,6 +527,64 @@ def delete_reference_upload(project_path: Path, reference_id: str) -> None:
         record_path.unlink(missing_ok=True)
 
 
+def _creation_version_resource_type(creation: dict[str, Any]) -> str:
+    media_type = creation.get("media_type")
+    if media_type == "audio" or (
+        media_type not in {"image", "video", "audio"} and creation.get("output_type") == "audio"
+    ):
+        return "audio"
+    if media_type == "video" or (media_type not in {"image", "video"} and creation.get("output_type") == "video"):
+        return "free_videos"
+    return "free_images"
+
+
+def _resolve_creation_reference_path(
+    project_path: Path,
+    creation_id: str,
+    creation: dict[str, Any],
+    requested_version: object,
+) -> tuple[str, int]:
+    """Resolve a creation reference to its immutable version snapshot when available."""
+
+    current_version = creation.get("version")
+    if requested_version is not None and (type(requested_version) is not int or requested_version < 1):
+        raise ValueError("invalid creation reference version")
+    selected_version = requested_version if type(requested_version) is int else current_version
+    resource_type = _creation_version_resource_type(creation)
+
+    if type(selected_version) is int and selected_version > 0:
+        history = VersionManager(project_path).get_versions(resource_type, creation_id)
+        records = history.get("versions")
+        snapshot = (
+            next(
+                (item for item in records if isinstance(item, dict) and item.get("version") == selected_version),
+                None,
+            )
+            if isinstance(records, list)
+            else None
+        )
+        snapshot_path = snapshot.get("file") if isinstance(snapshot, dict) else None
+        if isinstance(snapshot_path, str):
+            if not VersionManager.is_managed_snapshot_path(resource_type, snapshot_path):
+                raise FileNotFoundError(creation_id)
+            path = safe_join(project_path, snapshot_path)
+            if not path.is_file():
+                raise FileNotFoundError(creation_id)
+            return snapshot_path, selected_version
+        if requested_version is not None and selected_version != current_version:
+            raise FileNotFoundError(creation_id)
+
+    media_path = creation.get("media_path")
+    if creation.get("status") != "succeeded" or not isinstance(media_path, str):
+        raise FileNotFoundError(creation_id)
+    path = safe_join(project_path, media_path)
+    if not path.is_file():
+        raise FileNotFoundError(creation_id)
+    if type(selected_version) is not int or selected_version < 1:
+        raise FileNotFoundError(creation_id)
+    return media_path, selected_version
+
+
 def resolve_reference_claims(
     project_path: Path,
     references: list[str | dict[str, Any]],
@@ -522,21 +621,20 @@ def resolve_reference_claims(
             if not isinstance(creation_id, str):
                 raise ValueError("invalid creation reference")
             creation = load_creation(project_path, creation_id)
-            if not isinstance(creation, dict) or creation.get("status") != "succeeded":
+            if not isinstance(creation, dict):
                 raise FileNotFoundError(creation_id)
-            media_path = creation.get("media_path")
-            current_version = creation.get("version")
-            requested_version = reference.get("version")
-            if not isinstance(media_path, str) or (
-                requested_version is not None and requested_version != current_version
-            ):
-                raise FileNotFoundError(creation_id)
+            media_path, selected_version = _resolve_creation_reference_path(
+                project_path,
+                creation_id,
+                creation,
+                reference.get("version"),
+            )
             paths.append(media_path)
             claims.append(
                 {
                     "type": "creation",
                     "creation_id": creation_id,
-                    "version": current_version,
+                    "version": selected_version,
                     **({"role": reference.get("role")} if reference.get("role") else {}),
                 }
             )
@@ -636,6 +734,7 @@ __all__ = [
     "build_creation_export",
     "create_storyboard_plan",
     "create_subtitle_track",
+    "derive_storyboard_plan_status",
     "delete_storyboard_plan",
     "default_canvas_state",
     "delete_reference_upload",

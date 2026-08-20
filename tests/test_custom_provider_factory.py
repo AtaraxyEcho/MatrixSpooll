@@ -74,6 +74,21 @@ class TestEndpointDispatch:
         create_custom_backend(provider=provider, model_id="kling-v2", endpoint="newapi-video")
         mock_cls.assert_called_once_with(api_key="sk-test", base_url="https://api.example.com/v1", model="kling-v2")
 
+    @patch("lib.custom_provider.endpoints.AnyFastSeedanceBackend")
+    def test_anyfast_seedance(self, mock_cls):
+        provider = _make_provider(base_url="https://www.anyfast.ai")
+        result = create_custom_backend(
+            provider=provider,
+            model_id="seedance-2.0",
+            endpoint="anyfast-seedance",
+        )
+        assert isinstance(result, CustomVideoBackend)
+        mock_cls.assert_called_once_with(
+            api_key="sk-test",
+            base_url="https://www.anyfast.ai",
+            model="seedance-2.0",
+        )
+
     @patch("lib.custom_provider.endpoints.V2VideoGenerationsBackend")
     def test_v2_video_generations(self, mock_cls):
         provider = _make_provider(base_url="https://api.aimlapi.com")

@@ -227,7 +227,7 @@ describe("FreeCreationWorkspace", () => {
     );
   });
 
-  it("routes edits of video creations through video capabilities and model selection", async () => {
+  it("does not expose unsupported video editing as a parent action", async () => {
     vi.mocked(API.listFreeCreations).mockResolvedValue({
       creations: [{
         creation_id: "c_0123456789abcdef0125",
@@ -238,33 +238,11 @@ describe("FreeCreationWorkspace", () => {
         media_path: "creations/c_0123456789abcdef0125.mp4",
       }],
     });
-    const create = vi.spyOn(API, "createFreeCreation").mockResolvedValue({
-      success: true,
-      creation_id: "c_0123456789abcdef0126",
-      task_id: "task-3",
-    });
-    render(<FreeCreationWorkspace projectName="demo" />);
+    const { container } = render(<FreeCreationWorkspace projectName="demo" />);
 
-    const editButtons = await screen.findAllByRole("button", { name: t("free_creation_use_as_parent") });
-    fireEvent.click(editButtons[0]);
-    const videoModel = screen.getByRole("button", { name: t("free_creation_model") });
-    fireEvent.click(videoModel);
-    fireEvent.click(await screen.findByRole("option", { name: "video-model" }));
-    fireEvent.change(screen.getByPlaceholderText(t("free_creation_prompt")), {
-      target: { value: "make the camera movement slower" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: t("free_creation_submit") }));
-
-    await waitFor(() => expect(create).toHaveBeenCalled());
-    expect(create).toHaveBeenCalledWith(
-      "demo",
-      expect.objectContaining({
-        output_type: "edit",
-        parent_creation_id: "c_0123456789abcdef0125",
-        model: "ark/video-model",
-        duration_seconds: 4,
-        size: undefined,
-      }),
-    );
+    await waitFor(() => expect(
+      container.querySelector("[data-canvas-id='c_0123456789abcdef0125']"),
+    ).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: t("free_creation_use_as_parent") })).not.toBeInTheDocument();
   });
 });

@@ -30,6 +30,7 @@ from lib.image_backends.minimax import MiniMaxImageBackend
 from lib.image_backends.openai import OpenAIImageBackend
 from lib.text_backends.gemini import GeminiTextBackend
 from lib.text_backends.openai import OpenAITextBackend
+from lib.video_backends.anyfast import AnyFastSeedanceBackend
 from lib.video_backends.ark import ArkVideoBackend
 from lib.video_backends.base import VideoCapabilities
 from lib.video_backends.dashscope import DashScopeVideoBackend, classify_wan_model
@@ -154,6 +155,13 @@ def _build_newapi_video(provider, model_id: str) -> CustomVideoBackend:
     if not base_url:
         raise ValueError("NewAPI 视频后端需要 base_url")
     delegate = NewAPIVideoBackend(api_key=provider.api_key, base_url=base_url, model=model_id)
+    return CustomVideoBackend(provider_id=provider.provider_id, delegate=delegate, model=model_id)
+
+
+def _build_anyfast_seedance(provider, model_id: str) -> CustomVideoBackend:
+    if not provider.base_url:
+        raise ValueError("AnyFast Seedance endpoint requires base_url")
+    delegate = AnyFastSeedanceBackend(api_key=provider.api_key, base_url=provider.base_url, model=model_id)
     return CustomVideoBackend(provider_id=provider.provider_id, delegate=delegate, model=model_id)
 
 
@@ -314,6 +322,18 @@ ENDPOINT_REGISTRY: dict[str, EndpointSpec] = {
         request_path_template="/v1/video/generations",
         build_backend=_build_newapi_video,
         video_max_reference_images=0,
+    ),
+    "anyfast-seedance": EndpointSpec(
+        key="anyfast-seedance",
+        media_type="video",
+        family="anyfast",
+        display_name_key="endpoint_anyfast_seedance_display",
+        request_method="POST",
+        request_path_template="/v1/video/generations",
+        build_backend=_build_anyfast_seedance,
+        video_caps_for_model=AnyFastSeedanceBackend.video_capabilities_for_model,
+        end_image_capable=True,
+        reference_audio_capable=True,
     ),
     "v2-video-generations": EndpointSpec(
         key="v2-video-generations",

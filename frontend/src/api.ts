@@ -1000,7 +1000,7 @@ class API {
   static async getFreeCreationCapabilities(options: {
     outputType: "image" | "video";
     model?: string;
-    referenceKind?: "none" | "frame" | "image" | "video";
+    referenceKind?: "none" | "frame" | "image" | "video" | "audio";
     projectName?: string;
     signal?: AbortSignal;
   }): Promise<FreeCreationCapabilities> {
@@ -1024,7 +1024,7 @@ class API {
   static async createFreeCreationVoice(
     projectName: string,
     payload: { text: string; voice?: string },
-  ): Promise<{ success: boolean; task_id: string; voice: string; resource_id: string }> {
+  ): Promise<{ success: boolean; request_id: string; creation_id: string; task_id: string; voice: string; resource_id: string }> {
     return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-voice`, {
       method: "POST",
       body: JSON.stringify(payload),

@@ -7,6 +7,7 @@ MESSAGES = {
     "free_creation_storyboard_image_required": "请先为所有选中的镜头生成分镜图",
     "free_creation_audio_unavailable": "当前项目尚未配置可用的配音服务",
     "free_creation_voice_unsupported": "当前音频服务不支持所选音色",
+    "free_creation_video_edit_unsupported": "当前视频模型不支持基于已有视频直接编辑，请改用参考视频生成",
     "free_creation_subtitle_video_required": "字幕只能添加到已完成的视频",
     "free_creation_subtitle_not_found": "字幕轨道不存在：{id}",
     "free_creation_subtitle_conflict": "字幕轨道已在其他位置发生变化，请刷新后再保存",
@@ -406,4 +407,8 @@ MESSAGES = {
     "free_creation_capabilities_unavailable": "尚未配置可用于自由创作的生成模型，请前往「设置 > 模型」完成配置",
     "free_creation_aspect_ratio_not_supported": "模型 {model} 不支持 {ratio} 画面比例；请选择：{supported}",
     "free_creation_aspect_ratio_capabilities_missing": "模型 {model} 未声明支持的画面比例，无法安全提交自由创作",
+    "video_model_unsupported": "当前视频端点不支持 {provider}/{model}，请选择兼容模型",
+    "video_aspect_ratio_unsupported": "模型 {model} 在当前输入组合下不支持 {ratio} 比例",
+    "video_resolution_unsupported": "模型 {model} 不支持 {resolution} 分辨率",
+    "video_prompt_required": "模型 {model} 需要提示词或受支持的参考素材",
 }
