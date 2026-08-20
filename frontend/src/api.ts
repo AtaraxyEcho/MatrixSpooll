@@ -3247,6 +3247,20 @@ class API {
     return `${API_BASE}/global-assets/${type}/${filename}${qs}`;
   }
 
+  static async getGlobalAssetFile(asset: Asset): Promise<File> {
+    const url = this.getGlobalAssetUrl(asset.image_path, asset.updated_at);
+    if (!url || !asset.image_path) throw new Error("Asset image is unavailable");
+    const endpoint = url.startsWith(API_BASE) ? url.slice(API_BASE.length) : url;
+    const response = await fetch(url, withAuth(endpoint));
+    await throwIfNotOk(response, `HTTP ${response.status}`);
+    const blob = await response.blob();
+    const extension = asset.image_path.match(/\.[a-z0-9]+$/i)?.[0] ?? ".png";
+    return new File([blob], `${asset.name}${extension}`, {
+      type: blob.type || (extension === ".jpg" || extension === ".jpeg" ? "image/jpeg" : "image/png"),
+      lastModified: Date.parse(asset.updated_at ?? "") || 0,
+    });
+  }
+
   // ==================== Reference-to-Video API ====================
 
   /** List reference-video units for an episode. */

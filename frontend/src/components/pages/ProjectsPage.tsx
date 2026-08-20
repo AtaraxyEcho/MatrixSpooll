@@ -35,7 +35,6 @@ import { Typewriter, type TypewriterSegment } from "@/components/ui/Typewriter";
 import { WARM_TONE } from "@/utils/severity-tone";
 import { getProjectDisplayName } from "@/utils/project-display";
 import { CreateProjectModal } from "./CreateProjectModal";
-import { OpenClawModal } from "./OpenClawModal";
 import { rememberAssetLibraryReturnTo } from "./AssetLibraryPage";
 import { ICON_BTN_FILLED_CLS } from "@/components/ui/darkroom-tokens";
 import {
@@ -392,7 +391,6 @@ interface TopBarProps {
   onCreate: () => void;
   onSettings: () => void;
   onAssets: () => void;
-  onOpenClaw: () => void;
   importing: boolean;
   configIncomplete: boolean;
   searchInputRef: React.RefObject<HTMLInputElement | null>;
@@ -406,7 +404,6 @@ function TopBar({
   onCreate,
   onSettings,
   onAssets,
-  onOpenClaw,
   importing,
   configIncomplete,
   searchInputRef,
@@ -509,16 +506,6 @@ function TopBar({
           >
             <Plus className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">{t("dashboard:create_project")}</span>
-          </button>
-          <span aria-hidden className="mx-1 h-5 w-px bg-hairline-soft" />
-          <button
-            type="button"
-            onClick={onOpenClaw}
-            className="rounded-md px-2 py-1.5 text-sm text-text-3 transition-colors hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            title={t("dashboard:openclaw")}
-            aria-label={t("dashboard:openclaw")}
-          >
-            <span aria-hidden>🦞</span>
           </button>
           <button
             type="button"
@@ -856,7 +843,6 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
     | { source: "failure"; diagnostics: ImportFailureDiagnostics };
   const [importDiagnostics, setImportDiagnostics] =
     useState<ImportDiagnosticsState | null>(null);
-  const [showOpenClaw, setShowOpenClaw] = useState(false);
   const [deletingProject, setDeletingProject] = useState<ProjectSummary | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [phaseFilter, setPhaseFilter] = useState<PhaseFilter>("all");
@@ -1049,7 +1035,6 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
           rememberAssetLibraryReturnTo(window.location.pathname);
           navigate("/app/assets");
         }}
-        onOpenClaw={() => setShowOpenClaw(true)}
         importing={importingProject}
         configIncomplete={!isConfigComplete}
         searchInputRef={searchInputRef}
@@ -1182,7 +1167,6 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
         />
       )}
 
-      {showOpenClaw && <OpenClawModal onClose={() => setShowOpenClaw(false)} />}
       {showCreateModal && <CreateProjectModal />}
 
       <ConfirmDialog

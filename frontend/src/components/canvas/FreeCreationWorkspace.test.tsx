@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { API } from "@/api";
 import { FreeCreationWorkspace } from "@/components/canvas/FreeCreationWorkspace";
+import { GENERATION_MODEL_PREFERENCES_STORAGE_KEY } from "@/components/generation/generationModelPreference";
 import i18n from "@/i18n";
 
 vi.mock("@/components/copilot/AgentCopilot", () => ({
@@ -114,10 +115,30 @@ describe("FreeCreationWorkspace", () => {
     expect(screen.getByTestId("embedded-agent")).toBeInTheDocument();
     const parameters = screen.getByRole("button", { name: t("free_creation_agent_parameters") });
     fireEvent.click(parameters);
-    expect(
-      screen.getByRole("dialog", { name: t("free_creation_agent_parameters") })
-        .closest(".home-param-control--top"),
-    ).not.toBeNull();
+    const panel = screen.getByRole("dialog", { name: t("free_creation_agent_parameters") });
+    expect(panel).toHaveClass("home-param-popover--portal");
+    expect(panel.parentElement).toBe(document.body);
+  });
+
+  it("restores the selected video model after the workspace remounts", async () => {
+    vi.mocked(API.getModelCandidates).mockResolvedValue({
+      image: { default: ["ark/image-model"], buckets: {} },
+      video: { default: ["anyfast/seedance-2.5"], buckets: {} },
+      provider_names: {},
+    });
+    const first = render(<FreeCreationWorkspace projectName="demo" />);
+
+    const firstModel = await screen.findByRole("button", { name: t("home_model") });
+    fireEvent.click(firstModel);
+    fireEvent.click(await screen.findByRole("option", { name: "seedance-2.5" }));
+    expect(JSON.parse(localStorage.getItem(GENERATION_MODEL_PREFERENCES_STORAGE_KEY) ?? "{}")).toEqual({
+      image: "auto",
+      video: "anyfast/seedance-2.5",
+    });
+
+    first.unmount();
+    render(<FreeCreationWorkspace projectName="demo" />);
+    await waitFor(() => expect(screen.getByRole("button", { name: t("home_model") })).toHaveTextContent("seedance-2.5"));
   });
 
   it("uses the declared duration bounds and snaps to a supported duration", async () => {
@@ -147,7 +168,7 @@ describe("FreeCreationWorkspace", () => {
     );
   });
 
-  it("requires an explicit role before submitting a bound canvas resource", async () => {
+  it("automatically uses a canvas image as an omni reference", async () => {
     vi.mocked(API.listFreeCreationReferences).mockResolvedValue({
       references: [{
         reference_id: "ref-1",
@@ -170,11 +191,9 @@ describe("FreeCreationWorkspace", () => {
       task_id: "task-reference-role",
     });
     expect(screen.getAllByText("hero.png").length).toBeGreaterThan(0);
-    const role = screen.getByRole("combobox", {
+    expect(screen.queryByRole("combobox", {
       name: t("free_creation_reference_role_label", { name: "hero.png" }),
-    });
-    expect(role).toHaveValue("");
-    fireEvent.change(role, { target: { value: "reference_image" } });
+    })).not.toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText(t("free_creation_prompt")), {
       target: { value: "use the hero image as a visual reference" },
     });
@@ -189,7 +208,7 @@ describe("FreeCreationWorkspace", () => {
     );
   });
 
-  it("assigns a canvas image to the explicit first-frame role", async () => {
+  it("assigns the first canvas image to the first-frame slot in frame mode", async () => {
     vi.mocked(API.listFreeCreationReferences).mockResolvedValue({
       references: [{
         reference_id: "ref-frames",
@@ -208,11 +227,12 @@ describe("FreeCreationWorkspace", () => {
     });
     render(<FreeCreationWorkspace projectName="demo" />);
 
+    const referenceMode = await screen.findByRole("button", { name: t("free_creation_reference_mode") });
+    await waitFor(() => expect(referenceMode).toBeEnabled());
+    fireEvent.click(referenceMode);
+    fireEvent.click(await screen.findByRole("option", { name: t("free_creation_reference_mode_frames") }));
     const addButtons = await screen.findAllByRole("button", { name: t("free_creation_add_reference") });
     fireEvent.click(addButtons[0]!);
-    fireEvent.change(screen.getByRole("combobox", {
-      name: t("free_creation_reference_role_label", { name: "opening.png" }),
-    }), { target: { value: "first_frame" } });
     fireEvent.change(screen.getByPlaceholderText(t("free_creation_prompt")), {
       target: { value: "start from the supplied opening frame" },
     });

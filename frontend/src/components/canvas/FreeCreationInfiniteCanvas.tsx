@@ -14,6 +14,7 @@ import {
   Pencil,
   RotateCcw,
   Trash2,
+  UploadCloud,
   ZoomIn,
   ZoomOut,
   XCircle,
@@ -28,6 +29,7 @@ import type {
   FreeCreation,
   FreeCreationArtifactMediaType,
   FreeCreationReferenceClaim,
+  FreeCreationReferenceRole,
   FreeCreationUpload,
 } from "@/types";
 import { freeCreationUploadRole } from "@/types";
@@ -48,10 +50,12 @@ interface FreeCreationInfiniteCanvasProps {
   onRetry: (creationId: string) => void;
   onEdit: (creationId: string) => void;
   onReference: (reference: FreeCreationReferenceClaim, label: string) => void;
+  onReferences?: (references: Array<{ claim: FreeCreationReferenceClaim; label: string }>) => void;
   onPreview?: (target: FreeCreationPreviewTarget) => void;
   onDetachUpload?: (referenceId: string) => void;
   onDeleteUpload?: (referenceId: string) => void;
   onMerge?: (creationIds: string[]) => void;
+  onUploadFiles?: (files: readonly File[]) => Promise<FreeCreationUpload[]>;
 }
 
 type PointerOperation =
@@ -72,12 +76,26 @@ const NODE_GAP_X = 72;
 const NODE_GAP_Y = 56;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 1.8;
+const PLACEMENT_PADDING = 24;
+
+interface CanvasBounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+interface CanvasHistoryState {
+  positions: Record<string, Point>;
+  hiddenCreationIds: string[];
+  hiddenUploadIds: string[];
+}
 
 function creationMediaType(creation: FreeCreation): FreeCreationArtifactMediaType {
   return creation.media_type ?? (creation.output_type === "video" ? "video" : creation.output_type === "audio" ? "audio" : "image");
 }
 
-function creationReferenceRole(creation: FreeCreation): FreeCreationReferenceClaim["role"] {
+function creationReferenceRole(creation: FreeCreation): FreeCreationReferenceRole {
   const mediaType = creationMediaType(creation);
   return mediaType === "video" ? "reference_video" : mediaType === "audio" ? "reference_audio" : "reference_image";
 }
@@ -88,8 +106,71 @@ function initialPosition(index: number): Point {
   return { x: 96 + column * (NODE_WIDTH + NODE_GAP_X), y: 88 + row * (NODE_HEIGHT + NODE_GAP_Y) };
 }
 
+function overlapsPosition(candidate: Point, occupied: Point[]): boolean {
+  return occupied.some((position) => (
+    candidate.x < position.x + NODE_WIDTH + PLACEMENT_PADDING
+    && candidate.x + NODE_WIDTH + PLACEMENT_PADDING > position.x
+    && candidate.y < position.y + NODE_HEIGHT + PLACEMENT_PADDING
+    && candidate.y + NODE_HEIGHT + PLACEMENT_PADDING > position.y
+  ));
+}
+
+function isWithinBounds(point: Point, bounds: CanvasBounds): boolean {
+  return point.x >= bounds.left
+    && point.y >= bounds.top
+    && point.x + NODE_WIDTH <= bounds.right
+    && point.y + NODE_HEIGHT <= bounds.bottom;
+}
+
+export function findOpenCanvasPosition(
+  occupied: Point[],
+  bounds: CanvasBounds,
+  preferred?: Point,
+): { position: Point; visible: boolean } {
+  const candidates: Point[] = [];
+  if (preferred) {
+    const stepX = NODE_WIDTH + NODE_GAP_X;
+    const stepY = NODE_HEIGHT + NODE_GAP_Y;
+    candidates.push(preferred);
+    for (let ring = 1; ring <= 5; ring += 1) {
+      for (let y = -ring; y <= ring; y += 1) {
+        for (let x = -ring; x <= ring; x += 1) {
+          if (Math.abs(x) !== ring && Math.abs(y) !== ring) continue;
+          candidates.push({ x: preferred.x + x * stepX, y: preferred.y + y * stepY });
+        }
+      }
+    }
+  }
+
+  const firstColumn = Math.ceil((bounds.left - 96) / (NODE_WIDTH + NODE_GAP_X));
+  const firstRow = Math.ceil((bounds.top - 88) / (NODE_HEIGHT + NODE_GAP_Y));
+  for (let row = Math.max(0, firstRow); row < Math.max(1, firstRow) + 8; row += 1) {
+    for (let column = Math.max(0, firstColumn); column < Math.max(1, firstColumn) + 8; column += 1) {
+      candidates.push({
+        x: 96 + column * (NODE_WIDTH + NODE_GAP_X),
+        y: 88 + row * (NODE_HEIGHT + NODE_GAP_Y),
+      });
+    }
+  }
+
+  const visible = candidates.find((candidate) => isWithinBounds(candidate, bounds) && !overlapsPosition(candidate, occupied));
+  if (visible) return { position: visible, visible: true };
+  const available = candidates.find((candidate) => !overlapsPosition(candidate, occupied));
+  if (available) return { position: available, visible: false };
+  let index = occupied.length;
+  while (overlapsPosition(initialPosition(index), occupied)) index += 1;
+  return { position: initialPosition(index), visible: false };
+}
+
 function intersects(left: DOMRect, right: DOMRect): boolean {
   return left.left <= right.right && left.right >= right.left && left.top <= right.bottom && left.bottom >= right.top;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+    || (target instanceof HTMLElement && target.isContentEditable);
 }
 
 function canvasSnapshot(
@@ -111,10 +192,12 @@ export function FreeCreationInfiniteCanvas({
   onRetry,
   onEdit,
   onReference,
+  onReferences,
   onPreview,
   onDetachUpload,
   onDeleteUpload,
   onMerge,
+  onUploadFiles,
 }: FreeCreationInfiniteCanvasProps) {
   const { t } = useTranslation("dashboard");
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -125,16 +208,46 @@ export function FreeCreationInfiniteCanvas({
   const revisionRef = useRef(0);
   const lastSavedSnapshotRef = useRef("");
   const disposedRef = useRef(false);
+  const viewportAnimationTimerRef = useRef<number | null>(null);
+  const historyRef = useRef<CanvasHistoryState[]>([]);
   const [positions, setPositions] = useState<Record<string, Point>>({});
+  const positionsRef = useRef<Record<string, Point>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+  const hiddenIdsRef = useRef<string[]>([]);
   const [hiddenUploadIds, setHiddenUploadIds] = useState<string[]>([]);
+  const hiddenUploadIdsRef = useRef<string[]>([]);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
   const [spacePressed, setSpacePressed] = useState(false);
   const [marquee, setMarquee] = useState<{ start: Point; current: Point } | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [showHidden, setShowHidden] = useState(false);
+  const [hydratedProject, setHydratedProject] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [viewportAnimating, setViewportAnimating] = useState(false);
+  const canvasReady = hydratedProject === projectName;
+
+  useEffect(() => {
+    positionsRef.current = positions;
+  }, [positions]);
+
+  useEffect(() => {
+    hiddenIdsRef.current = hiddenIds;
+  }, [hiddenIds]);
+
+  useEffect(() => {
+    hiddenUploadIdsRef.current = hiddenUploadIds;
+  }, [hiddenUploadIds]);
+
+  const pushHistory = useCallback((state?: CanvasHistoryState) => {
+    const snapshot = state ?? {
+      positions: { ...positionsRef.current },
+      hiddenCreationIds: [...hiddenIdsRef.current],
+      hiddenUploadIds: [...hiddenUploadIdsRef.current],
+    };
+    historyRef.current = [...historyRef.current.slice(-49), snapshot];
+  }, []);
 
   const orderedCreations = useMemo(
     () => [...creations].sort((left, right) => (left.updated_at ?? "").localeCompare(right.updated_at ?? "")),
@@ -167,6 +280,28 @@ export function FreeCreationInfiniteCanvas({
     if (selectedCreations.some((creation) => creation.status !== "succeeded" || (creation.media_type !== "video" && creation.output_type !== "video"))) return [];
     return selectedCreations.map((creation) => creation.creation_id);
   }, [creations, selectedIds]);
+  const selectedReferences = useMemo<Array<{ claim: FreeCreationReferenceClaim; label: string }>>(() => selectedIds.reduce<Array<{ claim: FreeCreationReferenceClaim; label: string }>>((result, id) => {
+    const upload = uploads.find((item) => item.reference_id === id);
+    if (upload) {
+      result.push({
+        claim: { type: "upload" as const, reference_id: upload.reference_id, role: freeCreationUploadRole(upload.media_type) },
+        label: upload.original_filename,
+      });
+      return result;
+    }
+    const selectedCreation = creations.find((item) => item.creation_id === id);
+    if (!selectedCreation || selectedCreation.status !== "succeeded" || !selectedCreation.media_path) return result;
+    result.push({
+      claim: {
+        type: "creation" as const,
+        creation_id: selectedCreation.creation_id,
+        version: selectedCreation.version,
+        role: creationReferenceRole(selectedCreation),
+      },
+      label: selectedCreation.prompt || t("free_creation"),
+    });
+    return result;
+  }, []), [creations, selectedIds, t, uploads]);
 
   const publishSelection = useCallback((ids: string[]) => {
     setSelectedIds(ids);
@@ -180,49 +315,96 @@ export function FreeCreationInfiniteCanvas({
     );
   }, [creations]);
 
+  const undoCanvasChange = useCallback(() => {
+    const previous = historyRef.current.pop();
+    if (!previous) return;
+    setPositions(previous.positions);
+    setHiddenIds(previous.hiddenCreationIds);
+    setHiddenUploadIds(previous.hiddenUploadIds);
+    setShowHidden(false);
+    setContextMenu(null);
+    publishSelection([]);
+  }, [publishSelection]);
+
   useEffect(() => {
     disposedRef.current = false;
     hydratedRef.current = false;
     revisionRef.current = 0;
     lastSavedSnapshotRef.current = "";
+    historyRef.current = [];
     const controller = new AbortController();
     void API.getFreeCreationCanvas(projectName)
       .then(({ canvas }) => {
         if (controller.signal.aborted) return;
         lastSavedSnapshotRef.current = canvasSnapshot(canvas.viewport, canvas.positions, canvas.hidden_creation_ids, canvas.hidden_reference_ids ?? []);
-        setPositions((current) => ({ ...current, ...canvas.positions }));
+        setPositions(canvas.positions);
         setPan({ x: canvas.viewport.x, y: canvas.viewport.y });
         setScale(canvas.viewport.scale);
         setHiddenIds(canvas.hidden_creation_ids);
         setHiddenUploadIds(canvas.hidden_reference_ids ?? []);
         revisionRef.current = canvas.revision;
         hydratedRef.current = true;
+        setHydratedProject(projectName);
       })
       .catch(() => {
         hydratedRef.current = true;
+        setHydratedProject(projectName);
       });
     return () => controller.abort();
   }, [projectName]);
 
   useEffect(() => () => {
     disposedRef.current = true;
+    if (viewportAnimationTimerRef.current !== null) window.clearTimeout(viewportAnimationTimerRef.current);
   }, []);
 
-  useEffect(() => {
-    // Nodes can arrive through SSE while the creator is arranging the canvas; keep existing coordinates intact.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPositions((current) => {
-      const next = { ...current };
-      let changed = false;
-      allNodes.forEach((node, index) => {
-        if (!next[node.id]) {
-          next[node.id] = initialPosition(index);
-          changed = true;
-        }
-      });
-      return changed ? next : current;
+  const visiblePlacementBounds = useCallback((): CanvasBounds => {
+    const surface = surfaceRef.current;
+    const width = surface?.clientWidth || 1280;
+    const height = surface?.clientHeight || 720;
+    const leftInset = width >= 900 ? 420 : 24;
+    const bottomInset = height >= 620 ? 292 : 80;
+    return {
+      left: (leftInset - pan.x) / scale,
+      top: (64 - pan.y) / scale,
+      right: (width - 24 - pan.x) / scale,
+      bottom: (height - bottomInset - pan.y) / scale,
+    };
+  }, [pan.x, pan.y, scale]);
+
+  const focusCanvasPosition = useCallback((position: Point) => {
+    const surface = surfaceRef.current;
+    const width = surface?.clientWidth || 1280;
+    const height = surface?.clientHeight || 720;
+    setViewportAnimating(true);
+    setPan({
+      x: width / 2 - (position.x + NODE_WIDTH / 2) * scale,
+      y: height / 2 - (position.y + NODE_HEIGHT / 2) * scale,
     });
-  }, [allNodes]);
+    if (viewportAnimationTimerRef.current !== null) window.clearTimeout(viewportAnimationTimerRef.current);
+    viewportAnimationTimerRef.current = window.setTimeout(() => setViewportAnimating(false), 240);
+  }, [scale]);
+
+  useEffect(() => {
+    if (!canvasReady) return;
+    // Nodes can arrive through SSE while the creator is arranging the canvas; keep existing coordinates intact.
+    const missing = allNodes.filter((node) => !positions[node.id]);
+    if (!missing.length) return;
+    const next = { ...positions };
+    const bounds = visiblePlacementBounds();
+    let focusTarget: Point | null = null;
+    missing.forEach((node, index) => {
+      const occupied = Object.values(next);
+      const result = occupied.length === 0 && index === 0
+        ? { position: initialPosition(0), visible: true }
+        : findOpenCanvasPosition(occupied, bounds);
+      next[node.id] = result.position;
+      if (!result.visible) focusTarget = result.position;
+    });
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPositions(next);
+    if (focusTarget) focusCanvasPosition(focusTarget);
+  }, [allNodes, canvasReady, focusCanvasPosition, positions, visiblePlacementBounds]);
 
   useEffect(() => {
     if (!hydratedRef.current || readOnly) return;
@@ -268,8 +450,19 @@ export function FreeCreationInfiniteCanvas({
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
-      if (event.code === "Space" && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) {
+      if (event.code === "Space" && !isEditableTarget(event.target)) {
         setSpacePressed(true);
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a" && !isEditableTarget(event.target)) {
+        event.preventDefault();
+        publishSelection([
+          ...visibleUploads.map((item) => item.reference_id),
+          ...visibleCreations.map((item) => item.creation_id),
+        ]);
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !event.shiftKey && !isEditableTarget(event.target)) {
+        event.preventDefault();
+        if (!readOnly) undoCanvasChange();
       }
       if (event.key === "Escape") {
         setContextMenu(null);
@@ -285,7 +478,7 @@ export function FreeCreationInfiniteCanvas({
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [publishSelection]);
+  }, [publishSelection, readOnly, undoCanvasChange, visibleCreations, visibleUploads]);
 
   useEffect(() => () => useFreeCreationStore.getState().clearSelection(), []);
 
@@ -377,41 +570,93 @@ export function FreeCreationInfiniteCanvas({
           return node ? intersects(selectionRect, node.getBoundingClientRect()) : false;
         });
       publishSelection(operation.additive ? [...new Set([...selectedIds, ...hitIds])] : hitIds);
+    } else if (operation.kind === "nodes") {
+      const moved = Object.entries(operation.origins).some(([id, origin]) => {
+        const current = positionsRef.current[id];
+        return current && (current.x !== origin.x || current.y !== origin.y);
+      });
+      if (moved) {
+        pushHistory({
+          positions: { ...positionsRef.current, ...operation.origins },
+          hiddenCreationIds: [...hiddenIdsRef.current],
+          hiddenUploadIds: [...hiddenUploadIdsRef.current],
+        });
+      }
     }
     pointerRef.current = null;
     setMarquee(null);
   };
 
-  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+  const handleWheel = useCallback((event: WheelEvent) => {
     event.preventDefault();
-    if (event.ctrlKey || event.metaKey) {
+    if (event.ctrlKey || event.metaKey) return;
+    if (event.altKey) {
       setScale((current) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, current - event.deltaY * 0.002)));
       return;
     }
     setPan((current) => ({ x: current.x - event.deltaX, y: current.y - event.deltaY }));
+  }, []);
+
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    surface.addEventListener("wheel", handleWheel, { passive: false });
+    return () => surface.removeEventListener("wheel", handleWheel);
+  }, [handleWheel]);
+
+  const handleFileDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDragActive(false);
+    if (readOnly || !onUploadFiles) return;
+    const files = Array.from(event.dataTransfer.files);
+    if (!files.length) return;
+    const rect = surfaceRef.current?.getBoundingClientRect();
+    const preferred = {
+      x: (event.clientX - (rect?.left ?? 0) - pan.x) / scale,
+      y: (event.clientY - (rect?.top ?? 0) - pan.y) / scale,
+    };
+    const uploaded = await onUploadFiles(files);
+    if (!uploaded.length) return;
+    const next = { ...positionsRef.current };
+    const placements: Record<string, Point> = {};
+    const bounds = visiblePlacementBounds();
+    let focusTarget: Point | null = null;
+    uploaded.forEach((upload, index) => {
+      const result = findOpenCanvasPosition(
+        Object.values(next),
+        bounds,
+        { x: preferred.x + index * 20, y: preferred.y + index * 20 },
+      );
+      next[upload.reference_id] = result.position;
+      placements[upload.reference_id] = result.position;
+      if (!result.visible) focusTarget = result.position;
+    });
+    setPositions((current) => ({ ...current, ...placements }));
+    if (focusTarget) focusCanvasPosition(focusTarget);
   };
 
-  const hideCreation = (creationId: string) => {
-    setHiddenIds((current) => [...new Set([...current, creationId])]);
-    publishSelection(selectedIds.filter((id) => id !== creationId));
+  const hideNodes = (nodeIds: string[]) => {
+    pushHistory();
+    const nodeSet = new Set(nodeIds);
+    setHiddenIds((current) => [...new Set([...current, ...nodeIds.filter((id) => creations.some((item) => item.creation_id === id))])]);
+    setHiddenUploadIds((current) => [...new Set([...current, ...nodeIds.filter((id) => uploads.some((item) => item.reference_id === id))])]);
+    publishSelection(selectedIds.filter((id) => !nodeSet.has(id)));
     setContextMenu(null);
   };
 
-  const hideUpload = (referenceId: string) => {
-    setHiddenUploadIds((current) => [...new Set([...current, referenceId])]);
-    publishSelection(selectedIds.filter((id) => id !== referenceId));
+  const restoreNodes = (nodeIds: string[]) => {
+    pushHistory();
+    const nodeSet = new Set(nodeIds);
+    setHiddenIds((current) => current.filter((id) => !nodeSet.has(id)));
+    setHiddenUploadIds((current) => current.filter((id) => !nodeSet.has(id)));
     setContextMenu(null);
   };
 
-  const restoreUpload = (referenceId: string) => {
-    setHiddenUploadIds((current) => current.filter((id) => id !== referenceId));
-    setContextMenu(null);
-  };
-
-  const restoreCreation = (creationId: string) => {
-    setHiddenIds((current) => current.filter((id) => id !== creationId));
-    setContextMenu(null);
-  };
+  const hideCreation = (creationId: string) => hideNodes([creationId]);
+  const hideUpload = (referenceId: string) => hideNodes([referenceId]);
+  const restoreUpload = (referenceId: string) => restoreNodes([referenceId]);
+  const restoreCreation = (creationId: string) => restoreNodes([creationId]);
 
   const activeContextCreation = contextMenu
     ? contextMenu.kind === "creation" ? creations.find((creation) => creation.creation_id === contextMenu.nodeId) ?? null : null
@@ -419,6 +664,11 @@ export function FreeCreationInfiniteCanvas({
   const activeContextUpload = contextMenu?.kind === "upload"
     ? uploads.find((upload) => upload.reference_id === contextMenu.nodeId) ?? null
     : null;
+  const contextSelectionIds = contextMenu && selectedSet.has(contextMenu.nodeId) ? selectedIds : contextMenu ? [contextMenu.nodeId] : [];
+  const contextSelectionIsHidden = contextSelectionIds.length > 0 && contextSelectionIds.every(
+    (id) => hiddenSet.has(id) || hiddenUploadSet.has(id),
+  );
+  const hiddenCount = hiddenIds.length + hiddenUploadIds.length;
 
   const renderActions = (creation: FreeCreation) => {
     const mediaType = creationMediaType(creation);
@@ -474,7 +724,20 @@ export function FreeCreationInfiniteCanvas({
       onPointerMove={updatePointer}
       onPointerUp={finishPointer}
       onPointerCancel={finishPointer}
-      onWheel={handleWheel}
+      onDragEnter={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        setDragActive(true);
+      }}
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragActive(false);
+      }}
+      onDrop={(event) => void handleFileDrop(event)}
       onContextMenu={(event) => {
         event.preventDefault();
         if (!(event.target as HTMLElement).closest("[data-canvas-node='true']")) setContextMenu(null);
@@ -484,15 +747,25 @@ export function FreeCreationInfiniteCanvas({
     >
       <div className="pointer-events-none absolute inset-0 opacity-75" style={{ backgroundImage: "radial-gradient(oklch(0.86 0.03 250 / 0.28) 1.25px, transparent 1.25px)", backgroundSize: `${24 * scale}px ${24 * scale}px`, backgroundPosition: `${pan.x}px ${pan.y}px` }} />
 
+      {dragActive ? (
+        <div className="pointer-events-none absolute inset-4 z-[190] grid place-items-center rounded-md border-2 border-dashed border-[var(--color-accent)] bg-[var(--color-accent-dim)] backdrop-blur-sm">
+          <div className="flex items-center gap-2 rounded-md bg-[var(--color-surface-2)] px-4 py-3 text-sm font-medium text-[var(--color-text)] shadow-lg">
+            <UploadCloud className="h-5 w-5 text-[var(--color-accent-2)]" aria-hidden />
+            {t("free_creation_drop_on_canvas")}
+          </div>
+        </div>
+      ) : null}
+
       <div className="absolute right-4 top-4 z-20 flex items-center gap-1 rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]/94 p-1 shadow-md backdrop-blur-sm">
         <button type="button" onClick={() => setScale((value) => Math.min(MAX_SCALE, value + 0.1))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_zoom_in")} aria-label={t("free_creation_zoom_in")}><ZoomIn className="h-4 w-4" aria-hidden /></button>
         <span className="min-w-12 text-center text-[11px] text-[var(--color-text-muted)]">{Math.round(scale * 100)}%</span>
         <button type="button" onClick={() => setScale((value) => Math.max(MIN_SCALE, value - 0.1))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_zoom_out")} aria-label={t("free_creation_zoom_out")}><ZoomOut className="h-4 w-4" aria-hidden /></button>
         <button type="button" onClick={() => { setPan({ x: 0, y: 0 }); setScale(1); }} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_reset_canvas")} aria-label={t("free_creation_reset_canvas")}><LocateFixed className="h-4 w-4" aria-hidden /></button>
-        {hiddenIds.length ? <button type="button" onClick={() => setShowHidden((value) => !value)} className={`focus-ring grid h-8 min-w-8 place-items-center rounded px-1.5 ${showHidden ? "bg-[var(--color-accent-dim)] text-[var(--color-accent-2)]" : "text-[var(--color-text-muted)]"}`} title={t("free_creation_show_hidden", { count: hiddenIds.length })} aria-label={t("free_creation_show_hidden", { count: hiddenIds.length })}>{showHidden ? <Eye className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}</button> : null}
+        {hiddenCount ? <button type="button" onClick={() => setShowHidden((value) => !value)} className={`focus-ring grid h-8 min-w-8 place-items-center rounded px-1.5 ${showHidden ? "bg-[var(--color-accent-dim)] text-[var(--color-accent-2)]" : "text-[var(--color-text-muted)]"}`} title={t("free_creation_show_hidden", { count: hiddenCount })} aria-label={t("free_creation_show_hidden", { count: hiddenCount })}>{showHidden ? <Eye className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}</button> : null}
+        {hiddenCount && !readOnly ? <button type="button" onClick={() => restoreNodes([...hiddenIds, ...hiddenUploadIds])} className="focus-ring grid h-8 min-w-8 place-items-center rounded px-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_restore_all_hidden", { count: hiddenCount })} aria-label={t("free_creation_restore_all_hidden", { count: hiddenCount })}><RotateCcw className="h-4 w-4" aria-hidden /></button> : null}
       </div>
 
-      <div className="absolute left-0 top-0" style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${scale})`, transformOrigin: "0 0" }}>
+      <div className="absolute left-0 top-0" style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${scale})`, transformOrigin: "0 0", transition: viewportAnimating ? "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)" : undefined }}>
         <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1" aria-hidden>
           {visibleCreations.flatMap((creation) => {
             const targets = [
@@ -582,6 +855,8 @@ export function FreeCreationInfiniteCanvas({
       {(activeContextCreation || activeContextUpload) && contextMenu ? (
         <div className="absolute z-[200] min-w-44 rounded-md border border-[var(--color-hairline)] p-1 shadow-2xl" style={{ left: Math.max(4, contextMenu.x), top: Math.max(4, contextMenu.y), background: "var(--color-surface-2)", opacity: 1 }} role="menu">
           {activeContextCreation ? <>
+            {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => contextSelectionIsHidden ? restoreNodes(contextSelectionIds) : hideNodes(contextSelectionIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]">{contextSelectionIsHidden ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}{t(contextSelectionIsHidden ? "free_creation_restore_selected" : "free_creation_hide_selected", { count: contextSelectionIds.length })}</button> : null}
+            {selectedReferences.length >= 2 && selectedSet.has(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => { if (onReferences) onReferences(selectedReferences); else selectedReferences.forEach(({ claim, label }) => onReference(claim, label)); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_selected_references", { count: selectedReferences.length })}</button> : null}
             {onMerge && selectedMergeIds.length >= 2 && selectedMergeIds.includes(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => { onMerge(selectedMergeIds); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Clapperboard className="h-3.5 w-3.5" aria-hidden />{t("free_creation_merge_selected")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path && creationMediaType(activeContextCreation) === "image" ? <button type="button" role="menuitem" onClick={() => { onEdit(activeContextCreation.creation_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Pencil className="h-3.5 w-3.5" aria-hidden />{t("free_creation_use_as_parent")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onPreview?.({ kind: "creation", creation: activeContextCreation }); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_preview")}</button> : null}
@@ -589,6 +864,8 @@ export function FreeCreationInfiniteCanvas({
             {hiddenSet.has(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => restoreCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore_to_canvas")}</button> : <button type="button" role="menuitem" onClick={() => hideCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide_from_canvas")}</button>}
           </> : null}
           {activeContextUpload ? <>
+            {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => contextSelectionIsHidden ? restoreNodes(contextSelectionIds) : hideNodes(contextSelectionIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]">{contextSelectionIsHidden ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}{t(contextSelectionIsHidden ? "free_creation_restore_selected" : "free_creation_hide_selected", { count: contextSelectionIds.length })}</button> : null}
+            {selectedReferences.length >= 2 && selectedSet.has(activeContextUpload.reference_id) ? <button type="button" role="menuitem" onClick={() => { if (onReferences) onReferences(selectedReferences); else selectedReferences.forEach(({ claim, label }) => onReference(claim, label)); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_selected_references", { count: selectedReferences.length })}</button> : null}
             <button type="button" role="menuitem" onClick={() => { onPreview?.({ kind: "upload", upload: activeContextUpload }); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_preview")}</button>
             <button type="button" role="menuitem" onClick={() => { onReference({ type: "upload", reference_id: activeContextUpload.reference_id, role: freeCreationUploadRole(activeContextUpload.media_type) }, activeContextUpload.original_filename); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button>
             {hiddenUploadSet.has(activeContextUpload.reference_id) ? <button type="button" role="menuitem" onClick={() => restoreUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore_to_canvas")}</button> : <button type="button" role="menuitem" onClick={() => hideUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide_from_canvas")}</button>}

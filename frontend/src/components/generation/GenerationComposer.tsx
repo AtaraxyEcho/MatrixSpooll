@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import type { WheelEvent as ReactWheelEvent } from "react";
 import {
   Bot,
   Check,
@@ -6,19 +7,18 @@ import {
   Clock3,
   Copy,
   Crop,
-  FileText,
   Image as ImageIcon,
+  Layers3,
+  Library,
   Loader2,
   Maximize2,
   Monitor,
-  Plus,
   Search,
   Settings2,
   SlidersHorizontal,
   Sparkles,
   Video,
   WandSparkles,
-  X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { API } from "@/api";
@@ -33,10 +33,24 @@ import type {
 import { errMsg } from "@/utils/async";
 import { useAppStore } from "@/stores/app-store";
 import { useAssistantStore } from "@/stores/assistant-store";
+import { referenceCompatibilityIssue } from "./FreeCreationReferenceRoleSelect";
+import { FreeCreationAssetPickerModal } from "./FreeCreationAssetPickerModal";
+import { FloatingParameterPopover } from "./FloatingParameterPopover";
 import {
-  FreeCreationReferenceRoleSelect,
-  referenceCompatibilityIssue,
-} from "./FreeCreationReferenceRoleSelect";
+  readGenerationModelPreferences,
+  writeGenerationModelPreference,
+} from "./generationModelPreference";
+import {
+  automaticReferenceRole,
+  FreeCreationReferenceInput,
+  type FreeCreationReferenceItem,
+  type FreeCreationReferenceMode,
+  referenceAccept,
+  referenceAdmissionIssue,
+  referenceUploadLimit,
+  supportsFrameReferences,
+} from "./FreeCreationReferenceInput";
+import type { Asset } from "@/types/asset";
 
 interface HomeHeroComposerProps {
   onCreated: (projectName: string, mode: HomeComposerMode) => void;
@@ -61,8 +75,6 @@ const IMAGE_RESOLUTION_PIXELS: Record<(typeof IMAGE_RESOLUTIONS)[number], number
 const QUANTITIES = [1, 2, 3, 4] as const;
 const MIN_IMAGE_DIMENSION = 256;
 const MAX_IMAGE_DIMENSION = 4096;
-const MAX_HOME_REFERENCES = 9;
-const HOME_REFERENCE_ACCEPT = "image/png,image/jpeg,image/webp,video/mp4,video/quicktime,audio/wav,audio/mpeg,text/plain,text/markdown,application/pdf,.txt,.md,.markdown,.pdf";
 
 function unique(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
@@ -116,6 +128,8 @@ type HomeSelectValue = string | number;
 interface HomeSelectOption<T extends HomeSelectValue> {
   value: T;
   label: string;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 interface HomeSelectProps<T extends HomeSelectValue> {
@@ -134,13 +148,6 @@ interface HomeSelectProps<T extends HomeSelectValue> {
   placement?: "auto" | "top";
 }
 
-function referenceRoleForFile(file: File): FreeCreationReferenceRole {
-  if (file.type.startsWith("video/")) return "reference_video";
-  if (file.type.startsWith("audio/")) return "reference_audio";
-  if (file.type.startsWith("text/") || /\.(?:txt|md|markdown|pdf)$/i.test(file.name)) return "prompt_context";
-  return "reference_image";
-}
-
 function referenceMediaTypeForFile(file: File): FreeCreationUploadMediaType {
   if (file.type.startsWith("video/")) return "video";
   if (file.type.startsWith("audio/")) return "audio";
@@ -150,7 +157,21 @@ function referenceMediaTypeForFile(file: File): FreeCreationUploadMediaType {
 
 interface HomeReferenceFile {
   file: File;
-  role?: FreeCreationReferenceRole;
+  role: FreeCreationReferenceRole;
+}
+
+function homeReferenceFileId(reference: HomeReferenceFile): string {
+  const { file } = reference;
+  return `${file.name}:${file.size}:${file.lastModified}:${reference.role}`;
+}
+
+function homeReferenceItem(reference: HomeReferenceFile): FreeCreationReferenceItem {
+  return {
+    id: homeReferenceFileId(reference),
+    name: reference.file.name,
+    mediaType: referenceMediaTypeForFile(reference.file),
+    role: reference.role,
+  };
 }
 
 export function HomeSelect<T extends HomeSelectValue>({
@@ -170,9 +191,9 @@ export function HomeSelect<T extends HomeSelectValue>({
 }: HomeSelectProps<T>) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [popoverLayout, setPopoverLayout] = useState<{ left: number; width: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const pendingFocusIndexRef = useRef<number | null>(null);
@@ -193,28 +214,6 @@ export function HomeSelect<T extends HomeSelectValue>({
     [label, options],
   );
 
-  useLayoutEffect(() => {
-    if (!open || !searchable || !triggerRef.current) {
-      setPopoverLayout(null);
-      return;
-    }
-    const updateLayout = () => {
-      const triggerRect = triggerRef.current?.getBoundingClientRect();
-      if (!triggerRect) return;
-      const viewportPadding = 16;
-      const preferredWidth = Math.max(420, longestOptionLength * 8 + 72);
-      const width = Math.min(preferredWidth, window.innerWidth - viewportPadding * 2);
-      const absoluteLeft = Math.min(
-        Math.max(viewportPadding, triggerRect.left),
-        Math.max(viewportPadding, window.innerWidth - viewportPadding - width),
-      );
-      setPopoverLayout({ left: absoluteLeft - triggerRect.left, width });
-    };
-    updateLayout();
-    window.addEventListener("resize", updateLayout);
-    return () => window.removeEventListener("resize", updateLayout);
-  }, [longestOptionLength, open, searchable]);
-
   const clearTypeahead = () => {
     typeaheadRef.current = "";
     if (typeaheadTimerRef.current) {
@@ -227,6 +226,7 @@ export function HomeSelect<T extends HomeSelectValue>({
     const normalizedKey = key.toLocaleLowerCase();
     const nextQuery = typeaheadRef.current ? `${typeaheadRef.current}${normalizedKey}` : normalizedKey;
     const findMatch = (query: string) => options.findIndex((option) => {
+      if (option.disabled) return false;
       const searchText = `${option.label} ${String(option.value)}`.toLocaleLowerCase();
       return searchText.includes(query);
     });
@@ -249,7 +249,8 @@ export function HomeSelect<T extends HomeSelectValue>({
   useEffect(() => {
     if (!open) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
     };
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
@@ -272,6 +273,7 @@ export function HomeSelect<T extends HomeSelectValue>({
   }, []);
 
   const selectOption = (nextValue: T) => {
+    if (options.find((option) => option.value === nextValue)?.disabled) return;
     onChange(nextValue);
     setOpen(false);
     setQuery("");
@@ -281,7 +283,13 @@ export function HomeSelect<T extends HomeSelectValue>({
 
   const moveFocus = (index: number) => {
     if (!visibleOptions.length) return;
-    optionRefs.current[(index + visibleOptions.length) % visibleOptions.length]?.focus();
+    for (let offset = 0; offset < visibleOptions.length; offset += 1) {
+      const candidate = (index + offset + visibleOptions.length) % visibleOptions.length;
+      if (!visibleOptions[candidate]?.disabled) {
+        optionRefs.current[candidate]?.focus();
+        return;
+      }
+    }
   };
 
   return (
@@ -289,7 +297,8 @@ export function HomeSelect<T extends HomeSelectValue>({
       ref={rootRef}
       className={`home-param-control${align === "right" ? " home-param-control--right" : ""}${placement === "top" ? " home-param-control--top" : ""}${className ? ` ${className}` : ""}`}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+        const nextTarget = event.relatedTarget as Node | null;
+        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) setOpen(false);
       }}
     >
       <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
@@ -325,17 +334,18 @@ export function HomeSelect<T extends HomeSelectValue>({
           aria-hidden
         />
       </button>
-      {open ? (
-        <div
-          id={listboxId}
-          className="home-param-popover"
-          role={searchable ? "dialog" : "listbox"}
-          aria-label={label}
-          style={searchable && popoverLayout ? {
-            left: popoverLayout.left,
-            width: popoverLayout.width,
-          } : undefined}
-        >
+      <FloatingParameterPopover
+        id={listboxId}
+        open={open}
+        triggerRef={triggerRef}
+        panelRef={panelRef}
+        placement={placement}
+        align={align}
+        preferredWidth={searchable ? Math.min(280, Math.max(260, longestOptionLength * 7 + 48)) : undefined}
+        className={searchable ? "home-model-popover" : ""}
+        role={searchable ? "dialog" : "listbox"}
+        ariaLabel={label}
+      >
           {searchable ? (
             <label className="home-param-search">
               <Search className="h-3.5 w-3.5" aria-hidden />
@@ -376,6 +386,9 @@ export function HomeSelect<T extends HomeSelectValue>({
                   type="button"
                   role="option"
                   aria-selected={selected}
+                  aria-disabled={option.disabled || undefined}
+                  disabled={option.disabled}
+                  title={option.disabledReason}
                   className="home-param-option"
                   onClick={() => selectOption(option.value)}
                   onKeyDown={(event) => {
@@ -404,18 +417,154 @@ export function HomeSelect<T extends HomeSelectValue>({
                     }
                   }}
                 >
-                  <span className={searchable ? "home-param-option__label" : "truncate"}>{option.label}</span>
+                  <span className={searchable ? "home-param-option__label" : "truncate"} title={option.label}>{option.label}</span>
                   {selected ? <Check className="home-param-option__check" aria-hidden /> : null}
                 </button>
               );
             })}
             {visibleOptions.length === 0 ? <p className="home-param-empty">{emptyLabel}</p> : null}
           </div>
-        </div>
-      ) : null}
+      </FloatingParameterPopover>
       {hint ? <span id={hintId} className="home-param-hint">{hint}</span> : null}
     </div>
   );
+}
+
+export interface HomeMenuItem<T extends string> {
+  value: T;
+  label: string;
+  icon: typeof Settings2;
+  disabled?: boolean;
+  disabledReason?: string;
+}
+
+export function HomeMenu<T extends string>({
+  label,
+  icon: Icon,
+  items,
+  onSelect,
+  placement = "auto",
+  className = "",
+}: {
+  label: string;
+  icon: typeof Settings2;
+  items: readonly HomeMenuItem<T>[];
+  onSelect: (value: T) => void;
+  placement?: "auto" | "top";
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const menuId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
+
+  const moveFocus = (start: number, direction: 1 | -1) => {
+    for (let offset = 1; offset <= items.length; offset += 1) {
+      const candidate = (start + direction * offset + items.length) % items.length;
+      if (!items[candidate]?.disabled) {
+        itemRefs.current[candidate]?.focus();
+        return;
+      }
+    }
+  };
+
+  return (
+    <div
+      ref={rootRef}
+      className={`home-param-control home-tools-control${className ? ` ${className}` : ""}`}
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget as Node | null;
+        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) setOpen(false);
+      }}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        className="home-param-trigger"
+        aria-label={label}
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        aria-haspopup="menu"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="home-param-trigger__value">
+          <Icon className="home-param-trigger__icon" aria-hidden />
+          <span className="truncate">{label}</span>
+        </span>
+        <ChevronDown className={`home-param-trigger__chevron${open ? " is-open" : ""}`} aria-hidden />
+      </button>
+      <FloatingParameterPopover
+        id={menuId}
+        open={open}
+        triggerRef={triggerRef}
+        panelRef={panelRef}
+        placement={placement}
+        preferredWidth={360}
+        className="home-tools-popover"
+        role="menu"
+        ariaLabel={label}
+      >
+        {items.map((item, index) => {
+          const ItemIcon = item.icon;
+          return (
+            <button
+              key={item.value}
+              ref={(element) => {
+                itemRefs.current[index] = element;
+              }}
+              type="button"
+              role="menuitem"
+              disabled={item.disabled}
+              title={item.disabledReason ?? item.label}
+              className="home-tool-option"
+              onClick={() => {
+                onSelect(item.value);
+                setOpen(false);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+                  event.preventDefault();
+                  moveFocus(index, 1);
+                } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  moveFocus(index, -1);
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setOpen(false);
+                  triggerRef.current?.focus();
+                }
+              }}
+            >
+              <ItemIcon className="h-4 w-4" aria-hidden />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </FloatingParameterPopover>
+    </div>
+  );
+}
+
+export function handleComposerStripWheel(event: ReactWheelEvent<HTMLDivElement>) {
+  const strip = event.currentTarget;
+  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || strip.scrollWidth <= strip.clientWidth) return;
+  const maximum = strip.scrollWidth - strip.clientWidth;
+  const next = Math.min(maximum, Math.max(0, strip.scrollLeft + event.deltaY));
+  if (next === strip.scrollLeft) return;
+  event.preventDefault();
+  strip.scrollLeft = next;
 }
 
 export interface ImageParameterControlProps {
@@ -439,6 +588,7 @@ export interface ImageParameterControlProps {
   onQuantityChange: (value: number) => void;
   onDimensionsCommit: (width: number, height: number) => void;
   hideLabel?: boolean;
+  placement?: "auto" | "top";
 }
 
 export function ImageParameterControl({
@@ -462,9 +612,12 @@ export function ImageParameterControl({
   onQuantityChange,
   onDimensionsCommit,
   hideLabel = false,
+  placement = "auto",
 }: ImageParameterControlProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const widthInputRef = useRef<HTMLInputElement>(null);
   const heightInputRef = useRef<HTMLInputElement>(null);
   const panelId = useId();
@@ -478,7 +631,8 @@ export function ImageParameterControl({
   useEffect(() => {
     if (!open) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) {
         commitDimensions();
         setOpen(false);
       }
@@ -499,7 +653,8 @@ export function ImageParameterControl({
       ref={rootRef}
       className="home-param-control home-generation-parameters home-generation-parameters--image"
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) {
+        const nextTarget = event.relatedTarget as Node | null;
+        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) {
           commitDimensions();
           setOpen(false);
         }
@@ -507,6 +662,7 @@ export function ImageParameterControl({
     >
       <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
+        ref={triggerRef}
         type="button"
         className="home-combined-trigger home-combined-trigger--image"
         aria-label={label}
@@ -534,8 +690,16 @@ export function ImageParameterControl({
         <ChevronDown className={`home-param-trigger__chevron${open ? " is-open" : ""}`} aria-hidden />
       </button>
 
-      {open ? (
-        <div id={panelId} className="home-param-popover home-image-parameters__popover" role="dialog" aria-label={label}>
+      <FloatingParameterPopover
+        id={panelId}
+        open={open}
+        triggerRef={triggerRef}
+        panelRef={panelRef}
+        placement={placement}
+        className="home-image-parameters__popover"
+        role="dialog"
+        ariaLabel={label}
+      >
           <fieldset className="home-popover-section">
             <legend>{ratioLabel}</legend>
             <div className="home-ratio-options">
@@ -625,8 +789,7 @@ export function ImageParameterControl({
             </div>
             <p className="home-popover-hint">{sizeHint}</p>
           </fieldset>
-        </div>
-      ) : null}
+      </FloatingParameterPopover>
     </div>
   );
 }
@@ -646,6 +809,7 @@ export interface VideoParameterControlProps {
   onResolutionChange: (value: string) => void;
   onQuantityChange: (value: number) => void;
   hideLabel?: boolean;
+  placement?: "auto" | "top";
 }
 
 export function VideoParameterControl({
@@ -663,16 +827,20 @@ export function VideoParameterControl({
   onResolutionChange,
   onQuantityChange,
   hideLabel = false,
+  placement = "auto",
 }: VideoParameterControlProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
   const resolutionText = resolution === "auto" ? autoLabel : resolution.toUpperCase();
 
   useEffect(() => {
     if (!open) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
     };
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
@@ -683,11 +851,13 @@ export function VideoParameterControl({
       ref={rootRef}
       className="home-param-control home-generation-parameters home-generation-parameters--video"
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+        const nextTarget = event.relatedTarget as Node | null;
+        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) setOpen(false);
       }}
     >
       <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
+        ref={triggerRef}
         type="button"
         className="home-combined-trigger home-combined-trigger--video"
         aria-label={label}
@@ -711,8 +881,16 @@ export function VideoParameterControl({
         <ChevronDown className={`home-param-trigger__chevron${open ? " is-open" : ""}`} aria-hidden />
       </button>
 
-      {open ? (
-        <div id={panelId} className="home-param-popover home-video-parameters__popover" role="dialog" aria-label={label}>
+      <FloatingParameterPopover
+        id={panelId}
+        open={open}
+        triggerRef={triggerRef}
+        panelRef={panelRef}
+        placement={placement}
+        className="home-video-parameters__popover"
+        role="dialog"
+        ariaLabel={label}
+      >
           <fieldset className="home-popover-section">
             <legend>{ratioLabel}</legend>
             <div className="home-ratio-options">
@@ -764,8 +942,7 @@ export function VideoParameterControl({
               ))}
             </div>
           </fieldset>
-        </div>
-      ) : null}
+      </FloatingParameterPopover>
     </div>
   );
 }
@@ -778,6 +955,7 @@ export interface DurationControlProps {
   onChange: (value: number) => void;
   ariaLabel?: string;
   hideLabel?: boolean;
+  placement?: "auto" | "top";
 }
 
 export interface AgentParameterControlProps {
@@ -811,12 +989,15 @@ export function AgentParameterControl({
 }: AgentParameterControlProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
 
   useEffect(() => {
     if (!open) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
     };
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
@@ -827,11 +1008,13 @@ export function AgentParameterControl({
       ref={rootRef}
       className={`home-param-control home-agent-parameters${placement === "top" ? " home-param-control--top" : ""}`}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+        const nextTarget = event.relatedTarget as Node | null;
+        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) setOpen(false);
       }}
     >
       <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
+        ref={triggerRef}
         type="button"
         className="home-param-trigger"
         aria-label={label}
@@ -846,8 +1029,16 @@ export function AgentParameterControl({
         </span>
         <ChevronDown className={`home-param-trigger__chevron${open ? " is-open" : ""}`} aria-hidden />
       </button>
-      {open ? (
-        <div id={panelId} className="home-param-popover home-agent-parameters__popover" role="dialog" aria-label={label}>
+      <FloatingParameterPopover
+        id={panelId}
+        open={open}
+        triggerRef={triggerRef}
+        panelRef={panelRef}
+        placement={placement}
+        className="home-agent-parameters__popover"
+        role="dialog"
+        ariaLabel={label}
+      >
           <fieldset className="home-popover-section">
             <legend>{preferenceLabel}</legend>
             <div className="home-detail-options home-detail-options--two">
@@ -885,8 +1076,7 @@ export function AgentParameterControl({
               ))}
             </div>
           </fieldset>
-        </div>
-      ) : null}
+      </FloatingParameterPopover>
     </div>
   );
 }
@@ -899,6 +1089,7 @@ export function DurationControl({
   onChange,
   ariaLabel = label,
   hideLabel = false,
+  placement = "auto",
 }: DurationControlProps) {
   const supported = useMemo(
     () => (durations?.length ? [...durations].sort((left, right) => left - right) : [value]),
@@ -908,6 +1099,8 @@ export function DurationControl({
   const maximum = supported[supported.length - 1] ?? value;
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
   const safeValue = supported.includes(value) ? value : supported.reduce((closest, candidate) => (
     Math.abs(candidate - value) < Math.abs(closest - value) ? candidate : closest
@@ -918,7 +1111,8 @@ export function DurationControl({
   useEffect(() => {
     if (!open) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
     };
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
@@ -929,11 +1123,13 @@ export function DurationControl({
       ref={rootRef}
       className="home-param-control home-param-control--right home-duration-control"
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+        const nextTarget = event.relatedTarget as Node | null;
+        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) setOpen(false);
       }}
     >
       <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
+        ref={triggerRef}
         type="button"
         className="home-param-trigger"
         aria-label={ariaLabel}
@@ -949,8 +1145,17 @@ export function DurationControl({
         <ChevronDown className={`home-param-trigger__chevron${open ? " is-open" : ""}`} aria-hidden />
       </button>
 
-      {open ? (
-        <div id={panelId} className="home-param-popover home-duration-popover" role="dialog" aria-label={label}>
+      <FloatingParameterPopover
+        id={panelId}
+        open={open}
+        triggerRef={triggerRef}
+        panelRef={panelRef}
+        placement={placement}
+        align="right"
+        className="home-duration-popover"
+        role="dialog"
+        ariaLabel={label}
+      >
           <div className="home-duration-popover__header">
             <span>{minimumLabel}</span>
             <strong>{safeValue}s</strong>
@@ -986,8 +1191,7 @@ export function DurationControl({
               <span key={tick}>{tick}s</span>
             ))}
           </div>
-        </div>
-      ) : null}
+      </FloatingParameterPopover>
     </div>
   );
 }
@@ -995,10 +1199,13 @@ export function DurationControl({
 export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const { t } = useTranslation("dashboard");
   const referenceInputRef = useRef<HTMLInputElement>(null);
+  const pendingFrameRoleRef = useRef<"first_frame" | "last_frame" | null>(null);
   const [composerMode, setComposerMode] = useState<HomeComposerMode>("video");
   const [agentPreference, setAgentPreference] = useState<AgentGenerationPreference>("video");
   const [agentAspectRatio, setAgentAspectRatio] = useState("16:9");
-  const [referenceFiles, setReferenceFiles] = useState<HomeReferenceFile[]>([]);
+  const [referenceMode, setReferenceMode] = useState<FreeCreationReferenceMode>("omni");
+  const [omniReferenceFiles, setOmniReferenceFiles] = useState<HomeReferenceFile[]>([]);
+  const [frameReferenceFiles, setFrameReferenceFiles] = useState<HomeReferenceFile[]>([]);
   const [outputType, setOutputType] = useState<"image" | "video">("video");
   const [prompt, setPrompt] = useState("");
   const [videoAspectRatio, setVideoAspectRatio] = useState("16:9");
@@ -1010,11 +1217,15 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const [imageHeight, setImageHeight] = useState(initialImageDimensions.height);
   const [quantity, setQuantity] = useState(1);
   const [duration, setDuration] = useState(4);
-  const [model, setModel] = useState("auto");
+  const [modelPreferences, setModelPreferences] = useState(readGenerationModelPreferences);
   const [modelOptions, setModelOptions] = useState<ModelOptions>(EMPTY_MODEL_OPTIONS);
   const [capabilityResult, setCapabilityResult] = useState<CapabilityResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+  const [importingAssets, setImportingAssets] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const referenceFiles = referenceMode === "frames" ? frameReferenceFiles : omniReferenceFiles;
+  const referenceItems = useMemo(() => referenceFiles.map(homeReferenceItem), [referenceFiles]);
 
   useEffect(() => {
     let active = true;
@@ -1035,17 +1246,21 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   }, []);
 
   const models = outputType === "video" ? modelOptions.video : modelOptions.image;
+  const model = modelPreferences[outputType];
+  const setModel = useCallback((nextModel: string) => {
+    setModelPreferences((current) => writeGenerationModelPreference(current, outputType, nextModel));
+  }, [outputType]);
   const selectedModel = useMemo(
     () => (model === "auto" || models.includes(model) ? model : "auto"),
     [model, models],
   );
   const referenceKind = useMemo<"none" | "frame" | "image" | "video" | "audio">(() => {
+    if (outputType === "video" && referenceMode === "frames") return "frame";
     if (referenceFiles.some((item) => item.role === "reference_video")) return "video";
     if (referenceFiles.some((item) => item.role === "reference_audio")) return "audio";
-    if (referenceFiles.some((item) => item.role === "first_frame" || item.role === "last_frame")) return "frame";
     if (referenceFiles.some((item) => item.role === "reference_image")) return "image";
     return "none";
-  }, [referenceFiles]);
+  }, [outputType, referenceFiles, referenceMode]);
   const capabilityRequestKey = `${outputType}:${selectedModel}:${referenceKind}`;
   const capabilities = capabilityResult?.key === capabilityRequestKey ? capabilityResult.value : null;
   const capabilityError = capabilityResult?.key === capabilityRequestKey ? capabilityResult.error : null;
@@ -1126,20 +1341,91 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
     label: t(labelKey),
   })), [t]);
 
-  const addReferenceFiles = (files: FileList | null) => {
-    if (!files?.length) return;
-    setReferenceFiles((current) => {
-      const next = [...current];
-      for (const file of Array.from(files)) {
-        const duplicate = next.some((item) => (
-          item.file.name === file.name
-          && item.file.size === file.size
-          && item.file.lastModified === file.lastModified
-        ));
-        if (!duplicate && next.length < MAX_HOME_REFERENCES) next.push({ file });
+  const showReferenceAdmissionIssue = (issue: Exclude<ReturnType<typeof referenceAdmissionIssue>, null>) => {
+    const limit = referenceUploadLimit(capabilities, referenceMode, outputType);
+    const message = issue === "unsupported_type"
+      ? t("free_creation_reference_type_unsupported")
+      : t("free_creation_reference_limit_reached", { count: limit ?? 0 });
+    useAppStore.getState().pushToast(message, "error");
+  };
+
+  const addReferenceFiles = (
+    files: FileList | readonly File[] | null,
+    requestedFrameRole: "first_frame" | "last_frame" | null,
+  ): number => {
+    if (!files?.length) return 0;
+    let next = [...referenceFiles];
+    let addedCount = 0;
+    let reportedIssue = false;
+    for (const file of Array.from(files)) {
+      const mediaType = referenceMediaTypeForFile(file);
+      const role = referenceMode === "frames"
+        ? requestedFrameRole ?? (next.some((item) => item.role === "first_frame") ? "last_frame" : "first_frame")
+        : automaticReferenceRole(mediaType);
+      const withoutReplacedFrame = referenceMode === "frames"
+        ? next.filter((item) => item.role !== role)
+        : next;
+      const duplicate = withoutReplacedFrame.some((item) => (
+        item.file.name === file.name
+        && item.file.size === file.size
+        && item.file.lastModified === file.lastModified
+      ));
+      if (duplicate) continue;
+      const issue = referenceAdmissionIssue({
+        items: withoutReplacedFrame.map(homeReferenceItem),
+        mediaType,
+        role,
+        capabilities,
+        outputType,
+        mode: referenceMode,
+      });
+      if (issue) {
+        if (!reportedIssue) showReferenceAdmissionIssue(issue);
+        reportedIssue = true;
+        continue;
       }
-      return next;
-    });
+      next = [...withoutReplacedFrame, { file, role }];
+      addedCount += 1;
+      if (referenceMode === "frames") break;
+    }
+    if (referenceMode === "frames") setFrameReferenceFiles(next);
+    else setOmniReferenceFiles(next);
+    return addedCount;
+  };
+
+  const openReferencePicker = (frameRole?: "first_frame" | "last_frame") => {
+    pendingFrameRoleRef.current = frameRole ?? null;
+    if (!referenceInputRef.current) return;
+    referenceInputRef.current.accept = referenceAccept(capabilities, referenceMode, outputType);
+    referenceInputRef.current.multiple = referenceMode === "omni";
+    referenceInputRef.current.click();
+  };
+
+  const removeReferenceFile = (id: string) => {
+    if (referenceMode === "frames") {
+      setFrameReferenceFiles((current) => current.filter((item) => homeReferenceFileId(item) !== id));
+    } else {
+      setOmniReferenceFiles((current) => current.filter((item) => homeReferenceFileId(item) !== id));
+    }
+  };
+
+  const swapFrameFiles = () => {
+    setFrameReferenceFiles((current) => current.map((item) => ({
+      ...item,
+      role: item.role === "first_frame" ? "last_frame" : "first_frame",
+    })));
+  };
+
+  const importAssetReferences = async (assets: Asset[]) => {
+    setImportingAssets(true);
+    try {
+      const files = await Promise.all(assets.map((asset) => API.getGlobalAssetFile(asset)));
+      if (addReferenceFiles(files, null) > 0) setAssetPickerOpen(false);
+    } catch (importError) {
+      useAppStore.getState().pushToast(errMsg(importError), "error");
+    } finally {
+      setImportingAssets(false);
+    }
   };
 
   const changeImageAspectRatio = (nextRatio: string) => {
@@ -1192,7 +1478,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
           claims.push({
             type: "upload",
             reference_id: uploaded.reference.reference_id,
-            role: reference.role ?? referenceRoleForFile(file),
+            role: reference.role,
           });
         }
         return claims;
@@ -1217,7 +1503,8 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
           context: `${agentContext}${referenceContext}`,
         });
         setPrompt("");
-        setReferenceFiles([]);
+        setOmniReferenceFiles([]);
+        setFrameReferenceFiles([]);
         rollbackProjectName = null;
         onCreated(project.name, "agent");
         return;
@@ -1243,7 +1530,8 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
           })()
         : await API.createFreeProject({ title: shortProjectTitle(cleanPrompt), creation: payload });
       setPrompt("");
-      setReferenceFiles([]);
+      setOmniReferenceFiles([]);
+      setFrameReferenceFiles([]);
       rollbackProjectName = null;
       onCreated(project.name, composerMode);
     } catch (err) {
@@ -1278,64 +1566,18 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       </div>
 
       <div className="home-composer-shell rounded-[14px] p-3 sm:p-5">
-        <div className="home-composer-input-row">
-          <div className="home-reference-tray" aria-label={t("free_creation_reference_content")}>
-            {referenceFiles.map((reference) => {
-              const { file } = reference;
-              const isImage = file.type.startsWith("image/");
-              const isVideo = file.type.startsWith("video/");
-              const ReferenceIcon = isImage ? ImageIcon : isVideo ? Video : FileText;
-              return (
-                <div key={`${file.name}:${file.size}:${file.lastModified}`} className="home-reference-card">
-                  <ReferenceIcon className="h-5 w-5 text-accent-2" aria-hidden />
-                  <span title={file.name}>{file.name}</span>
-                  {composerMode !== "agent" ? (
-                    <FreeCreationReferenceRoleSelect
-                      name={file.name}
-                      mediaType={referenceMediaTypeForFile(file)}
-                      outputType={outputType}
-                      capabilities={capabilities}
-                      value={reference.role}
-                      onChange={(role) => setReferenceFiles((current) => current.map((item) => (
-                        item === reference ? { ...item, role } : item
-                      )))}
-                    />
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => setReferenceFiles((current) => current.filter((item) => item !== reference))}
-                    aria-label={`${t("free_creation_remove_reference")}: ${file.name}`}
-                  >
-                    <X className="h-3 w-3" aria-hidden />
-                  </button>
-                </div>
-              );
-            })}
-            {referenceFiles.length < MAX_HOME_REFERENCES ? (
-              <button
-                type="button"
-                className="home-reference-card home-reference-card--add"
-                onClick={() => referenceInputRef.current?.click()}
-                aria-label={t("free_creation_upload_reference")}
-                title={t("free_creation_upload_reference")}
-              >
-                <Plus className="h-5 w-5" aria-hidden />
-                <span>{t("free_creation_reference_content")}</span>
-              </button>
-            ) : null}
-            <input
-              ref={referenceInputRef}
-              type="file"
-              multiple
-              accept={HOME_REFERENCE_ACCEPT}
-              className="sr-only"
-              aria-label={t("free_creation_upload_reference")}
-              onChange={(event) => {
-                addReferenceFiles(event.target.files);
-                event.currentTarget.value = "";
-              }}
-            />
-          </div>
+        <FreeCreationReferenceInput
+          mode={referenceMode}
+          outputType={outputType}
+          capabilities={capabilities}
+          items={referenceItems}
+          busy={submitting}
+          disabled={!capabilities}
+          onUploadRequest={openReferencePicker}
+          onFilesDropped={(files) => addReferenceFiles(files, null)}
+          onRemove={removeReferenceFile}
+          onSwapFrames={swapFrameFiles}
+        >
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
@@ -1349,11 +1591,25 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
             maxLength={10000}
             aria-label={t("home_prompt_label")}
             placeholder={t("home_prompt_placeholder")}
-            className="home-prompt-input min-h-[130px] min-w-0 flex-1 resize-y px-3 py-3 text-[15px] leading-7 text-text outline-none placeholder:text-text-4"
+            className="min-h-[130px] w-full min-w-0 resize-y bg-transparent px-3 py-3 text-[15px] leading-7 text-text outline-none placeholder:text-text-4"
           />
-        </div>
+        </FreeCreationReferenceInput>
+        <input
+          ref={referenceInputRef}
+          type="file"
+          className="sr-only"
+          aria-label={t("free_creation_upload_reference")}
+          onChange={(event) => {
+            addReferenceFiles(event.target.files, pendingFrameRoleRef.current);
+            pendingFrameRoleRef.current = null;
+            event.currentTarget.value = "";
+          }}
+        />
 
-        <div className="home-param-grid composer-param-strip home-composer-param-strip border-t border-hairline-soft pt-3">
+        <div
+          className="home-param-grid composer-param-strip home-composer-param-strip border-t border-hairline-soft pt-3"
+          onWheel={handleComposerStripWheel}
+        >
           <HomeSelect
             label={t("free_creation_mode")}
             value={composerMode}
@@ -1369,10 +1625,29 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
               setComposerMode(nextMode);
               if (nextMode !== "agent") {
                 setOutputType(nextMode);
-                setModel("auto");
               }
+              if (nextMode !== "video") setReferenceMode("omni");
             }}
           />
+          {composerMode === "video" ? (
+            <HomeSelect
+              label={t("free_creation_reference_mode")}
+              value={referenceMode}
+              icon={Layers3}
+              hideLabel
+              className="free-creation-reference-mode-control"
+              options={[
+                { value: "omni", label: t("free_creation_reference_mode_all") },
+                {
+                  value: "frames",
+                  label: t("free_creation_reference_mode_frames"),
+                  disabled: !supportsFrameReferences(capabilities),
+                  disabledReason: t("free_creation_frames_model_unsupported"),
+                },
+              ]}
+              onChange={setReferenceMode}
+            />
+          ) : null}
           {composerMode === "agent" ? (
             <AgentParameterControl
               label={t("free_creation_agent_parameters")}
@@ -1404,6 +1679,24 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
             ]}
             onChange={setModel}
           />
+          <div className="home-param-control free-creation-asset-control">
+            <button
+              type="button"
+              onClick={() => setAssetPickerOpen(true)}
+              disabled={submitting || (() => {
+                const limit = referenceUploadLimit(capabilities, referenceMode, outputType);
+                return limit !== null && referenceFiles.length >= limit;
+              })()}
+              className="home-param-trigger"
+              title={t("free_creation_reference_assets")}
+              aria-label={t("free_creation_reference_assets")}
+            >
+              <span className="home-param-trigger__value">
+                <Library className="home-param-trigger__icon" aria-hidden />
+                <span className="truncate">{t("free_creation_reference_assets")}</span>
+              </span>
+            </button>
+          </div>
           {outputType === "image" ? (
             <ImageParameterControl
               label={t("home_image_settings")}
@@ -1479,6 +1772,18 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
           </button>
         </div>
       </div>
+      {assetPickerOpen ? (
+        <FreeCreationAssetPickerModal
+          maxSelection={referenceUploadLimit(capabilities, referenceMode, outputType) === null
+            ? null
+            : Math.max(0, (referenceUploadLimit(capabilities, referenceMode, outputType) ?? 0) - referenceFiles.length)}
+          busy={importingAssets}
+          onClose={() => {
+            if (!importingAssets) setAssetPickerOpen(false);
+          }}
+          onImport={importAssetReferences}
+        />
+      ) : null}
     </section>
   );
 }
