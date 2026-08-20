@@ -38,6 +38,9 @@ pytestmark = pytest.mark.unit
         # ByteDance Seedance / Dreamina（4-15 全展开）
         ("dreamina-seedance-2-0-260128", list(range(4, 16))),
         ("doubao-seedance-1-5-pro-251215", list(range(4, 16))),
+        # Seedance 2.5 原生支持 4-30 秒，自定义聚合供应商不能落入 2.0 的 15 秒上限。
+        ("seedance-2.5", list(range(4, 31))),
+        ("doubao-seedance-2-5-260628", list(range(4, 31))),
         # 即梦
         ("jimeng-video-3.0", list(range(4, 16))),
         # HappyHorse

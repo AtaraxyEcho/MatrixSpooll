@@ -45,20 +45,6 @@ PRESET_PROVIDERS: dict[str, PresetProvider] = {
         api_key_pattern=r"^sk-ant-[A-Za-z0-9_-]+$",
         is_recommended=False,
     ),
-    "arcreel": PresetProvider(
-        id="arcreel",
-        display_name="ArcReel API",
-        icon_key="ArcReel",
-        messages_url="https://api.arc-reel.com",
-        discovery_url="https://api.arc-reel.com",
-        default_model="gpt-5.5",
-        suggested_models=(),
-        docs_url=None,
-        api_key_url="https://api.arc-reel.com/",
-        notes_i18n_key=None,
-        api_key_pattern=None,
-        is_recommended=True,
-    ),
     "glm-cn": PresetProvider(
         id="glm-cn",
         display_name="Zhipu GLM (中国)",
@@ -188,10 +174,9 @@ PRESET_PROVIDERS: dict[str, PresetProvider] = {
 }
 
 
-# 显示顺序：显式定义,Anthropic Official 永远第一,ArcReel 第二,其余按区域归组
+# 显示顺序：显式定义，Anthropic Official 永远第一，其余按区域归组。
 PRESET_ORDER: tuple[str, ...] = (
     "anthropic-official",
-    "arcreel",
     "deepseek",
     "kimi",
     "xiaomi-mimo",

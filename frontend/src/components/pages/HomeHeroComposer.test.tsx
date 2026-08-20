@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Settings2 } from "lucide-react";
 import { API } from "@/api";
@@ -68,10 +68,27 @@ describe("HomeHeroComposer", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: t("home_generate") })).toBeDisabled());
     fireEvent.click(screen.getByRole("button", { name: t("home_video_settings") }));
 
+    const panel = screen.getByRole("dialog", { name: t("home_video_settings") });
+    expect(panel).toHaveClass("home-param-popover--portal");
+    expect(panel.parentElement).toBe(document.body);
     expect(screen.getByRole("button", { name: t("aspect_ratio_1_1") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1080P" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "1" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: t("home_image_settings") })).not.toBeInTheDocument();
+  });
+
+  it("orders the four primary video controls consistently", async () => {
+    render(<HomeHeroComposer onCreated={vi.fn()} />);
+
+    const strip = document.querySelector(".home-composer-param-strip");
+    expect(strip).not.toBeNull();
+    await waitFor(() => expect(strip!.querySelectorAll("button").length).toBeGreaterThanOrEqual(4));
+    expect(Array.from(strip!.querySelectorAll("button")).slice(0, 4).map((button) => button.getAttribute("aria-label"))).toEqual([
+      t("free_creation_mode"),
+      t("free_creation_reference_mode"),
+      t("home_model"),
+      t("free_creation_reference_assets"),
+    ]);
   });
 
   it("uses keyboard letters to focus a matching model and shows the hint", () => {
@@ -194,16 +211,22 @@ describe("HomeHeroComposer", () => {
     const onCreated = vi.fn();
     render(<HomeHeroComposer onCreated={onCreated} />);
 
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: t("free_creation_upload_reference") }),
+    ).toBeEnabled());
     const file = new File(["image"], "opening.png", { type: "image/png", lastModified: 1 });
     fireEvent.change(screen.getByLabelText(t("free_creation_upload_reference"), { selector: "input" }), {
       target: { files: [file] },
     });
+    const referenceChip = screen.getByTitle("opening.png");
+    const promptInput = screen.getByLabelText(t("home_prompt_label"));
+    expect(referenceChip.compareDocumentPosition(promptInput) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     fireEvent.change(screen.getByLabelText(t("home_prompt_label")), {
       target: { value: "Animate the opening frame" },
     });
-    fireEvent.change(screen.getByRole("combobox", {
+    expect(screen.queryByRole("combobox", {
       name: t("free_creation_reference_role_label", { name: "opening.png" }),
-    }), { target: { value: "reference_image" } });
+    })).not.toBeInTheDocument();
     const submit = screen.getByRole("button", { name: t("home_generate") });
     await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
@@ -221,6 +244,47 @@ describe("HomeHeroComposer", () => {
     expect(onCreated).toHaveBeenCalledWith("reference-project", "video");
   });
 
+  it("accepts dropped files as automatic omni references", async () => {
+    render(<HomeHeroComposer onCreated={vi.fn()} />);
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: t("free_creation_upload_reference") }),
+    ).toBeEnabled());
+    const file = new File(["image"], "dropped.png", { type: "image/png", lastModified: 2 });
+    const dropZone = screen.getByLabelText(t("home_prompt_label")).closest(".free-reference-input");
+    expect(dropZone).not.toBeNull();
+    fireEvent.dragEnter(dropZone!, { dataTransfer: { types: ["Files"], files: [file] } });
+    expect(screen.getByText(t("free_creation_drop_reference"))).toBeInTheDocument();
+    fireEvent.drop(dropZone!, { dataTransfer: { types: ["Files"], files: [file] } });
+    expect(screen.getByText("dropped.png")).toBeInTheDocument();
+  });
+
+  it("imports an image from the shared asset library into the reference bubbles", async () => {
+    const asset = {
+      id: "asset-1",
+      type: "character" as const,
+      name: "Hero",
+      description: "Main character",
+      voice_style: "",
+      image_path: "_global_assets/character/hero.png",
+      audio_path: null,
+      source_project: null,
+      updated_at: "2026-08-20T00:00:00Z",
+    };
+    vi.spyOn(API, "listAssets").mockResolvedValue({ items: [asset] });
+    const file = new File(["image"], "Hero.png", { type: "image/png", lastModified: 3 });
+    const getFile = vi.spyOn(API, "getGlobalAssetFile").mockResolvedValue(file);
+    render(<HomeHeroComposer onCreated={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: t("free_creation_reference_assets") })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_reference_assets") }));
+    const dialog = await screen.findByRole("dialog", { name: t("free_creation_asset_picker_title") });
+    fireEvent.click(await within(dialog).findByRole("button", { name: /Hero/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: t("free_creation_reference_assets") }));
+
+    await waitFor(() => expect(getFile).toHaveBeenCalledWith(asset));
+    expect(await screen.findByText("Hero.png")).toBeInTheDocument();
+  });
+
   it("shows the disabled pre-minimum interval and clamps to model-supported durations", async () => {
     render(<HomeHeroComposer onCreated={vi.fn()} />);
 
@@ -235,6 +299,36 @@ describe("HomeHeroComposer", () => {
     expect(slider).toHaveValue("4");
     fireEvent.change(slider, { target: { value: "15" } });
     expect(slider).toHaveValue("15");
+  });
+
+  it("updates the duration range when switching to a 30-second Seedance model", async () => {
+    vi.mocked(API.getModelCandidates).mockResolvedValue({
+      image: { default: [], buckets: {} },
+      video: { default: ["anyfast/seedance-2.0", "anyfast/seedance-2.5"], buckets: {} },
+      provider_names: {},
+    });
+    vi.mocked(API.getSystemConfig).mockResolvedValue({ settings: {} } as never);
+    vi.mocked(API.getFreeCreationCapabilities).mockImplementation(async ({ outputType, model }) => ({
+      output_type: outputType,
+      model: model ?? "anyfast/seedance-2.0",
+      ratios: ["16:9"],
+      resolutions: ["1080p"],
+      durations: model?.includes("2.5") ? Array.from({ length: 27 }, (_, index) => index + 4) : [4, 5, 10, 15],
+      max_reference_images: 4,
+      max_reference_videos: 1,
+      max_reference_media_count: 4,
+      input_slots: [{ role: "reference_image", accepted_types: ["image"], max_count: 4 }],
+    }));
+    render(<HomeHeroComposer onCreated={vi.fn()} />);
+
+    const model = await screen.findByRole("button", { name: t("home_model") });
+    fireEvent.click(model);
+    fireEvent.click(await screen.findByRole("option", { name: "seedance-2.5" }));
+    await waitFor(() => expect(API.getFreeCreationCapabilities).toHaveBeenLastCalledWith(
+      expect.objectContaining({ model: "anyfast/seedance-2.5" }),
+    ));
+    fireEvent.click(screen.getByRole("button", { name: t("home_duration") }));
+    await waitFor(() => expect(screen.getByRole("slider", { name: t("home_duration") })).toHaveAttribute("max", "30"));
   });
 
   it("uses declared video capabilities and creates the project with its first task atomically", async () => {
