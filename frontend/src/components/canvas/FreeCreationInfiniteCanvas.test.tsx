@@ -261,4 +261,39 @@ describe("FreeCreationInfiniteCanvas", () => {
       audioUpload.original_filename,
     );
   });
+
+  it("renders generated voice as a versioned canvas artifact", async () => {
+    const voice: FreeCreation = {
+      ...creation,
+      creation_id: "c_audio0123456789abcdef",
+      output_type: "audio",
+      media_type: "audio",
+      prompt: "voiceover line",
+      media_path: "audio/segment_c_audio0123456789abcdef.wav",
+    };
+    const onReference = vi.fn();
+    const { container } = render(
+      <FreeCreationInfiniteCanvas
+        projectName="demo"
+        creations={[voice]}
+        uploads={[]}
+        readOnly={false}
+        actingId={null}
+        onCancel={vi.fn()}
+        onRetry={vi.fn()}
+        onEdit={vi.fn()}
+        onReference={onReference}
+      />,
+    );
+
+    const card = await waitFor(() => container.querySelector<HTMLElement>(`[data-canvas-id='${voice.creation_id}']`));
+    expect(card?.querySelector("audio")).toHaveAttribute("src", expect.stringContaining(voice.creation_id));
+    fireEvent.contextMenu(card!, { clientX: 120, clientY: 120 });
+    expect(screen.queryByRole("menuitem", { name: t("free_creation_use_as_parent") })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: t("free_creation_add_reference") }));
+    expect(onReference).toHaveBeenCalledWith(
+      { type: "creation", creation_id: voice.creation_id, version: voice.version, role: "reference_audio" },
+      voice.prompt,
+    );
+  });
 });

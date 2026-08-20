@@ -430,6 +430,7 @@ MESSAGES = {
     "free_creation_input_combination_unsupported": "Model {model} does not support this combination of reference roles",
     "free_creation_resolution_not_supported": "Model {model} does not support {resolution} resolution (supported: {supported})",
     "free_creation_parent_not_found": "Free creation parent image '{id}' does not exist or is unavailable",
+    "free_creation_video_edit_unsupported": "The selected video model cannot directly edit an existing video; use reference-video generation instead",
     "free_creation_not_found": "Free creation '{id}' does not exist",
     "free_creation_media_not_found": "Media for free creation '{id}' does not exist",
     "free_creation_cancel_not_ready": "Only queued or running free creations can be cancelled",
@@ -456,4 +457,8 @@ MESSAGES = {
     "free_creation_merge_input_not_found": "One of the selected video clips does not exist or is unavailable",
     "free_creation_merge_invalid": "Select at least two completed video clips to merge",
     "free_creation_merge_unavailable": "Video merging is unavailable because FFmpeg is not configured or the clips could not be combined",
+    "video_model_unsupported": "{provider}/{model} is not supported by this video endpoint; choose a compatible model",
+    "video_aspect_ratio_unsupported": "Model {model} does not support the {ratio} aspect ratio for this input combination",
+    "video_resolution_unsupported": "Model {model} does not support {resolution} resolution",
+    "video_prompt_required": "Model {model} requires a prompt or a supported reference input",
 }

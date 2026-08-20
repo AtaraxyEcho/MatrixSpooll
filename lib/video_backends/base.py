@@ -363,6 +363,7 @@ _PROVIDER_STATUS_SYNONYMS: dict[str, ProviderJobStatus] = {
     "succeed": ProviderJobStatus.SUCCEEDED,
     "success": ProviderJobStatus.SUCCEEDED,
     "failed": ProviderJobStatus.FAILED,
+    "failure": ProviderJobStatus.FAILED,
     "fail": ProviderJobStatus.FAILED,
     "error": ProviderJobStatus.FAILED,
     "canceled": ProviderJobStatus.FAILED,

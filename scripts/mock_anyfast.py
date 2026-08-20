@@ -49,10 +49,12 @@ _WAV_BYTES = (
     + _WAV_PCM
 )
 
-# The mock models transport and lifecycle behavior. Media consumers should
-# treat this as an opaque deterministic fixture; production media validation
-# remains the responsibility of the selected provider.
-_VIDEO_BYTES = b"MOCK-ANYFAST-MP4\x00"
+# A valid 8x8 H.264 MP4 fixture. Keeping the media decodable lets integration
+# tests exercise artifact probing, merging, subtitles, and export without a
+# paid provider call.
+_VIDEO_BYTES = base64.b64decode(
+    "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAr9tZGF0AAACoAYF//+c3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDEyNSAtIEguMjY0L01QRUctNCBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMTIgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0xIHJlZj0zIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDM6MHgxMTMgbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz02IGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRlY2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9MyBiX3B5cmFtaWQ9MiBiX2FkYXB0PTEgYl9iaWFzPTAgZGlyZWN0PTEgd2VpZ2h0Yj0xIG9wZW5fZ29wPTAgd2VpZ2h0cD0yIGtleWludD0yNTAga2V5aW50X21pbj0yNCBzY2VuZWN1dD00MCBpbnRyYV9yZWZyZXNoPTAgcmNfbG9va2FoZWFkPTQwIHJjPWNyZiBtYnRyZWU9MSBjcmY9MjMuMCBxY29tcD0wLjYwIHFwbWluPTAgcXBtYXg9NjkgcXBzdGVwPTQgaXBfcmF0aW89MS40MCBhcT0xOjEuMDAAgAAAAA9liIQAV/0TAAYdeBTXzg8AAALvbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAACoAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAhl0cmFrAAAAXHRraGQAAAAPAAAAAAAAAAAAAAABAAAAAAAAACoAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAgAAAAIAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAAqAAAAAAABAAAAAAGRbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAwAAAAAgBVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABPG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAPxzdGJsAAAAmHN0c2QAAAAAAAAAAQAAAIhhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAgACABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAAMmF2Y0MBZAAK/+EAGWdkAAqs2V+WXAWyAAADAAIAAAMAYB4kSywBAAZo6+PLIsAAAAAYc3R0cwAAAAAAAAABAAAAAQAAAgAAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAEAAAABAAAAFHN0c3oAAAAAAAACtwAAAAEAAAAUc3RjbwAAAAAAAAABAAAAMAAAAGJ1ZHRhAAAAWm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALWlsc3QAAAAlqXRvbwAAAB1kYXRhAAAAAQAAAABMYXZmNTQuNjMuMTA0"
+)
 
 
 @dataclass
@@ -79,6 +81,13 @@ class _MockState:
         if isinstance(explicit, str) and explicit:
             return explicit
         prompt = payload.get("prompt")
+        if not isinstance(prompt, str):
+            content = payload.get("content")
+            if isinstance(content, list):
+                prompt = next(
+                    (item.get("text") for item in content if isinstance(item, dict) and item.get("type") == "text"),
+                    None,
+                )
         if isinstance(prompt, str):
             for name in ("rate_limit_once", "failure", "server_error", "bad_request"):
                 if f"[mock:{name}]" in prompt:
@@ -134,42 +143,73 @@ async def _json_body(request: Request) -> tuple[dict[str, Any] | None, JSONRespo
     return body, None
 
 
-def _content_roles(body: dict[str, Any]) -> list[str]:
-    roles: list[str] = []
-    content = body.get("content")
-    if not isinstance(content, list):
-        return roles
-    for item in content:
-        if isinstance(item, dict) and isinstance(item.get("role"), str):
-            roles.append(item["role"])
-    return roles
-
-
 def _validate_seedance_request(body: dict[str, Any]) -> str | None:
     model = body.get("model")
     content = body.get("content")
-    if not isinstance(model, str) or not model:
-        return "model is required"
+    profiles: dict[str, tuple[int, set[str], int, int, int]] = {
+        "seedance-2.0": (15, {"480p", "720p", "1080p", "4k"}, 9, 3, 3),
+        "seedance-2.0-nsfw": (15, {"480p", "720p", "1080p", "4k"}, 9, 3, 3),
+        "seedance-2.5": (30, {"480p", "720p", "1080p"}, 30, 10, 10),
+        "seedance-2.5-nsfw": (30, {"480p", "720p", "1080p"}, 30, 10, 10),
+    }
+    if not isinstance(model, str) or model not in profiles:
+        return "model is not supported"
     if not isinstance(content, list) or not content:
-        # The generic /v1 endpoint also documents prompt-based model payloads
-        # (for example Wan). Accept that shape so the mock can exercise both
-        # AnyFast's Seedance contract and ArcReel's compatible video adapter.
-        if not isinstance(body.get("prompt"), str) or not body["prompt"].strip():
-            return "content must be a non-empty array"
-        content = [{"type": "text", "text": body["prompt"]}]
-    if not any(isinstance(item, dict) and item.get("type") == "text" for item in content):
-        # AnyFast permits image/video-only requests for some models. The mock
-        # accepts those as long as there is at least one typed content item.
-        if not all(
-            isinstance(item, dict) and item.get("type") in {"image_url", "video_url", "audio_url"} for item in content
-        ):
+        return "content must be a non-empty array"
+
+    maximum, resolutions, max_images, max_videos, max_audio = profiles[model]
+    type_order = {"text": 0, "image_url": 1, "video_url": 2, "audio_url": 3}
+    allowed_roles = {
+        "image_url": {"first_frame", "last_frame", "reference_image"},
+        "video_url": {"reference_video"},
+        "audio_url": {"reference_audio"},
+    }
+    counts = {content_type: 0 for content_type in type_order}
+    roles: list[str] = []
+    last_order = -1
+    for item in content:
+        if not isinstance(item, dict) or item.get("type") not in type_order:
             return "content contains an unsupported item"
+        content_type = str(item["type"])
+        current_order = type_order[content_type]
+        if current_order < last_order:
+            return "content must be ordered as text, image_url, video_url, audio_url"
+        last_order = current_order
+        counts[content_type] += 1
+        if content_type == "text":
+            if counts[content_type] > 1 or not isinstance(item.get("text"), str) or not item["text"].strip():
+                return "content may contain at most one non-empty text item"
+            if item.get("role") is not None:
+                return "text content must not declare a role"
+            continue
+        role = item.get("role")
+        if role not in allowed_roles[content_type]:
+            return f"role is invalid for {content_type}"
+        media = item.get(content_type)
+        if not isinstance(media, dict) or not isinstance(media.get("url"), str) or not media["url"].strip():
+            return f"{content_type}.url is required"
+        roles.append(str(role))
+
+    if counts["image_url"] > max_images:
+        return f"at most {max_images} images are allowed"
+    if counts["video_url"] > max_videos:
+        return f"at most {max_videos} videos are allowed"
+    if counts["audio_url"] > max_audio:
+        return f"at most {max_audio} audio clips are allowed"
+    for role in ("first_frame", "last_frame"):
+        if roles.count(role) > 1:
+            return f"only one {role} is allowed"
+    if "last_frame" in roles and "first_frame" not in roles:
+        return "last_frame requires first_frame"
+    frame_mode = "first_frame" in roles or "last_frame" in roles
+    reference_mode = any(role.startswith("reference_") for role in roles)
+    if frame_mode and reference_mode:
+        return "frame-guided and reference modes are mutually exclusive"
 
     try:
         duration = int(body.get("duration", 5))
     except (TypeError, ValueError):
         return "duration must be an integer"
-    maximum = 30 if "2.5" in model.lower() else 15
     if duration < 4 or duration > maximum:
         return f"duration must be between 4 and {maximum} seconds"
 
@@ -177,13 +217,10 @@ def _validate_seedance_request(body: dict[str, Any]) -> str | None:
     if ratio not in {"adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"}:
         return "ratio is not supported"
     resolution = body.get("resolution", "720p")
-    if resolution not in {"480p", "720p", "1080p", "2k", "4k"}:
+    if resolution not in resolutions:
         return "resolution is not supported"
-
-    roles = _content_roles(body)
-    for role in ("first_frame", "last_frame"):
-        if roles.count(role) > 1:
-            return f"only one {role} is allowed"
+    if model.startswith("seedance-2.5") and frame_mode and ratio != "adaptive":
+        return "seedance-2.5 frame-guided generation requires adaptive ratio"
     return None
 
 
@@ -279,10 +316,13 @@ def create_app(*, api_key: str = DEFAULT_API_KEY, scenario: str | None = None) -
             return error
         if not isinstance(body.get("prompt"), str) or not body["prompt"].strip():
             return _error_response(400, "invalid_request", "prompt is required")
+        quantity = body.get("n", 1)
+        if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity < 1 or quantity > 4:
+            return _error_response(400, "invalid_parameter", "n must be an integer between 1 and 4")
         return JSONResponse(
             {
                 "created": int(time.time()),
-                "data": [{"b64_json": base64.b64encode(_PNG_BYTES).decode("ascii")}],
+                "data": [{"b64_json": base64.b64encode(_PNG_BYTES).decode("ascii")} for _ in range(quantity)],
             }
         )
 
@@ -349,8 +389,11 @@ def create_app(*, api_key: str = DEFAULT_API_KEY, scenario: str | None = None) -
         )
         return JSONResponse(
             {
+                "code": 0,
+                "message": "",
                 "id": task.task_id,
                 "task_id": task.task_id,
+                "data": {"task_id": task.task_id},
                 "object": "video",
                 "model": task.model,
                 "status": "",

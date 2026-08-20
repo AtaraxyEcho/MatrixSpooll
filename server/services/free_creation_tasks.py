@@ -15,10 +15,11 @@ from lib.formal_write import project_metadata_lock
 from lib.generation_queue import DispatchProviderChanged, free_video_capability, get_generation_queue
 from lib.json_io import atomic_write_json, load_json_or_none
 from lib.path_safety import safe_join
-from lib.project_change_hints import emit_project_change_batch
 from lib.project_manager import get_project_manager
+from lib.resource_paths import resource_relative_path
 from lib.version_manager import VersionManager
-from server.services.free_creation_workspace import extract_reference_text, save_reference_upload
+from server.services.free_creation_planner import plan_video_references
+from server.services.free_creation_workspace import extract_reference_text
 from server.services.generation_context import (
     AudioLaneRequest,
     ImageLaneRequest,
@@ -26,10 +27,8 @@ from server.services.generation_context import (
     resolve_generation_context,
 )
 
-FreeOutputType = Literal["image", "video", "edit"]
+FreeOutputType = Literal["image", "video", "edit", "audio"]
 _IMAGE_REFERENCE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
-_AUDIO_REFERENCE_SUFFIXES = frozenset({".wav", ".mp3"})
-_VIDEO_REFERENCE_SUFFIXES = frozenset({".mp4", ".mov"})
 _TEXT_REFERENCE_SUFFIXES = frozenset({".txt", ".text", ".md", ".markdown", ".rtf", ".doc", ".docx", ".pdf", ".epub"})
 
 
@@ -38,6 +37,8 @@ def creation_metadata_path(project_path: Path, creation_id: str) -> Path:
 
 
 def creation_media_path(project_path: Path, creation_id: str, media_type: str) -> Path:
+    if media_type == "audio":
+        return safe_join(project_path, resource_relative_path("audio", creation_id))
     suffix = ".mp4" if media_type == "video" else ".png"
     return safe_join(project_path, "creations", f"{creation_id}{suffix}")
 
@@ -180,19 +181,23 @@ def discard_free_creation_result(project_path: Path, metadata: dict[str, Any]) -
     media_path = metadata.get("media_path")
     if (
         not isinstance(creation_id, str)
-        or output_type not in {"image", "video", "edit"}
+        or output_type not in {"image", "video", "edit", "audio"}
         or type(version) is not int
         or version < 1
         or not isinstance(media_path, str)
     ):
         return False
     effective_media_type = (
-        media_type if media_type in {"image", "video"} else ("video" if output_type == "video" else "image")
+        media_type if media_type in {"image", "video", "audio"} else ("video" if output_type == "video" else "image")
     )
     expected_media = creation_media_path(project_path, creation_id, effective_media_type)
     if media_path != expected_media.relative_to(project_path).as_posix():
         return False
-    resource_type = "free_videos" if effective_media_type == "video" else "free_images"
+    resource_type = {
+        "video": "free_videos",
+        "image": "free_images",
+        "audio": "audio",
+    }[effective_media_type]
     adapter = ProjectArtifactManifestAdapter(project_path)
 
     def _forget_claim() -> None:
@@ -363,7 +368,7 @@ async def execute_free_audio_task(
     task_id: str | None = None,
     **_: Any,
 ) -> dict[str, Any]:
-    """Generate a voice asset and expose it as a project-scoped canvas reference."""
+    """Generate a voice asset as a versioned, project-scoped free creation."""
 
     pm = get_project_manager()
     project = await asyncio.to_thread(pm.load_project, project_name)
@@ -386,7 +391,7 @@ async def execute_free_audio_task(
     if requested_voice and requested_voice not in {item.id for item in ctx.audio.voices}:
         raise ValueError("voice is not supported by the selected audio backend")
     speed = ctx.audio.narration_speed
-    output_path, _version = await ctx.generator.generate_audio_async(
+    output_path, version = await ctx.generator.generate_audio_async(
         text=text,
         resource_id=resource_id,
         voice=voice,
@@ -394,34 +399,28 @@ async def execute_free_audio_task(
         task_id=task_id,
         source="free_creation",
     )
-    record = await asyncio.to_thread(
-        save_reference_upload,
-        project_path,
-        original_filename=f"{resource_id}.wav",
-        content=await asyncio.to_thread(output_path.read_bytes),
-    )
-    emit_project_change_batch(
-        project_name,
-        [
-            {
-                "entity_type": "free_creation_reference",
-                "action": "created",
-                "entity_id": record["reference_id"],
-                "label": record["original_filename"],
-                "focus": None,
-                "important": False,
-            }
-        ],
-        source="worker",
-    )
-    return {
-        "reference_id": record["reference_id"],
-        "file_path": record["path"],
+    metadata = {
+        "creation_id": resource_id,
+        "request_id": payload.get("request_id"),
+        "status": "succeeded",
+        "output_type": "audio",
         "media_type": "audio",
+        "prompt": text,
+        "prompt_mode": "original",
+        "model": f"{ctx.audio.provider_model.provider_id}/{ctx.audio.backend_model}",
+        "references": [],
+        "reference_claims": [],
+        "effective_mode": "text_to_speech",
         "voice": voice,
         "text": text,
+        "quantity": 1,
+        "media_path": output_path.relative_to(project_path).as_posix(),
+        "version": version,
         "task_id": task_id,
+        "updated_at": _now(),
     }
+    await _commit_generated_free_creation(project_path, metadata, task_id)
+    return metadata
 
 
 async def execute_free_video_task(
@@ -446,37 +445,7 @@ async def execute_free_video_task(
     if not prompt:
         raise ValueError("prompt is required")
     references = await asyncio.to_thread(_reference_paths, project_path, payload)
-    reference_images: list[Path] = []
-    reference_videos: list[Path] = []
-    reference_audio: list[Path] = []
-    start_image: Path | None = None
-    end_image: Path | None = None
-    claims = payload.get("reference_claims")
-    reference_role_offset = int(payload.get("reference_role_offset") or 0)
-    for index, path in enumerate(references):
-        claim_index = index - reference_role_offset
-        claim = (
-            claims[claim_index]
-            if isinstance(claims, list) and 0 <= claim_index < len(claims) and isinstance(claims[claim_index], dict)
-            else {}
-        )
-        role = claim.get("role")
-        if role == "first_frame":
-            start_image = path
-        elif role == "last_frame":
-            end_image = path
-        elif role == "reference_image":
-            reference_images.append(path)
-        elif role == "reference_video":
-            reference_videos.append(path)
-        elif role == "reference_audio":
-            reference_audio.append(path)
-        elif not isinstance(claims, list) and path.suffix.lower() in _IMAGE_REFERENCE_SUFFIXES:
-            reference_images.append(path)
-        elif not isinstance(claims, list) and path.suffix.lower() in _VIDEO_REFERENCE_SUFFIXES:
-            reference_videos.append(path)
-        elif not isinstance(claims, list) and path.suffix.lower() in _AUDIO_REFERENCE_SUFFIXES:
-            reference_audio.append(path)
+    reference_plan = plan_video_references(references, payload.get("reference_claims"))
     generation_prompt = await asyncio.to_thread(_prompt_with_reference_context, prompt, references)
     ctx = await resolve_generation_context(
         project_name,
@@ -497,11 +466,11 @@ async def execute_free_video_task(
         prompt=generation_prompt,
         resource_type="free_videos",
         resource_id=resource_id,
-        start_image=start_image,
-        end_image=end_image,
-        reference_images=reference_images or None,
-        reference_videos=reference_videos or None,
-        reference_audio_files=reference_audio or None,
+        start_image=reference_plan.start_image,
+        end_image=reference_plan.end_image,
+        reference_images=list(reference_plan.reference_images) or None,
+        reference_videos=list(reference_plan.reference_videos) or None,
+        reference_audio_files=list(reference_plan.reference_audio) or None,
         aspect_ratio=str(payload.get("aspect_ratio") or project.get("aspect_ratio") or "9:16"),
         duration_seconds=int(payload.get("duration_seconds") or 4),
         resolution=payload.get("resolution") or ctx.video.resolution,
@@ -521,7 +490,6 @@ async def execute_free_video_task(
         "references": payload.get("references") or [],
         "reference_claims": payload.get("reference_claims") or [],
         "effective_mode": payload.get("effective_mode"),
-        "reference_role_offset": reference_role_offset,
         "aspect_ratio": payload.get("aspect_ratio") or project.get("aspect_ratio") or "9:16",
         "resolution": payload.get("resolution"),
         "size": payload.get("size"),
@@ -562,48 +530,49 @@ async def execute_free_edit_task(
     parent_media_type = parent.get("media_type")
     if parent_media_type not in {"image", "video"}:
         parent_media_type = "video" if parent.get("output_type") == "video" else "image"
+    if parent_media_type == "video":
+        from lib.video_backends.base import VideoCapabilityError
+
+        raise VideoCapabilityError("free_creation_video_edit_unsupported")
     parent_path = parent.get("media_path")
     if not isinstance(parent_path, str):
         raise ValueError("parent creation has no media path")
     additional_references = payload.get("references") or []
     if not isinstance(additional_references, list):
         additional_references = []
-    references = (
-        additional_references
-        if additional_references and additional_references[0] == parent_path
-        else [parent_path, *additional_references]
+    claims = payload.get("reference_claims")
+    parent_version = parent.get("version")
+    parent_claim = {
+        "type": "creation",
+        "creation_id": parent_id,
+        **({"version": parent_version} if type(parent_version) is int and parent_version > 0 else {}),
+        "role": "reference_image",
+    }
+    has_parent_claim = (
+        isinstance(claims, list)
+        and bool(claims)
+        and isinstance(claims[0], dict)
+        and claims[0].get("creation_id") == parent_id
     )
-    payload = {**payload, "references": references}
-    if references and references[0] == parent_path:
-        payload["reference_role_offset"] = 1
-    if parent_media_type == "video":
-        result = await execute_free_video_task(
-            project_name,
-            resource_id,
-            payload,
-            user_id=user_id,
-            task_id=task_id,
-            script_file=script_file,
-            claimed_provider_id=claimed_provider_id,
-            output_type="edit",
-            parent_creation_id=parent_id,
-            commit_result=False,
-        )
+    if has_parent_claim:
+        references = additional_references
+        normalized_claims = claims
     else:
-        result = await execute_free_image_task(
-            project_name,
-            resource_id,
-            payload,
-            user_id=user_id,
-            task_id=task_id,
-            script_file=script_file,
-            claimed_provider_id=claimed_provider_id,
-            commit_result=False,
-        )
-        result["output_type"] = "edit"
-        result["media_type"] = "image"
+        references = [parent_path, *additional_references]
+        normalized_claims = [parent_claim, *claims] if isinstance(claims, list) else None
+    payload = {**payload, "references": references, "reference_claims": normalized_claims}
+    result = await execute_free_image_task(
+        project_name,
+        resource_id,
+        payload,
+        user_id=user_id,
+        task_id=task_id,
+        script_file=script_file,
+        claimed_provider_id=claimed_provider_id,
+        commit_result=False,
+    )
     result["output_type"] = "edit"
-    result["media_type"] = parent_media_type
+    result["media_type"] = "image"
     result["parent_creation_id"] = parent_id
     await _commit_generated_free_creation(project_path, result, task_id)
     return result
@@ -649,6 +618,14 @@ async def execute_free_creation_task(
             task_id=task_id,
             script_file=script_file,
             claimed_provider_id=claimed_provider_id,
+        )
+    if task_type == "free_audio":
+        return await execute_free_audio_task(
+            project_name,
+            resource_id,
+            payload,
+            user_id=user_id,
+            task_id=task_id,
         )
     raise ValueError(f"unsupported free creation task type: {task_type}")
 

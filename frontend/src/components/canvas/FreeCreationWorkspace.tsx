@@ -26,6 +26,7 @@ import { useFreeCreationStore } from "@/stores/free-creation-store";
 import type {
   CreateFreeCreationRequest,
   FreeCreation,
+  FreeCreationArtifactMediaType,
   FreeCreationCapabilities,
   FreeCreationMediaType,
   FreeCreationReferenceClaim,
@@ -66,6 +67,15 @@ interface ComposerReference {
 }
 
 type ComposerMode = "agent" | FreeCreationMediaType;
+
+function creationMediaType(creation: FreeCreation): FreeCreationArtifactMediaType {
+  return creation.media_type ?? (creation.output_type === "video" ? "video" : creation.output_type === "audio" ? "audio" : "image");
+}
+
+function creationReferenceRole(creation: FreeCreation) {
+  const artifactType = creationMediaType(creation);
+  return artifactType === "video" ? "reference_video" : artifactType === "audio" ? "reference_audio" : "reference_image";
+}
 
 const IMAGE_RESOLUTION_PIXELS: Record<string, number> = {
   "1.5k": 1536,
@@ -182,8 +192,8 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
     () => creations.find((item) => item.creation_id === parentId) ?? null,
     [creations, parentId],
   );
-  const effectiveMediaType: FreeCreationMediaType = selectedParent
-    ? selectedParent.media_type ?? (selectedParent.output_type === "video" ? "video" : "image")
+  const effectiveMediaType: FreeCreationMediaType = selectedParent && creationMediaType(selectedParent) === "image"
+    ? "image"
     : mediaType;
   const references = allReferences;
   const modelOptions = useMemo(() => {
@@ -192,7 +202,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
   }, [candidates, effectiveMediaType]);
   const selectedModel = model === "auto" || modelOptions.includes(model) ? model : "auto";
 
-  const referenceKind = useMemo<"none" | "frame" | "image" | "video">(() => {
+  const referenceKind = useMemo<"none" | "frame" | "image" | "video" | "audio">(() => {
     if (effectiveMediaType !== "video") {
       return references.some((reference) => reference.claim.role === "reference_image") ? "image" : "none";
     }
@@ -201,6 +211,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
       reference.claim.role === "first_frame" || reference.claim.role === "last_frame"
     ))) return "frame";
     if (references.some((reference) => reference.claim.role === "reference_video")) return "video";
+    if (references.some((reference) => reference.claim.role === "reference_audio")) return "audio";
     if (references.some((reference) => reference.claim.role === "reference_image")) return "image";
     return "none";
   }, [effectiveMediaType, references, selectedParent]);
@@ -312,7 +323,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
       return uploads.find((item) => item.reference_id === claim.reference_id)?.media_type ?? "image";
     }
     const creation = creations.find((item) => item.creation_id === claim.creation_id);
-    return creation?.media_type === "video" || creation?.output_type === "video" ? "video" : "image";
+    return creation ? creationMediaType(creation) : "image";
   }, [creations, uploads]);
 
   const referenceIssue = referenceCompatibilityIssue(
@@ -358,11 +369,10 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
 
   const editFromCreation = (creationId: string) => {
     const creation = creations.find((item) => item.creation_id === creationId);
-    if (!creation) return;
+    if (!creation || creationMediaType(creation) !== "image") return;
     setParentId(creationId);
-    const nextMediaType = creation.media_type ?? (creation.output_type === "video" ? "video" : "image");
-    setMediaType(nextMediaType);
-    setComposerMode(nextMediaType);
+    setMediaType("image");
+    setComposerMode("image");
   };
 
   const clearEdit = () => setParentId("");
@@ -647,15 +657,16 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
             </article>
           ))}
           {mobileCreations.map((creation) => {
-            const isVideo = creation.media_type === "video" || creation.output_type === "video";
+            const artifactType = creationMediaType(creation);
+            const referenceRole = creationReferenceRole(creation);
             return (
               <article key={creation.creation_id} className="overflow-hidden rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]" onDoubleClick={(event) => { event.preventDefault(); if (creation.status === "succeeded" && creation.media_path) setPreviewTarget({ kind: "creation", creation }); }}>
                 <div className="flex h-10 items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-3 text-xs"><span className="font-medium">{t(`free_creation_${creation.output_type}`)}</span><span className="text-[10px] text-[var(--color-text-muted)]">{t(`free_creation_status_${creation.status}`)}</span></div>
-                {creation.status === "succeeded" && creation.media_path ? isVideo ? (
+                {creation.status === "succeeded" && creation.media_path ? artifactType === "video" ? (
                   <video src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} className="aspect-video w-full bg-black object-contain" aria-label={creation.prompt ?? creation.creation_id} controls onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_video" }, creation.prompt || t("free_creation"))} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "creation", creation }); }} />
-                ) : <div role="button" tabIndex={0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))} onKeyDown={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))}><img src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} alt={creation.prompt ?? creation.creation_id} className="h-full w-full object-contain" /></div> : <div className="grid aspect-video place-items-center bg-black px-3 text-center text-xs text-[var(--color-text-muted)]">{creation.status === "failed" ? t("free_creation_failed") : t(`free_creation_status_${creation.status}`)}</div>}
+                ) : artifactType === "audio" ? <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 bg-black px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} className="w-full" aria-label={creation.prompt ?? creation.creation_id} controls /></div> : <div role="button" tabIndex={0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))} onKeyDown={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))}><img src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} alt={creation.prompt ?? creation.creation_id} className="h-full w-full object-contain" /></div> : <div className="grid aspect-video place-items-center bg-black px-3 text-center text-xs text-[var(--color-text-muted)]">{creation.status === "failed" ? t("free_creation_failed") : t(`free_creation_status_${creation.status}`)}</div>}
                 <p className="line-clamp-2 px-3 py-2 text-xs leading-5 text-[var(--color-text-2)]">{creation.prompt || t("free_creation_prompt")}</p>
-                {creation.status === "succeeded" && creation.media_path ? <div className="flex justify-end gap-1 border-t border-[var(--color-hairline)] p-2"><button type="button" onClick={() => addReference({ type: "creation", creation_id: creation.creation_id, version: creation.version, role: isVideo ? "reference_video" : "reference_image" }, creation.prompt || t("free_creation"))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_add_reference")}><Link2 className="h-4 w-4" aria-hidden /></button><button type="button" onClick={() => editFromCreation(creation.creation_id)} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_use_as_parent")}><Pencil className="h-4 w-4" aria-hidden /></button><a href={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} download className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_download")}><Download className="h-4 w-4" aria-hidden /></a></div> : null}
+                {creation.status === "succeeded" && creation.media_path ? <div className="flex justify-end gap-1 border-t border-[var(--color-hairline)] p-2"><button type="button" onClick={() => addReference({ type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation"))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_add_reference")}><Link2 className="h-4 w-4" aria-hidden /></button>{artifactType === "image" ? <button type="button" onClick={() => editFromCreation(creation.creation_id)} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_use_as_parent")}><Pencil className="h-4 w-4" aria-hidden /></button> : null}<a href={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} download className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_download")}><Download className="h-4 w-4" aria-hidden /></a></div> : null}
               </article>
             );
           })}
@@ -868,7 +879,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
         projectName={projectName}
         open={voiceOpen}
         onClose={() => setVoiceOpen(false)}
-        onCreated={() => void API.listFreeCreationReferences(projectName).then(({ references: next }) => setUploads(next))}
+        onCreated={() => void loadCreations()}
       />
       <FreeCreationSubtitlePanel
         projectName={projectName}

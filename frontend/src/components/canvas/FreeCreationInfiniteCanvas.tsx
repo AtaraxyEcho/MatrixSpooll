@@ -26,6 +26,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useFreeCreationStore } from "@/stores/free-creation-store";
 import type {
   FreeCreation,
+  FreeCreationArtifactMediaType,
   FreeCreationReferenceClaim,
   FreeCreationUpload,
 } from "@/types";
@@ -71,6 +72,15 @@ const NODE_GAP_X = 72;
 const NODE_GAP_Y = 56;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 1.8;
+
+function creationMediaType(creation: FreeCreation): FreeCreationArtifactMediaType {
+  return creation.media_type ?? (creation.output_type === "video" ? "video" : creation.output_type === "audio" ? "audio" : "image");
+}
+
+function creationReferenceRole(creation: FreeCreation): FreeCreationReferenceClaim["role"] {
+  const mediaType = creationMediaType(creation);
+  return mediaType === "video" ? "reference_video" : mediaType === "audio" ? "reference_audio" : "reference_image";
+}
 
 function initialPosition(index: number): Point {
   const column = index % 4;
@@ -411,7 +421,7 @@ export function FreeCreationInfiniteCanvas({
     : null;
 
   const renderActions = (creation: FreeCreation) => {
-    const isVideo = creation.media_type === "video" || creation.output_type === "video";
+    const mediaType = creationMediaType(creation);
     return (
       <>
         {creation.status === "queued" || creation.status === "running" ? (
@@ -425,16 +435,16 @@ export function FreeCreationInfiniteCanvas({
           </button>
         ) : null}
         {creation.status === "succeeded" ? (
-          <button type="button" onClick={() => onReference({ type: "creation", creation_id: creation.creation_id, version: creation.version, role: isVideo ? "reference_video" : "reference_image" }, creation.prompt || t("free_creation"))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]" aria-label={t("free_creation_add_reference")} title={t("free_creation_add_reference")}>
+          <button type="button" onClick={() => onReference({ type: "creation", creation_id: creation.creation_id, version: creation.version, role: creationReferenceRole(creation) }, creation.prompt || t("free_creation"))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]" aria-label={t("free_creation_add_reference")} title={t("free_creation_add_reference")}>
             <Link2 className="h-4 w-4" aria-hidden />
           </button>
         ) : null}
-        {creation.status === "succeeded" ? (
+        {creation.status === "succeeded" && mediaType === "image" ? (
           <button type="button" onClick={() => onEdit(creation.creation_id)} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]" aria-label={t("free_creation_use_as_parent")} title={t("free_creation_use_as_parent")}>
             <Pencil className="h-4 w-4" aria-hidden />
           </button>
         ) : null}
-        {creation.status === "succeeded" && creation.media_path ? <VersionTimeMachine projectName={projectName} resourceType={isVideo ? "free_videos" : "free_images"} resourceId={creation.creation_id} iconOnly readOnly /> : null}
+        {creation.status === "succeeded" && creation.media_path ? <VersionTimeMachine projectName={projectName} resourceType={mediaType === "video" ? "free_videos" : mediaType === "audio" ? "audio" : "free_images"} resourceId={creation.creation_id} iconOnly readOnly /> : null}
         {creation.status === "succeeded" && creation.media_path ? (
           <a href={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} download className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]" aria-label={t("free_creation_download")} title={t("free_creation_download")}>
             <Download className="h-4 w-4" aria-hidden />
@@ -527,7 +537,8 @@ export function FreeCreationInfiniteCanvas({
           if (!position) return null;
           const selected = selectedSet.has(creation.creation_id);
           const hidden = hiddenSet.has(creation.creation_id);
-          const isVideo = creation.media_type === "video" || creation.output_type === "video";
+          const mediaType = creationMediaType(creation);
+          const referenceRole = creationReferenceRole(creation);
           const statusLabel = t(`free_creation_status_${creation.status}`);
           return (
             <article
@@ -552,9 +563,11 @@ export function FreeCreationInfiniteCanvas({
                 <span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] font-semibold text-[var(--color-text)]"><span className="truncate">{t(`free_creation_${creation.output_type}`)}</span>{creation.sequence_index !== null && creation.sequence_index !== undefined ? <span className="shrink-0 rounded bg-[var(--color-accent-dim)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--color-accent-2)]">{t("free_creation_storyboard_shot_badge", { index: creation.sequence_index + 1 })}</span> : null}</span>
                 <div className="flex items-center gap-1"><span className="text-[10px] text-[var(--color-text-muted)]">{statusLabel}</span>{!readOnly ? <button type="button" className="focus-ring grid h-7 w-7 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)]" onClick={(event) => { event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); const surface = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "creation", nodeId: creation.creation_id, x: rect.right - (surface?.left ?? 0), y: rect.bottom - (surface?.top ?? 0) }); }} aria-label={t("free_creation_more_actions")} title={t("free_creation_more_actions")}><MoreHorizontal className="h-4 w-4" aria-hidden /></button> : null}</div>
               </div>
-              <div role="button" tabIndex={creation.status === "succeeded" && creation.media_path ? 0 : -1} className="h-[174px] bg-black" onClick={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: isVideo ? "reference_video" : "reference_image" }, creation.prompt || t("free_creation")); }} onKeyDown={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: isVideo ? "reference_video" : "reference_image" }, creation.prompt || t("free_creation")); }} title={creation.status === "succeeded" && creation.media_path ? t("free_creation_reference_shortcut") : undefined}>
-                {creation.status === "succeeded" && creation.media_path ? isVideo ? (
+              <div role="button" tabIndex={creation.status === "succeeded" && creation.media_path ? 0 : -1} className="h-[174px] bg-black" onClick={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation")); }} onKeyDown={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation")); }} title={creation.status === "succeeded" && creation.media_path ? t("free_creation_reference_shortcut") : undefined}>
+                {creation.status === "succeeded" && creation.media_path ? mediaType === "video" ? (
                   <video className="h-full w-full object-contain" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} aria-label={creation.prompt ?? creation.creation_id} controls />
+                ) : mediaType === "audio" ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio className="w-full" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} aria-label={creation.prompt ?? creation.creation_id} controls /></div>
                 ) : <img className="h-full w-full object-contain" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} alt={creation.prompt ?? creation.creation_id} /> : <div className="flex h-full items-center justify-center px-3 text-center text-xs text-[var(--color-text-muted)]">{creation.status === "failed" ? t("free_creation_failed") : statusLabel}</div>}
               </div>
               <div className="h-[66px] px-3 py-2"><p className="line-clamp-2 text-xs leading-5 text-[var(--color-text-2)]">{creation.prompt || t("free_creation_prompt")}</p></div>
@@ -570,9 +583,9 @@ export function FreeCreationInfiniteCanvas({
         <div className="absolute z-[200] min-w-44 rounded-md border border-[var(--color-hairline)] p-1 shadow-2xl" style={{ left: Math.max(4, contextMenu.x), top: Math.max(4, contextMenu.y), background: "var(--color-surface-2)", opacity: 1 }} role="menu">
           {activeContextCreation ? <>
             {onMerge && selectedMergeIds.length >= 2 && selectedMergeIds.includes(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => { onMerge(selectedMergeIds); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Clapperboard className="h-3.5 w-3.5" aria-hidden />{t("free_creation_merge_selected")}</button> : null}
-            {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onEdit(activeContextCreation.creation_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Pencil className="h-3.5 w-3.5" aria-hidden />{t("free_creation_use_as_parent")}</button> : null}
+            {activeContextCreation.status === "succeeded" && activeContextCreation.media_path && creationMediaType(activeContextCreation) === "image" ? <button type="button" role="menuitem" onClick={() => { onEdit(activeContextCreation.creation_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Pencil className="h-3.5 w-3.5" aria-hidden />{t("free_creation_use_as_parent")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onPreview?.({ kind: "creation", creation: activeContextCreation }); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_preview")}</button> : null}
-            {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onReference({ type: "creation", creation_id: activeContextCreation.creation_id, version: activeContextCreation.version, role: activeContextCreation.media_type === "video" || activeContextCreation.output_type === "video" ? "reference_video" : "reference_image" }, activeContextCreation.prompt || t("free_creation")); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button> : null}
+            {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onReference({ type: "creation", creation_id: activeContextCreation.creation_id, version: activeContextCreation.version, role: creationReferenceRole(activeContextCreation) }, activeContextCreation.prompt || t("free_creation")); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button> : null}
             {hiddenSet.has(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => restoreCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore_to_canvas")}</button> : <button type="button" role="menuitem" onClick={() => hideCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide_from_canvas")}</button>}
           </> : null}
           {activeContextUpload ? <>

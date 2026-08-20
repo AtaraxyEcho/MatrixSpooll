@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AudioLines,
   Download,
   Image,
   Loader2,
@@ -358,6 +359,12 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
                             aria-label={creation.prompt ?? creation.creation_id}
                             controls
                           />
+                        ) : creation.output_type === "audio" ? (
+                          <div className="flex h-full flex-col items-center justify-center gap-3 px-4">
+                            <AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden="true" />
+                            {/* eslint-disable-next-line jsx-a11y/media-has-caption -- generated voice has no caption track */}
+                            <audio className="w-full" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} controls />
+                          </div>
                         ) : (
                           <img
                             className="h-full w-full object-contain"
@@ -426,7 +433,7 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
                               )}
                             </button>
                           ) : null}
-                          {creation.status === "succeeded" && creation.output_type !== "video" ? (
+                          {creation.status === "succeeded" && creation.output_type === "image" ? (
                             <button
                               type="button"
                               onClick={() => editFromCreation(creation.creation_id)}
@@ -440,7 +447,7 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
                           {creation.status === "succeeded" && creation.media_path ? (
                             <VersionTimeMachine
                               projectName={projectName}
-                              resourceType={creation.output_type === "video" ? "free_videos" : "free_images"}
+                              resourceType={creation.output_type === "video" ? "free_videos" : creation.output_type === "audio" ? "audio" : "free_images"}
                               resourceId={creation.creation_id}
                               iconOnly
                               readOnly

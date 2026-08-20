@@ -27,6 +27,7 @@ class TestRegistry:
             "gemini-image",
             "openai-video",
             "newapi-video",
+            "anyfast-seedance",
             "v2-video-generations",
             "ark-seedance",
             "vidu-video",
@@ -43,7 +44,18 @@ class TestRegistry:
         for key, spec in ENDPOINT_REGISTRY.items():
             assert spec.key == key
             assert spec.media_type in {"text", "image", "video", "audio"}
-            assert spec.family in {"openai", "google", "newapi", "v2", "ark", "vidu", "dashscope", "minimax", "kling"}
+            assert spec.family in {
+                "openai",
+                "google",
+                "newapi",
+                "anyfast",
+                "v2",
+                "ark",
+                "vidu",
+                "dashscope",
+                "minimax",
+                "kling",
+            }
             assert spec.display_name_key.startswith("endpoint_")
             assert callable(spec.build_backend)
             assert spec.request_method == "POST"
@@ -72,6 +84,7 @@ class TestRegistry:
         for key in (
             "v2-video-generations",
             "ark-seedance",
+            "anyfast-seedance",
             "vidu-video",
             "dashscope-async-video",
             "minimax-video",
@@ -92,6 +105,7 @@ class TestRegistry:
         for key in (
             "v2-video-generations",
             "ark-seedance",
+            "anyfast-seedance",
             "vidu-video",
             "dashscope-async-video",
             "minimax-video",
@@ -193,7 +207,7 @@ class TestRegistry:
     def test_audio_capable_endpoints_match_backends_that_send_audio(self):
         """运输声明与 backend 实现同步：声明 True 的 endpoint 必须真的组装参考音频。"""
         audio_capable = {k for k, s in ENDPOINT_REGISTRY.items() if s.reference_audio_capable}
-        assert audio_capable == {"ark-seedance", "dashscope-async-video"}
+        assert audio_capable == {"ark-seedance", "anyfast-seedance", "dashscope-async-video"}
 
     def test_audio_endpoint_spec(self):
         spec = ENDPOINT_REGISTRY["openai-tts"]
@@ -224,6 +238,7 @@ class TestRegistry:
         assert video_keys == {
             "openai-video",
             "newapi-video",
+            "anyfast-seedance",
             "v2-video-generations",
             "ark-seedance",
             "vidu-video",

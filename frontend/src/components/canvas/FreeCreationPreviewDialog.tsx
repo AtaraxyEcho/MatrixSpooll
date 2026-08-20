@@ -66,7 +66,7 @@ export function FreeCreationPreviewDialog({ projectName, target, onClose }: Free
   const mediaType = target?.kind === "upload"
     ? target.upload.media_type
     : target?.kind === "creation"
-      ? target.creation.media_type ?? (target.creation.output_type === "video" ? "video" : "image")
+      ? target.creation.media_type ?? (target.creation.output_type === "video" ? "video" : target.creation.output_type === "audio" ? "audio" : "image")
       : null;
   const previewLoading = textLoading || (mediaType === "text" && text === null && textSupported);
 
@@ -130,6 +130,8 @@ export function FreeCreationPreviewDialog({ projectName, target, onClose }: Free
           <div className="flex min-h-64 items-center justify-center"><audio src={API.getFileUrl(projectName, target.upload.path)} controls /></div>
         ) : target?.kind === "creation" && mediaType === "video" && downloadHref ? (
           <video src={downloadHref} className="mx-auto max-h-[72vh] max-w-full" controls autoPlay={false} />
+        ) : target?.kind === "creation" && mediaType === "audio" && downloadHref ? (
+          <div className="flex min-h-64 items-center justify-center"><audio src={downloadHref} controls /></div>
         ) : target?.kind === "creation" && downloadHref ? (
           <img src={downloadHref} alt={title} className="mx-auto max-h-[72vh] max-w-full object-contain" />
         ) : null}

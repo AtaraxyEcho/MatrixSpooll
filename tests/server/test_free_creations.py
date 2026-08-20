@@ -7,7 +7,11 @@ from pydantic import ValidationError
 
 from lib.api_errors import BadRequestError
 from lib.artifact_manifest import ArtifactKey, ProjectArtifactManifestAdapter
+from lib.generation_queue import free_video_capability
 from lib.version_manager import VersionManager
+from lib.video_backends.base import VideoCapabilityError
+from server.auth import CurrentUserInfo
+from server.routers import free_creations as free_creation_router_module
 from server.routers.free_creations import (
     FreeCreationRequest,
     _free_creation_request_summary,
@@ -19,12 +23,16 @@ from server.routers.free_creations import (
     _validate_reference_roles,
     _validate_references,
     get_free_creation_capabilities,
+    retry_free_creation,
 )
 from server.services import free_creation_tasks as free_creation_tasks_module
 from server.services.free_creation_merge import resolve_merge_video_paths
+from server.services.free_creation_planner import plan_video_references
 from server.services.free_creation_tasks import (
     commit_free_creation_state,
     discard_free_creation_result,
+    execute_free_audio_task,
+    execute_free_edit_task,
     execute_free_video_task,
     list_creation_metadata,
     load_creation_metadata,
@@ -37,6 +45,7 @@ from server.services.free_creation_workspace import (
     create_subtitle_track,
     delete_storyboard_plan,
     delete_subtitle_track,
+    derive_storyboard_plan_status,
     list_creation_requests,
     list_storyboard_plans,
     load_canvas_state,
@@ -159,6 +168,31 @@ def test_storyboard_plan_tracks_source_revision_and_soft_delete(tmp_path: Path) 
     assert list_storyboard_plans(tmp_path) == []
 
 
+def test_storyboard_plan_status_is_derived_from_its_creation_results() -> None:
+    plan = {
+        "status": "generating",
+        "shots": [
+            {"image_creation_id": "c_0123456789abcdef0123", "video_creation_id": None},
+            {"image_creation_id": "c_0123456789abcdef0124", "video_creation_id": None},
+        ],
+    }
+    states = {
+        "c_0123456789abcdef0123": {"status": "succeeded"},
+        "c_0123456789abcdef0124": {"status": "failed"},
+    }
+
+    assert derive_storyboard_plan_status(Path(), plan, load_creation=lambda _path, item: states.get(item)) == "partial"
+    states["c_0123456789abcdef0124"] = {"status": "succeeded"}
+    assert derive_storyboard_plan_status(Path(), plan, load_creation=lambda _path, item: states.get(item)) == "ready"
+
+    plan["shots"][1]["image_creation_id"] = None
+    assert derive_storyboard_plan_status(Path(), plan, load_creation=lambda _path, item: states.get(item)) == "partial"
+
+    plan["shots"][0]["video_creation_id"] = "c_0123456789abcdef0125"
+    states["c_0123456789abcdef0125"] = {"status": "succeeded"}
+    assert derive_storyboard_plan_status(Path(), plan, load_creation=lambda _path, item: states.get(item)) == "partial"
+
+
 def test_subtitle_track_persists_cues_with_optimistic_revision_and_soft_delete(tmp_path: Path) -> None:
     creation_id = "c_0123456789abcdef0123"
     track = create_subtitle_track(
@@ -229,6 +263,42 @@ def test_reference_roles_are_explicit_and_lane_aware() -> None:
             "image",
         )
     assert unsupported.value.key == "free_creation_reference_role_unsupported"
+
+
+def test_video_reference_plan_keeps_paths_and_explicit_roles_aligned() -> None:
+    references = [
+        Path("uploads/first.png"),
+        Path("uploads/last.png"),
+        Path("uploads/style.png"),
+        Path("uploads/motion.mp4"),
+        Path("uploads/voice.wav"),
+        Path("uploads/script.md"),
+    ]
+    plan = plan_video_references(
+        references,
+        [
+            {"role": "first_frame"},
+            {"role": "last_frame"},
+            {"role": "reference_image"},
+            {"role": "reference_video"},
+            {"role": "reference_audio"},
+            {"role": "prompt_context"},
+        ],
+    )
+
+    assert plan.start_image == references[0]
+    assert plan.end_image == references[1]
+    assert plan.reference_images == (references[2],)
+    assert plan.reference_videos == (references[3],)
+    assert plan.reference_audio == (references[4],)
+    legacy = plan_video_references(references[:2], [])
+    assert legacy.reference_images == tuple(references[:2])
+    with pytest.raises(ValueError, match="align"):
+        plan_video_references(references[:2], [{"role": "first_frame"}])
+
+
+def test_reference_audio_selects_the_reference_video_capability_bucket() -> None:
+    assert free_video_capability({"reference_claims": [{"role": "reference_audio"}]}) == "r2v"
 
 
 def test_free_creation_model_selects_only_the_requested_media_lane() -> None:
@@ -446,6 +516,87 @@ async def test_prompt_only_free_video_executes_only_the_video_lane(tmp_path: Pat
     assert video_calls[0]["duration_seconds"] == 6
 
 
+@pytest.mark.asyncio
+async def test_video_edit_stops_before_it_can_be_reinterpreted_as_generation(tmp_path: Path, monkeypatch) -> None:
+    parent_id = "c_0123456789abcdef0123"
+
+    class FakeProjectManager:
+        def get_project_path(self, _project_name):
+            return tmp_path
+
+    monkeypatch.setattr(free_creation_tasks_module, "get_project_manager", lambda: FakeProjectManager())
+    monkeypatch.setattr(
+        free_creation_tasks_module,
+        "load_creation_metadata",
+        lambda _project_path, creation_id: {
+            "creation_id": creation_id,
+            "output_type": "video",
+            "media_type": "video",
+            "media_path": f"creations/{creation_id}.mp4",
+        },
+    )
+
+    with pytest.raises(VideoCapabilityError) as error:
+        await execute_free_edit_task(
+            "demo",
+            "c_0123456789abcdef0124",
+            {"parent_creation_id": parent_id, "prompt": "make the rain heavier"},
+            user_id="user-1",
+        )
+    assert error.value.code == "free_creation_video_edit_unsupported"
+
+
+@pytest.mark.asyncio
+async def test_free_audio_is_committed_as_a_versioned_creation(tmp_path: Path, monkeypatch) -> None:
+    creation_id = "c_0123456789abcdef0123"
+    output_path = tmp_path / "audio" / f"segment_{creation_id}.wav"
+    output_path.parent.mkdir(parents=True)
+    output_path.write_bytes(b"voice")
+
+    class FakeProjectManager:
+        def load_project(self, _project_name):
+            return {"content_mode": "free"}
+
+        def get_project_path(self, _project_name):
+            return tmp_path
+
+    class AudioGenerator:
+        async def generate_audio_async(self, **kwargs):
+            assert kwargs["resource_id"] == creation_id
+            return output_path, 1
+
+    async def _context(*_args, **kwargs):
+        assert kwargs.get("audio") is not None
+        return SimpleNamespace(
+            generator=AudioGenerator(),
+            audio=SimpleNamespace(
+                provider_model=SimpleNamespace(provider_id="openai"),
+                backend_model="tts-1",
+                narration_voice="alloy",
+                narration_speed=None,
+                voices=(SimpleNamespace(id="alloy"),),
+            ),
+        )
+
+    monkeypatch.setattr(free_creation_tasks_module, "get_project_manager", lambda: FakeProjectManager())
+    monkeypatch.setattr(free_creation_tasks_module, "resolve_generation_context", _context)
+
+    result = await execute_free_audio_task(
+        "demo",
+        creation_id,
+        {"request_id": "q_0123456789abcdef0123", "text": "Night train announcement", "voice": "alloy"},
+        user_id="user-1",
+        task_id="task-audio",
+    )
+
+    assert result["creation_id"] == creation_id
+    assert result["output_type"] == "audio"
+    assert result["media_type"] == "audio"
+    assert result["media_path"] == f"audio/segment_{creation_id}.wav"
+    assert load_creation_metadata(tmp_path, creation_id) == result
+    assert ProjectArtifactManifestAdapter(tmp_path).get_entry(ArtifactKey.free_creation(creation_id)) is not None
+
+
 def test_reference_validation_is_media_aware_and_path_safe(tmp_path: Path) -> None:
     project_path = tmp_path / "project"
     uploads = project_path / "uploads"
@@ -614,6 +765,60 @@ def test_record_enqueued_metadata_resets_retry_to_queued(tmp_path: Path) -> None
     assert "error" not in result
 
 
+@pytest.mark.asyncio
+async def test_failed_audio_creation_retries_through_the_audio_lane(tmp_path: Path, monkeypatch) -> None:
+    creation_id = "c_0123456789abcdef0123"
+    write_creation_metadata(
+        tmp_path,
+        creation_id,
+        {
+            "creation_id": creation_id,
+            "request_id": "q_0123456789abcdef0123",
+            "output_type": "audio",
+            "media_type": "audio",
+            "status": "failed",
+            "prompt": "Night train announcement",
+            "voice": "alloy",
+        },
+    )
+    queued: list[dict] = []
+
+    class Queue:
+        async def enqueue_task(self, **kwargs):
+            queued.append(kwargs)
+            return {"task_id": "task-audio-retry"}
+
+    async def resolve_context(*_args, **kwargs):
+        assert kwargs.get("audio") is not None
+        return SimpleNamespace(
+            audio=SimpleNamespace(
+                narration_voice="alloy",
+                voices=(SimpleNamespace(id="alloy"),),
+                provider_model=SimpleNamespace(provider_id="openai"),
+                backend_model="tts-1",
+            )
+        )
+
+    monkeypatch.setattr(
+        free_creation_router_module,
+        "_load_free_project",
+        lambda _project_name: ({"content_mode": "free"}, tmp_path),
+    )
+    monkeypatch.setattr(free_creation_router_module, "resolve_generation_context", resolve_context)
+    monkeypatch.setattr(free_creation_router_module, "get_generation_queue", lambda: Queue())
+
+    result = await retry_free_creation("demo", creation_id, CurrentUserInfo(id="user-1", sub="user-1"))
+
+    assert result == {"success": True, "creation_id": creation_id, "task_id": "task-audio-retry"}
+    assert queued[0]["task_type"] == "free_audio"
+    assert queued[0]["media_type"] == "audio"
+    assert queued[0]["payload"]["voice"] == "alloy"
+    retried = load_creation_metadata(tmp_path, creation_id)
+    assert retried is not None
+    assert retried["status"] == "queued"
+    assert retried["task_id"] == "task-audio-retry"
+
+
 def test_record_enqueued_metadata_preserves_fast_running_state(tmp_path: Path) -> None:
     creation_id = "c_0123456789abcdef0123"
     write_creation_metadata(
@@ -720,6 +925,39 @@ def test_structured_references_resolve_without_exposing_paths(tmp_path: Path) ->
 
     assert paths == [upload["path"], f"creations/{creation_id}.png"]
     assert claims[1] == {"type": "creation", "creation_id": creation_id, "version": 1}
+
+
+def test_structured_creation_references_can_select_a_historical_version(tmp_path: Path) -> None:
+    creation_id = "c_0123456789abcdef0123"
+    media = tmp_path / "creations" / f"{creation_id}.png"
+    media.parent.mkdir(parents=True, exist_ok=True)
+    versions = VersionManager(tmp_path)
+    media.write_bytes(b"first image")
+    first_version = versions.add_version("free_images", creation_id, "first image", source_file=media)
+    media.write_bytes(b"second image")
+    second_version = versions.add_version("free_images", creation_id, "second image", source_file=media)
+    write_creation_metadata(
+        tmp_path,
+        creation_id,
+        {
+            "creation_id": creation_id,
+            "status": "succeeded",
+            "media_type": "image",
+            "version": second_version,
+            "media_path": f"creations/{creation_id}.png",
+        },
+    )
+
+    paths, claims = resolve_reference_claims(
+        tmp_path,
+        [{"type": "creation", "creation_id": creation_id, "version": first_version}],
+        load_creation=load_creation_metadata,
+    )
+
+    assert paths[0].startswith("versions/free_images/")
+    assert paths[0].endswith(".png")
+    assert (tmp_path / paths[0]).read_bytes() == b"first image"
+    assert claims == [{"type": "creation", "creation_id": creation_id, "version": first_version}]
 
 
 def test_free_creation_export_uses_only_manifested_results(tmp_path: Path) -> None:

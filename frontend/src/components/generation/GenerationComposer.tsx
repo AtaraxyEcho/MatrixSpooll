@@ -1039,8 +1039,9 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
     () => (model === "auto" || models.includes(model) ? model : "auto"),
     [model, models],
   );
-  const referenceKind = useMemo<"none" | "frame" | "image" | "video">(() => {
+  const referenceKind = useMemo<"none" | "frame" | "image" | "video" | "audio">(() => {
     if (referenceFiles.some((item) => item.role === "reference_video")) return "video";
+    if (referenceFiles.some((item) => item.role === "reference_audio")) return "audio";
     if (referenceFiles.some((item) => item.role === "first_frame" || item.role === "last_frame")) return "frame";
     if (referenceFiles.some((item) => item.role === "reference_image")) return "image";
     return "none";

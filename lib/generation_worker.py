@@ -1059,7 +1059,7 @@ class GenerationWorker:
         discard_result: bool = False,
     ) -> None:
         """Keep project-local free creation metadata aligned with queue terminal state."""
-        if task.get("task_type") not in {"free_image", "free_video", "free_edit"}:
+        if task.get("task_type") not in {"free_image", "free_video", "free_edit", "free_audio"}:
             return
         project_name = task.get("project_name")
         resource_id = task.get("resource_id")
