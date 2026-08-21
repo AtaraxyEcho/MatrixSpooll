@@ -846,6 +846,9 @@ class GenerationWorker:
             return
         except Exception as exc:
             logger.exception("任务失败 %s (type=%s, provider=%s)", task_id, task_type, provider_id)
+            from server.services.custom_model_availability import quarantine_custom_model
+
+            await asyncio.shield(quarantine_custom_model(task, provider_id, exc))
             rows = await asyncio.shield(self.queue.mark_task_failed(task_id, _encode_task_failure_message(exc)))
             if rows == 0:
                 # 外部已抢先翻 cancelling → 落地 cancelled 终态

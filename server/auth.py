@@ -18,17 +18,26 @@ import secrets
 import string
 import time
 from collections import OrderedDict
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 import jwt
 from fastapi import Depends, HTTPException, Query
 from fastapi.security import OAuth2PasswordBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select, update
+from sqlalchemy.exc import OperationalError
 
 from lib import PROJECT_ROOT
+from lib.db import async_session_factory
+from lib.db.base import DEFAULT_USER_ID, utc_now
+from lib.db.models.user import User
+from lib.db.models.user_session import UserSession
+from lib.db.repositories.base import rowcount
+from lib.i18n import Translator
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +47,8 @@ class CurrentUserInfo(BaseModel):
 
     id: str
     sub: str
-    role: str = "admin"
+    role: str = "member"
+    session_id: str | None = None
 
     model_config = ConfigDict(frozen=True)
 
@@ -80,6 +90,18 @@ oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", aut
 _password_hash = PasswordHash.recommended()
 _cached_password_hash: str | None = None
 
+# The lifespan sets this after the database bootstrap has completed. Keeping a
+# small legacy fallback before that point preserves CLI/test clients that mount
+# only the auth router and do not run the application lifespan.
+_database_auth_initialized = False
+
+SESSION_EXPIRY_SECONDS = 7 * 24 * 3600
+
+
+def hash_password(password: str) -> str:
+    """Hash a user password with the configured password-hashing backend."""
+    return _password_hash.hash(password)
+
 
 def generate_password(length: int = 16) -> str:
     """生成随机字母数字密码"""
@@ -106,7 +128,192 @@ def get_token_secret() -> str:
     return _cached_token_secret
 
 
-def create_token(username: str) -> str:
+async def ensure_database_users() -> None:
+    """Ensure the migrated default account has a database password.
+
+    Environment credentials are used only as the one-time bootstrap source.
+    Subsequent logins are always checked against the database user record.
+    """
+    global _database_auth_initialized
+
+    if not is_auth_enabled():
+        return
+
+    password = os.environ.get("AUTH_PASSWORD", "")
+    username = os.environ.get("AUTH_USERNAME", "admin").strip() or "admin"
+    async with async_session_factory() as session:
+        async with session.begin():
+            result = await session.execute(select(User).where(User.id == DEFAULT_USER_ID))
+            user = result.scalar_one_or_none()
+            if user is None:
+                user = User(
+                    id=DEFAULT_USER_ID,
+                    username=username,
+                    password_hash=_password_hash.hash(password) if password else None,
+                    role="admin",
+                    is_active=True,
+                )
+                session.add(user)
+            elif user.password_hash is None and password:
+                user.password_hash = _password_hash.hash(password)
+            if user.username != username:
+                username_taken = await session.execute(
+                    select(User.id).where(User.username == username, User.id != DEFAULT_USER_ID)
+                )
+                if username_taken.scalar_one_or_none() is None:
+                    user.username = username
+                else:
+                    logger.warning(
+                        "AUTH_USERNAME is already used by another account; preserving the superadmin username"
+                    )
+            user.role = "admin"
+            user.is_active = True
+    _database_auth_initialized = True
+
+
+def database_auth_initialized() -> bool:
+    """Whether startup completed the database-user bootstrap."""
+    return _database_auth_initialized
+
+
+async def _get_user_by_username(username: str) -> User | None:
+    async with async_session_factory() as session:
+        result = await session.execute(select(User).where(User.username == username))
+        return result.scalar_one_or_none()
+
+
+async def authenticate_database_user(username: str, password: str) -> User | None:
+    """Return an active user after verifying its database password."""
+    try:
+        user = await _get_user_by_username(username)
+    except OperationalError:
+        return None
+    if user is None or not user.is_active or not user.password_hash:
+        return None
+    try:
+        valid = _password_hash.verify(password, user.password_hash)
+    except (TypeError, ValueError):
+        valid = False
+    return user if valid else None
+
+
+async def database_user_exists(username: str) -> bool:
+    """Return whether the database owns a username, including disabled users."""
+    try:
+        return await _get_user_by_username(username) is not None
+    except OperationalError:
+        return False
+
+
+async def create_user_session(
+    user: User,
+    *,
+    device_id: str,
+    ip_address: str | None,
+    user_agent: str | None,
+) -> UserSession:
+    """Replace the old session on one device and create a new session."""
+    now = utc_now()
+    session_id = uuid4().hex
+    async with async_session_factory() as db_session:
+        async with db_session.begin():
+            await db_session.execute(
+                update(UserSession)
+                .where(
+                    UserSession.user_id == user.id,
+                    UserSession.device_id == device_id,
+                    UserSession.revoked_at.is_(None),
+                )
+                .values(revoked_at=now, updated_at=now)
+            )
+            row = UserSession(
+                id=session_id,
+                user_id=user.id,
+                device_id=device_id,
+                token_id=session_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                expires_at=now + timedelta(seconds=SESSION_EXPIRY_SECONDS),
+            )
+            db_session.add(row)
+            await db_session.flush()
+            await db_session.refresh(row)
+            return row
+
+
+async def revoke_user_session(session_id: str, user_id: str | None = None) -> bool:
+    """Revoke one session, optionally scoped to its owner."""
+    now = utc_now()
+    async with async_session_factory() as db_session:
+        async with db_session.begin():
+            stmt = update(UserSession).where(UserSession.id == session_id, UserSession.revoked_at.is_(None))
+            if user_id is not None:
+                stmt = stmt.where(UserSession.user_id == user_id)
+            result = await db_session.execute(stmt.values(revoked_at=now, updated_at=now))
+            return rowcount(result) > 0
+
+
+async def revoke_all_user_sessions(user_id: str, except_session_id: str | None = None) -> int:
+    """Revoke active sessions for one user, optionally keeping one session."""
+    now = utc_now()
+    async with async_session_factory() as db_session:
+        async with db_session.begin():
+            stmt = update(UserSession).where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
+            if except_session_id is not None:
+                stmt = stmt.where(UserSession.id != except_session_id)
+            result = await db_session.execute(stmt.values(revoked_at=now, updated_at=now))
+            return rowcount(result)
+
+
+async def update_user_password(user_id: str, new_password: str) -> bool:
+    """Replace a database user's password hash."""
+    async with async_session_factory() as db_session:
+        async with db_session.begin():
+            result = await db_session.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user is None or not user.is_active:
+                return False
+            user.password_hash = hash_password(new_password)
+    return True
+
+
+async def _session_user(payload: dict) -> CurrentUserInfo | None:
+    """Resolve a modern JWT through its database user and revocable session."""
+    user_id = payload.get("uid")
+    session_id = payload.get("sid")
+    if not isinstance(user_id, str) or not isinstance(session_id, str):
+        return None
+
+    async with async_session_factory() as db_session:
+        result = await db_session.execute(
+            select(User, UserSession)
+            .join(UserSession, UserSession.user_id == User.id)
+            .where(User.id == user_id, UserSession.id == session_id)
+        )
+        row = result.first()
+    if row is None:
+        return None
+    user, session = row
+    expires_at = session.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if not user.is_active or session.revoked_at is not None or expires_at <= datetime.now(UTC):
+        return None
+    return CurrentUserInfo(
+        id=user.id,
+        sub=user.username,
+        role=user.role if user.role in {"admin", "member"} else "member",
+        session_id=session.id,
+    )
+
+
+def create_token(
+    username: str,
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    role: str | None = None,
+) -> str:
     """创建 JWT token
 
     Args:
@@ -121,6 +328,12 @@ def create_token(username: str) -> str:
         "iat": now,
         "exp": now + TOKEN_EXPIRY_SECONDS,
     }
+    if user_id is not None:
+        payload["uid"] = user_id
+    if session_id is not None:
+        payload["sid"] = session_id
+    if role is not None:
+        payload["role"] = role
     return jwt.encode(payload, get_token_secret(), algorithm="HS256")
 
 
@@ -424,12 +637,31 @@ async def _verify_and_get_payload_async(token: str) -> dict:
     return _verify_and_get_payload(token)
 
 
-def _payload_to_user(payload: dict) -> CurrentUserInfo:
-    """Convert a verified JWT/API-key payload to CurrentUserInfo."""
-    from lib.db.base import DEFAULT_USER_ID
+async def _payload_to_user(payload: dict) -> CurrentUserInfo:
+    """Convert a verified JWT/API-key payload to a current user."""
+    if payload.get("via") == "apikey":
+        return CurrentUserInfo(id=DEFAULT_USER_ID, sub=payload.get("sub", ""), role="member")
 
-    sub = payload.get("sub", "")
-    return CurrentUserInfo(id=DEFAULT_USER_ID, sub=sub, role="admin")
+    if payload.get("uid") and payload.get("sid"):
+        try:
+            user = await _session_user(payload)
+        except OperationalError:
+            user = None
+        if user is None:
+            raise HTTPException(
+                status_code=401,
+                detail="session_invalid",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
+
+    # Legacy tokens remain readable during the migration window. They map to
+    # the existing default administrator and are never issued by new logins.
+    return CurrentUserInfo(
+        id=DEFAULT_USER_ID,
+        sub=payload.get("sub", ""),
+        role=payload.get("role", "admin"),
+    )
 
 
 async def get_current_user(
@@ -449,7 +681,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     payload = await _verify_and_get_payload_async(token)
-    return _payload_to_user(payload)
+    return await _payload_to_user(payload)
 
 
 async def get_current_user_flexible(
@@ -470,9 +702,19 @@ async def get_current_user_flexible(
             headers={"WWW-Authenticate": "Bearer"},
         )
     payload = await _verify_and_get_payload_async(raw)
-    return _payload_to_user(payload)
+    return await _payload_to_user(payload)
 
 
 # Type aliases for FastAPI dependency injection
 CurrentUser = Annotated[CurrentUserInfo, Depends(get_current_user)]
 CurrentUserFlexible = Annotated[CurrentUserInfo, Depends(get_current_user_flexible)]
+
+
+async def require_admin(user: CurrentUser, _t: Translator) -> CurrentUserInfo:
+    """Authorization seam for administrator-only routes."""
+    if user.role != "admin" or user.sub.startswith("apikey:"):
+        raise HTTPException(status_code=403, detail=_t("admin_required"))
+    return user
+
+
+AdminUser = Annotated[CurrentUserInfo, Depends(require_admin)]

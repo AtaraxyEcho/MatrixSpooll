@@ -7,16 +7,23 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from lib.i18n import Translator
 from server.auth import (
     CurrentUser,
+    authenticate_database_user,
     check_credentials,
     create_token,
+    create_user_session,
+    database_auth_initialized,
+    database_user_exists,
     is_auth_enabled,
+    revoke_all_user_sessions,
+    revoke_user_session,
+    update_user_password,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,11 +40,25 @@ public_router = APIRouter()
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str
+    username: str | None = None
+    role: str | None = None
 
 
 class VerifyResponse(BaseModel):
     valid: bool
     username: str
+    role: str | None = None
+
+
+class CurrentUserResponse(BaseModel):
+    id: str
+    username: str
+    role: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=8, max_length=200)
 
 
 class AuthStatusResponse(BaseModel):
@@ -63,6 +84,8 @@ async def auth_status():
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     _t: Translator,
+    request: Request,
+    device_id: Annotated[str | None, Form()] = None,
 ):
     """用户登录
 
@@ -70,7 +93,27 @@ async def login_for_access_token(
     ``AUTH_ENABLED=false`` 时跳过凭据校验，直接签发 token，让前端
     LoginPage 即便被打开也能正常跳转主界面。
     """
-    if is_auth_enabled() and not check_credentials(form_data.username, form_data.password):
+    if is_auth_enabled() and database_auth_initialized():
+        user = await authenticate_database_user(form_data.username, form_data.password)
+        if user is not None:
+            session = await create_user_session(
+                user,
+                device_id=(device_id or "browser-default").strip()[:200] or "browser-default",
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+            )
+            token = create_token(user.username, user_id=user.id, session_id=session.id, role=user.role)
+            return TokenResponse(
+                access_token=token,
+                token_type="bearer",
+                username=user.username,
+                role=user.role,
+            )
+
+    if is_auth_enabled() and (
+        (database_auth_initialized() and await database_user_exists(form_data.username))
+        or not check_credentials(form_data.username, form_data.password)
+    ):
         logger.warning("登录失败: 用户名或密码错误 (用户: %s)", form_data.username)
         raise HTTPException(
             status_code=401,
@@ -80,7 +123,7 @@ async def login_for_access_token(
 
     token = create_token(form_data.username)
     logger.info("用户登录成功: %s", form_data.username)
-    return TokenResponse(access_token=token, token_type="bearer")
+    return TokenResponse(access_token=token, token_type="bearer", username=form_data.username, role="admin")
 
 
 @router.get("/auth/verify", response_model=VerifyResponse)
@@ -91,4 +134,37 @@ async def verify(
 
     使用 OAuth2 Bearer token 依赖自动提取和验证 token。
     """
-    return VerifyResponse(valid=True, username=current_user.sub)
+    return VerifyResponse(valid=True, username=current_user.sub, role=current_user.role)
+
+
+@router.get("/auth/me", response_model=CurrentUserResponse)
+async def current_user(current_user: CurrentUser) -> CurrentUserResponse:
+    return CurrentUserResponse(id=current_user.id, username=current_user.sub, role=current_user.role)
+
+
+@router.post("/auth/logout", status_code=204)
+async def logout(current_user: CurrentUser) -> None:
+    if current_user.session_id:
+        await revoke_user_session(current_user.session_id, current_user.id)
+
+
+@router.post("/auth/password", status_code=204)
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: CurrentUser,
+    _t: Translator,
+) -> None:
+    """Change the authenticated database user's password."""
+    if not database_auth_initialized() or not current_user.session_id:
+        raise HTTPException(status_code=400, detail=_t("password_change_unavailable"))
+
+    user = await authenticate_database_user(current_user.sub, body.current_password)
+    if user is None or user.id != current_user.id:
+        raise HTTPException(status_code=400, detail=_t("current_password_invalid"))
+
+    updated = await update_user_password(user.id, body.new_password)
+    if not updated:
+        raise HTTPException(status_code=400, detail=_t("password_change_unavailable"))
+
+    # Keep the current device usable while invalidating every other login.
+    await revoke_all_user_sessions(user.id, except_session_id=current_user.session_id)

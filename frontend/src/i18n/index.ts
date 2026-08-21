@@ -27,6 +27,7 @@ export const LANGUAGE_DISPLAY_LABELS: Record<SupportedLanguage, string> = {
 const I18N_NAMESPACES = [
   'common',
   'auth',
+  'admin',
   'dashboard',
   'errors',
   'templates',

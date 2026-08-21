@@ -1,4 +1,13 @@
 MESSAGES = {
+    "admin_user_not_found": "User not found",
+    "admin_username_required": "Username cannot be empty",
+    "admin_user_exists": "Username already exists",
+    "admin_last_admin": "The last active administrator cannot be disabled or demoted",
+    "admin_required": "Administrator permission is required",
+    "admin_superadmin_protected": "The environment administrator cannot be modified",
+    "session_invalid": "Your login session is no longer valid. Please sign in again",
+    "password_change_unavailable": "Password changes are unavailable for this login session",
+    "current_password_invalid": "The current password is incorrect",
     "free_creation_audio_composite_input_not_found": "The selected video or voice artifact is no longer available",
     "free_creation_audio_composite_invalid": "Select exactly one completed video and one completed voice artifact",
     "free_creation_audio_composite_unavailable": "Voice compositing is unavailable because FFmpeg is not configured or the media could not be combined",

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from lib.config.service import ConfigService, ProviderStatus
 from lib.db.base import Base
+from lib.db.models.custom_provider import CustomProviderModel
 from lib.db.repositories.custom_provider_repo import CustomProviderRepository
 from server.routers.system_config import _build_options
 
@@ -233,6 +234,26 @@ class TestBuildOptionsCustomModels:
         # No custom- entries
         for key in ("video_backends", "image_backends", "text_backends"):
             assert not any(v.startswith("custom-") for v in options[key])
+
+    async def test_excludes_enabled_model_when_provider_row_is_missing(self, session):
+        """Orphaned model rows must not become selectable backends."""
+        db_session, _factory = session
+        db_session.add(
+            CustomProviderModel(
+                provider_id=999,
+                model_id="orphan-model",
+                display_name="Orphan Model",
+                endpoint="openai-images",
+                is_default=True,
+                is_enabled=True,
+            )
+        )
+        await db_session.commit()
+
+        options = await _build_options(_make_mock_svc(), db_session)
+
+        assert "custom-999/orphan-model" not in options["image_backends"]
+        assert "custom-999" not in options["provider_names"]
 
     async def test_exception_in_custom_providers_is_nonfatal(self):
         """If the DB query raises, _build_options still returns preset backends."""
