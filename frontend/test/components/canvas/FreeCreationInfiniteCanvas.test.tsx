@@ -5,6 +5,7 @@ import {
   arrangeCanvasNodes,
   buildCanvasDependencyEdges,
   createCanvasGroupId,
+  dependencyPath,
   FreeCreationInfiniteCanvas,
 } from "@/components/canvas/FreeCreationInfiniteCanvas";
 import i18n from "@/i18n";
@@ -524,6 +525,15 @@ describe("FreeCreationInfiniteCanvas", () => {
     expect(arranged[target.creation_id].x).toBeGreaterThan(arranged[source.creation_id].x);
     expect(arranged[source.creation_id].y).toBe(88);
     expect(arranged[target.creation_id].y).toBe(88);
+  });
+
+  it("routes relations with straight segments instead of curved paths", () => {
+    const source = { x: 0, y: 0, width: 100, height: 80 };
+    const target = { x: 240, y: 120, width: 100, height: 80 };
+    const path = dependencyPath(source, target, 0);
+
+    expect(path).toBe("M 100 40 L 170 40 L 170 160 L 240 160");
+    expect(path).not.toMatch(/[CSQ]/);
   });
 
   it("arranges the canvas from the toolbar and keeps the change undoable", async () => {
