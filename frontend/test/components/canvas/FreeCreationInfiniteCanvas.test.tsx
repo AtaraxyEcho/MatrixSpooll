@@ -1,7 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { API } from "@/api";
-import { FreeCreationInfiniteCanvas } from "@/components/canvas/FreeCreationInfiniteCanvas";
+import {
+  arrangeCanvasNodes,
+  buildCanvasDependencyEdges,
+  FreeCreationInfiniteCanvas,
+} from "@/components/canvas/FreeCreationInfiniteCanvas";
 import i18n from "@/i18n";
 import { useFreeCreationStore } from "@/stores/free-creation-store";
 import type { FreeCreation, FreeCreationUpload } from "@/types";
@@ -468,6 +472,7 @@ describe("FreeCreationInfiniteCanvas", () => {
     fireEvent.pointerDown(secondCard!, { button: 0, pointerId: 71, shiftKey: true });
     fireEvent.contextMenu(secondCard!, { clientX: 120, clientY: 120 });
     fireEvent.click(await screen.findByRole("menuitem", { name: t("free_creation_group_selected") }));
+    expect(document.querySelector("[data-canvas-group]")).toBeInTheDocument();
 
     const firstHeader = firstCard!.firstElementChild as HTMLElement;
     const surface = screen.getByTestId("free-creation-canvas");
@@ -477,6 +482,71 @@ describe("FreeCreationInfiniteCanvas", () => {
 
     await waitFor(() => expect(firstCard).toHaveStyle({ left: "136px", top: "118px" }));
     expect(secondCard).toHaveStyle({ left: "480px", top: "118px" });
+  });
+
+  it("deduplicates dependency edges and arranges connected nodes from inputs to outputs", () => {
+    const source: FreeCreation = { ...creation, creation_id: "c_source0123456789abcd", prompt: "source" };
+    const target: FreeCreation = {
+      ...creation,
+      creation_id: "c_target0123456789abcd",
+      output_type: "video",
+      media_type: "video",
+      prompt: "target",
+      reference_claims: [
+        { type: "creation", creation_id: source.creation_id, role: "reference_image" },
+        { type: "creation", creation_id: source.creation_id, role: "first_frame" },
+      ],
+    };
+    const edges = buildCanvasDependencyEdges([source, target]);
+    expect(edges).toEqual([{ sourceId: source.creation_id, targetId: target.creation_id }]);
+
+    const arranged = arrangeCanvasNodes(
+      [source.creation_id, target.creation_id],
+      {
+        [source.creation_id]: { x: 96, y: 88 },
+        [target.creation_id]: { x: 96, y: 88 },
+      },
+      [source, target],
+      [],
+    );
+    expect(arranged[target.creation_id].x).toBeGreaterThan(arranged[source.creation_id].x);
+    expect(arranged[source.creation_id].y).toBe(88);
+    expect(arranged[target.creation_id].y).toBe(88);
+  });
+
+  it("arranges the canvas from the toolbar and keeps the change undoable", async () => {
+    const source: FreeCreation = { ...creation, creation_id: "c_source0123456789abcd", prompt: "source" };
+    const target: FreeCreation = {
+      ...creation,
+      creation_id: "c_target0123456789abcd",
+      output_type: "video",
+      media_type: "video",
+      prompt: "target",
+      reference_claims: [{ type: "creation", creation_id: source.creation_id, role: "reference_image" }],
+    };
+    vi.mocked(API.getFreeCreationCanvas).mockResolvedValue({
+      canvas: {
+        revision: 2,
+        viewport: { x: 0, y: 0, scale: 1 },
+        positions: {
+          [source.creation_id]: { x: 96, y: 88 },
+          [target.creation_id]: { x: 96, y: 88 },
+        },
+        hidden_creation_ids: [],
+        updated_at: "2026-08-19T00:00:00Z",
+      },
+    });
+    const { container } = renderCanvas([source, target]);
+    await waitFor(() => expect(container.querySelectorAll("[data-canvas-node='true']")).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_arrange_all") }));
+
+    await waitFor(() => {
+      const sourceCard = container.querySelector<HTMLElement>(`[data-canvas-id='${source.creation_id}']`);
+      const targetCard = container.querySelector<HTMLElement>(`[data-canvas-id='${target.creation_id}']`);
+      expect(Number.parseInt(targetCard?.style.left ?? "0", 10)).toBeGreaterThan(Number.parseInt(sourceCard?.style.left ?? "0", 10));
+    });
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    await waitFor(() => expect(container.querySelector<HTMLElement>(`[data-canvas-id='${target.creation_id}']`)).toHaveStyle({ left: "96px" }));
   });
 
   it("projects subtitle tracks as visible editable canvas cards", async () => {
