@@ -210,9 +210,13 @@ async def _enumerate_candidates(
     try:
         repo = CustomProviderRepository(session)
         providers = await repo.list_providers()
+        provider_by_id = {p.id: p for p in providers}
         provider_name_map = {p.id: p.display_name for p in providers}
         enabled_models = await repo.list_all_enabled_models()
         for model in enabled_models:
+            provider = provider_by_id.get(model.provider_id)
+            if provider is None or not provider.base_url.strip() or not provider.api_key.strip():
+                continue
             pid = make_provider_id(model.provider_id)
             candidates.append(
                 _ModelCandidate(

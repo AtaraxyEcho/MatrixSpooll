@@ -12,6 +12,7 @@ from lib.db.models.session_event import AgentSessionEventLogEntry
 from lib.db.models.session_message_link import AgentSessionUserMessageLink
 from lib.db.models.task import Task, WorkerLease
 from lib.db.models.user import User
+from lib.db.models.user_session import UserSession
 
 __all__ = [
     "Task",
@@ -24,6 +25,7 @@ __all__ = [
     "ProviderConfig",
     "SystemSetting",
     "User",
+    "UserSession",
     "ProviderCredential",
     "CustomProvider",
     "CustomProviderModel",

@@ -40,10 +40,11 @@ from lib.logging_config import attach_file_handler, migrate_legacy_log_dir, setu
 from lib.path_safety import try_safe_join
 from lib.project_migrations import cleanup_stale_backups, run_project_migrations
 from lib.source_loader.migration import migrate_project_source_encoding
-from server.auth import ensure_auth_password, get_current_user
+from server.auth import ensure_auth_password, ensure_database_users, get_current_user
 from server.dependencies import require_project_migration_ok
 from server.error_handlers import register_error_handlers
 from server.routers import (
+    admin,
     agent_chat,
     agent_config,
     api_keys,
@@ -343,6 +344,7 @@ async def lifespan(app: FastAPI):
 
     # Run Alembic migrations (auto-creates tables on first start)
     await init_db()
+    await ensure_database_users()
 
     projects_root = app_data_dir()
 
@@ -612,6 +614,7 @@ app.include_router(
 )
 app.include_router(versions.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["版本管理"])
 app.include_router(usage.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["费用统计"])
+app.include_router(admin.router, prefix="/api/v1", tags=["管理员"])
 app.include_router(auth_router.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["认证"])
 app.include_router(
     assistant.router,

@@ -1,4 +1,13 @@
 MESSAGES = {
+    "admin_user_not_found": "用户不存在",
+    "admin_username_required": "用户名不能为空",
+    "admin_user_exists": "用户名已存在",
+    "admin_last_admin": "不能禁用或降级最后一个有效管理员",
+    "admin_required": "需要管理员权限",
+    "admin_superadmin_protected": "环境配置的超级管理员不可修改",
+    "session_invalid": "登录会话已失效，请重新登录",
+    "password_change_unavailable": "当前登录会话不支持修改密码",
+    "current_password_invalid": "当前密码不正确",
     "free_creation_audio_composite_input_not_found": "所选视频或配音产物已不可用",
     "free_creation_audio_composite_invalid": "请选择一个已完成的视频和一个已完成的配音产物",
     "free_creation_audio_composite_unavailable": "配音合成不可用，请先配置 FFmpeg 或检查媒体是否能够合成",

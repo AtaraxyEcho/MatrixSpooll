@@ -1,4 +1,13 @@
 MESSAGES = {
+    "admin_user_not_found": "Không tìm thấy người dùng",
+    "admin_username_required": "Tên người dùng không được để trống",
+    "admin_user_exists": "Tên người dùng đã tồn tại",
+    "admin_last_admin": "Không thể vô hiệu hóa hoặc hạ quyền quản trị viên cuối cùng",
+    "admin_required": "Yêu cầu quyền quản trị viên",
+    "admin_superadmin_protected": "Không thể thay đổi quản trị viên siêu cấp được cấu hình từ môi trường",
+    "session_invalid": "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại",
+    "password_change_unavailable": "Phiên đăng nhập hiện tại không hỗ trợ đổi mật khẩu",
+    "current_password_invalid": "Mật khẩu hiện tại không đúng",
     "free_creation_audio_composite_input_not_found": "Video hoặc bản lồng tiếng đã chọn không còn khả dụng",
     "free_creation_audio_composite_invalid": "Hãy chọn đúng một video đã hoàn tất và một bản lồng tiếng đã hoàn tất",
     "free_creation_audio_composite_unavailable": "Không thể ghép lồng tiếng vì FFmpeg chưa được cấu hình hoặc các tệp không thể kết hợp",

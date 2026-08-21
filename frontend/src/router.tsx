@@ -12,6 +12,7 @@ import { SystemConfigPage } from "@/components/pages/SystemConfigPage";
 import { ProjectSettingsPage } from "@/components/pages/ProjectSettingsPage";
 import { AssetLibraryPage } from "@/components/pages/AssetLibraryPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { AdminManagerPage } from "@/pages/AdminManagerPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 import { ToastOverlay } from "@/components/layout/ToastOverlay";
 import { OnboardingTour } from "@/onboarding/OnboardingTour";
@@ -32,6 +33,8 @@ import { lookupProjectVideoResolution } from "@/utils/provider-models";
 import {
   ROUTE_APP,
   ROUTE_APP_ASSETS,
+  ROUTE_ADMIN_LOGIN,
+  ROUTE_ADMIN_MANAGER,
   ROUTE_APP_PROJECTS,
   ROUTE_APP_SETTINGS,
   WORKSPACE_ROUTE_SETTINGS,
@@ -292,7 +295,17 @@ export function AppRoutes() {
       <OnboardingTour />
       <Switch>
         {/* Login page */}
-        <Route path="/login" component={LoginPage} />
+        <Route path="/login">
+          <LoginPage />
+        </Route>
+
+        {/* Administrator portal */}
+        <Route path={ROUTE_ADMIN_LOGIN}>
+          <LoginPage adminOnly />
+        </Route>
+        <Route path={ROUTE_ADMIN_MANAGER}>
+          <AdminManagerPage />
+        </Route>
 
         {/* Root redirects to projects list */}
         <Route path="/">

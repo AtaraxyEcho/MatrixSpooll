@@ -4,10 +4,11 @@ import { getToken, setToken as saveToken, clearToken } from "@/utils/auth";
 interface AuthState {
   token: string | null;
   username: string | null;
+  role: "admin" | "member" | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   initialize: () => void;
-  login: (token: string, username: string) => void;
+  login: (token: string, username: string, role?: "admin" | "member" | null) => void;
   logout: () => void;
   setLoading: (loading: boolean) => void;
 }
@@ -15,6 +16,7 @@ interface AuthState {
 export const useAuthStore = create<AuthState>((set) => ({
   token: null,
   username: null,
+  role: null,
   isAuthenticated: false,
   isLoading: true,
 
@@ -54,14 +56,21 @@ export const useAuthStore = create<AuthState>((set) => ({
       });
   },
 
-  login: (token, username) => {
+  login: (token, username, role = null) => {
     saveToken(token);
-    set({ token, username, isAuthenticated: true, isLoading: false });
+    set({ token, username, role, isAuthenticated: true, isLoading: false });
   },
 
   logout: () => {
+    const token = getToken();
+    if (token) {
+      void fetch("/api/v1/auth/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => undefined);
+    }
     clearToken();
-    set({ token: null, username: null, isAuthenticated: false });
+    set({ token: null, username: null, role: null, isAuthenticated: false });
   },
 
   setLoading: (isLoading) => set({ isLoading }),
