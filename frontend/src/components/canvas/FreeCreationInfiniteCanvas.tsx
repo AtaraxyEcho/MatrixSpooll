@@ -10,6 +10,7 @@ import {
   FileText,
   Group,
   Keyboard,
+  LayoutGrid,
   Link2,
   Loader2,
   LocateFixed,
@@ -108,6 +109,23 @@ interface CanvasGroup {
   member_ids: string[];
 }
 
+interface CanvasNodeBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface CanvasDependencyEdge {
+  sourceId: string;
+  targetId: string;
+}
+
+interface CanvasGroupFrame extends CanvasNodeBox {
+  groupId: string;
+  labelIndex: number;
+}
+
 interface CanvasHistoryState {
   positions: Record<string, Point>;
   hiddenCreationIds: string[];
@@ -137,6 +155,144 @@ function subtitlePosition(parent: Point, index: number): Point {
     x: parent.x + NODE_WIDTH + NODE_GAP_X,
     y: parent.y + index * (SUBTITLE_NODE_HEIGHT + SUBTITLE_NODE_GAP),
   };
+}
+
+function nodeBox(
+  nodeId: string,
+  positions: Record<string, Point>,
+  uploadsById: ReadonlyMap<string, FreeCreationUpload>,
+): CanvasNodeBox | null {
+  const position = positions[nodeId];
+  if (!position) return null;
+  return {
+    x: position.x,
+    y: position.y,
+    width: NODE_WIDTH,
+    height: uploadsById.has(nodeId) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT,
+  };
+}
+
+export function buildCanvasDependencyEdges(creations: FreeCreation[]): CanvasDependencyEdge[] {
+  const edges = new Map<string, CanvasDependencyEdge>();
+  for (const creation of creations) {
+    const targets = [
+      ...(creation.parent_creation_id ? [creation.parent_creation_id] : []),
+      ...(creation.reference_claims ?? []).map((claim) => (
+        claim.type === "creation" ? claim.creation_id : claim.reference_id
+      )),
+    ];
+    for (const sourceId of targets) {
+      if (sourceId === creation.creation_id) continue;
+      const key = `${sourceId}->${creation.creation_id}`;
+      edges.set(key, { sourceId, targetId: creation.creation_id });
+    }
+  }
+  return [...edges.values()].sort((left, right) => (
+    `${left.sourceId}->${left.targetId}`.localeCompare(`${right.sourceId}->${right.targetId}`)
+  ));
+}
+
+function dependencyPath(source: CanvasNodeBox, target: CanvasNodeBox, lane: number): string {
+  const forward = source.x + source.width / 2 <= target.x + target.width / 2;
+  const direction = forward ? 1 : -1;
+  const sourceX = forward ? source.x + source.width : source.x;
+  const targetX = forward ? target.x : target.x + target.width;
+  const sourceY = source.y + source.height / 2;
+  const targetY = target.y + target.height / 2;
+  const laneOffset = lane * 16;
+  const controlX = (sourceX + targetX) / 2 + laneOffset * direction;
+  const controlY = (sourceY + targetY) / 2 + laneOffset;
+  return `M ${sourceX} ${sourceY} C ${sourceX + direction * 48} ${sourceY + laneOffset}, ${controlX - direction * 48} ${controlY}, ${controlX} ${controlY} S ${targetX - direction * 48} ${targetY - laneOffset}, ${targetX} ${targetY}`;
+}
+
+function relationLane(index: number): number {
+  if (index === 0) return 0;
+  return index % 2 === 0 ? index / 2 : -(index + 1) / 2;
+}
+
+export function arrangeCanvasNodes(
+  nodeIds: readonly string[],
+  currentPositions: Record<string, Point>,
+  creations: FreeCreation[],
+  uploads: FreeCreationUpload[],
+): Record<string, Point> {
+  const ids = [...new Set(nodeIds)];
+  if (!ids.length) return { ...currentPositions };
+  const idSet = new Set(ids);
+  const edges = buildCanvasDependencyEdges(creations).filter((edge) => idSet.has(edge.sourceId) && idSet.has(edge.targetId));
+  const uploadsById = new Map(uploads.map((upload) => [upload.reference_id, upload]));
+  const minX = Math.min(...ids.map((id) => currentPositions[id]?.x ?? 96));
+  const minY = Math.min(...ids.map((id) => currentPositions[id]?.y ?? 88));
+  const next = { ...currentPositions };
+  if (!edges.length) {
+    const orderedIds = [...ids].sort((left, right) => {
+      const leftPosition = currentPositions[left];
+      const rightPosition = currentPositions[right];
+      return (leftPosition?.y ?? 0) - (rightPosition?.y ?? 0)
+        || (leftPosition?.x ?? 0) - (rightPosition?.x ?? 0)
+        || left.localeCompare(right);
+    });
+    const columnCount = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(orderedIds.length))));
+    orderedIds.forEach((id, index) => {
+      const height = uploadsById.has(id) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
+      next[id] = {
+        x: minX + (index % columnCount) * (NODE_WIDTH + NODE_GAP_X),
+        y: minY + Math.floor(index / columnCount) * (height + NODE_GAP_Y),
+      };
+    });
+    return next;
+  }
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
+  ids.forEach((id) => {
+    incoming.set(id, []);
+    outgoing.set(id, []);
+  });
+  edges.forEach((edge) => {
+    incoming.get(edge.targetId)?.push(edge.sourceId);
+    outgoing.get(edge.sourceId)?.push(edge.targetId);
+  });
+
+  const levels = new Map<string, number>(ids.map((id) => [id, 0]));
+  const indegree = new Map(ids.map((id) => [id, incoming.get(id)?.length ?? 0]));
+  const queue = ids.filter((id) => indegree.get(id) === 0).sort();
+  const visited = new Set<string>();
+  while (queue.length) {
+    const sourceId = queue.shift()!;
+    visited.add(sourceId);
+    for (const targetId of outgoing.get(sourceId) ?? []) {
+      levels.set(targetId, Math.max(levels.get(targetId) ?? 0, (levels.get(sourceId) ?? 0) + 1));
+      indegree.set(targetId, (indegree.get(targetId) ?? 1) - 1);
+      if (indegree.get(targetId) === 0) queue.push(targetId);
+    }
+    queue.sort();
+  }
+  // Cyclic or partially loaded references stay in the first available layer instead of blocking layout.
+  ids.filter((id) => !visited.has(id)).forEach((id) => levels.set(id, 0));
+
+  const layers = new Map<number, string[]>();
+  ids.forEach((id) => {
+    const layer = levels.get(id) ?? 0;
+    layers.set(layer, [...(layers.get(layer) ?? []), id]);
+  });
+  for (const [layer, layerIds] of [...layers.entries()].sort(([left], [right]) => left - right)) {
+    layerIds.sort((left, right) => {
+      const leftY = currentPositions[left]?.y ?? 0;
+      const rightY = currentPositions[right]?.y ?? 0;
+      return leftY - rightY || left.localeCompare(right);
+    });
+    layerIds.forEach((id, index) => {
+      const height = uploadsById.has(id) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
+      const previous = currentPositions[id];
+      const centeredOffset = layerIds.length > 1 ? (index - (layerIds.length - 1) / 2) * (height + NODE_GAP_Y) : 0;
+      next[id] = {
+        x: minX + layer * (NODE_WIDTH + NODE_GAP_X + 96),
+        y: minY + centeredOffset + (layerIds.length > 1 ? (layerIds.length - 1) * (height + NODE_GAP_Y) / 2 : 0),
+      };
+      if (!previous) next[id].y = minY + index * (height + NODE_GAP_Y);
+    });
+  }
+  return next;
 }
 
 function overlapsPosition(candidate: Point, occupied: Point[]): boolean {
@@ -390,6 +546,43 @@ export function FreeCreationInfiniteCanvas({
     }
     return result;
   }, [groups]);
+  const dependencyEdges = useMemo(
+    () => buildCanvasDependencyEdges(creations).filter((edge) => {
+      return Boolean(
+        nodeBox(edge.sourceId, positions, uploadsById)
+        && nodeBox(edge.targetId, positions, uploadsById)
+        && !hiddenSet.has(edge.sourceId)
+        && !hiddenSet.has(edge.targetId)
+        && !hiddenUploadSet.has(edge.sourceId)
+        && !hiddenUploadSet.has(edge.targetId),
+      );
+    }),
+    [creations, hiddenSet, hiddenUploadSet, positions, uploadsById],
+  );
+  const dependencyPaths = useMemo(
+    () => dependencyEdges.map((edge, index) => {
+      const source = nodeBox(edge.sourceId, positions, uploadsById);
+      const target = nodeBox(edge.targetId, positions, uploadsById);
+      return source && target
+        ? { ...edge, path: dependencyPath(source, target, relationLane(index)) }
+        : null;
+    }).filter((edge): edge is CanvasDependencyEdge & { path: string } => Boolean(edge)),
+    [dependencyEdges, positions, uploadsById],
+  );
+  const groupFrames = useMemo<CanvasGroupFrame[]>(() => groups.flatMap((group, index) => {
+    const members = group.member_ids
+      .filter((memberId) => !hiddenSet.has(memberId) && !hiddenUploadSet.has(memberId))
+      .map((memberId) => nodeBox(memberId, positions, uploadsById))
+      .filter((box): box is CanvasNodeBox => Boolean(box));
+    if (members.length < 2) return [];
+    const padding = 22;
+    const labelHeight = 26;
+    const left = Math.min(...members.map((box) => box.x)) - padding;
+    const top = Math.min(...members.map((box) => box.y)) - padding - labelHeight;
+    const right = Math.max(...members.map((box) => box.x + box.width)) + padding;
+    const bottom = Math.max(...members.map((box) => box.y + box.height)) + padding;
+    return [{ groupId: group.group_id, labelIndex: index + 1, x: left, y: top, width: right - left, height: bottom - top }];
+  }), [groups, hiddenSet, hiddenUploadSet, positions, uploadsById]);
   const selectedMergeIds = useMemo(() => {
     if (selectedIds.length < 2) return [];
     const selectedCreations = selectedIds
@@ -531,6 +724,29 @@ export function FreeCreationInfiniteCanvas({
       bottom: (height - bottomInset - pan.y) / scale,
     };
   }, [pan.x, pan.y, scale]);
+
+  const arrangeNodes = useCallback((scope: "all" | "selected") => {
+    if (readOnly) return;
+    const visibleIds = [
+      ...visibleUploads.map((upload) => upload.reference_id),
+      ...visibleCreations.map((creation) => creation.creation_id),
+    ];
+    const visibleSet = new Set(visibleIds);
+    const targetIds = scope === "selected"
+      ? selectedIds.filter((id) => visibleSet.has(id))
+      : visibleIds;
+    if (targetIds.length < (scope === "selected" ? 2 : 1)) return;
+    const next = arrangeCanvasNodes(targetIds, positionsRef.current, creations, uploads);
+    const changed = targetIds.some((id) => {
+      const current = positionsRef.current[id];
+      const arranged = next[id];
+      return current?.x !== arranged?.x || current?.y !== arranged?.y;
+    });
+    if (!changed) return;
+    pushHistory();
+    setPositions((current) => ({ ...current, ...next }));
+    setContextMenu(null);
+  }, [creations, pushHistory, readOnly, selectedIds, uploads, visibleCreations, visibleUploads]);
 
   const focusCanvasPosition = useCallback((position: Point) => {
     const surface = surfaceRef.current;
@@ -1085,6 +1301,7 @@ export function FreeCreationInfiniteCanvas({
         <span className="min-w-12 text-center text-[11px] text-[var(--color-text-muted)]">{Math.round(scale * 100)}%</span>
         <button type="button" onClick={() => setScale((value) => Math.max(MIN_SCALE, value - 0.1))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_zoom_out")} aria-label={t("free_creation_zoom_out")}><ZoomOut className="h-4 w-4" aria-hidden /></button>
         <button type="button" onClick={() => { setPan({ x: 0, y: 0 }); setScale(1); }} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_reset_canvas")} aria-label={t("free_creation_reset_canvas")}><LocateFixed className="h-4 w-4" aria-hidden /></button>
+        <button type="button" onClick={() => arrangeNodes("all")} disabled={readOnly || allNodes.length < 1} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40" title={t("free_creation_arrange_all")} aria-label={t("free_creation_arrange_all")}><LayoutGrid className="h-4 w-4" aria-hidden /></button>
         <button type="button" onClick={() => setShowRelations((value) => !value)} className={`focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${showRelations ? "bg-[var(--color-accent-dim)] text-[var(--color-accent-2)]" : ""}`} title={t(showRelations ? "free_creation_hide_relations" : "free_creation_show_relations")} aria-label={t(showRelations ? "free_creation_hide_relations" : "free_creation_show_relations")}><Link2 className="h-4 w-4" aria-hidden /></button>
         <div className="relative">
           <button
@@ -1126,40 +1343,47 @@ export function FreeCreationInfiniteCanvas({
 
       <div className="absolute left-0 top-0" style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${scale})`, transformOrigin: "0 0", transition: viewportAnimating ? "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)" : undefined }}>
         <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1" aria-hidden>
-          {showRelations ? visibleCreations.flatMap((creation) => {
-            const targets = [
-              ...(creation.parent_creation_id ? [creation.parent_creation_id] : []),
-              ...(creation.reference_claims ?? []).map((claim) => claim.type === "creation" ? claim.creation_id : claim.reference_id),
-            ];
-            const to = positions[creation.creation_id];
-            if (!to) return [];
-            return [...new Set(targets)].flatMap((sourceId) => {
-              const from = positions[sourceId];
-              if (!from || hiddenSet.has(sourceId) || hiddenUploadSet.has(sourceId)) return [];
-              const sourceHeight = uploadsById.has(sourceId) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
-              return <path key={`${sourceId}-${creation.creation_id}`} d={`M ${from.x + NODE_WIDTH} ${from.y + sourceHeight / 2} C ${from.x + NODE_WIDTH + 48} ${from.y + sourceHeight / 2}, ${to.x - 48} ${to.y + NODE_HEIGHT / 2}, ${to.x} ${to.y + NODE_HEIGHT / 2}`} fill="none" stroke="var(--color-accent)" strokeOpacity="0.42" strokeWidth="2" />;
-            });
-          }) : null}
-          {showRelations ? groups.flatMap((group) => {
-            const [anchorId, ...memberIds] = group.member_ids;
-            const anchor = positions[anchorId];
-            if (!anchor || hiddenSet.has(anchorId) || hiddenUploadSet.has(anchorId)) return [];
-            const anchorHeight = uploadsById.has(anchorId) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
-            return memberIds.flatMap((memberId) => {
-              const member = positions[memberId];
-              if (!member || hiddenSet.has(memberId) || hiddenUploadSet.has(memberId)) return [];
-              const memberHeight = uploadsById.has(memberId) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
-              return <path key={`${group.group_id}-${memberId}`} d={`M ${anchor.x + NODE_WIDTH / 2} ${anchor.y + anchorHeight / 2} L ${member.x + NODE_WIDTH / 2} ${member.y + memberHeight / 2}`} fill="none" stroke="var(--color-text-muted)" strokeDasharray="4 6" strokeOpacity="0.5" strokeWidth="1.5" />;
-            });
-          }) : null}
+          <defs>
+            <marker id="free-creation-edge-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
+              <path d="M 0 0 L 7 3.5 L 0 7 z" fill="var(--color-accent)" />
+            </marker>
+            <marker id="free-creation-subtitle-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
+              <path d="M 0 0 L 7 3.5 L 0 7 z" fill="var(--color-accent-2)" />
+            </marker>
+          </defs>
+          {showRelations ? dependencyPaths.map((edge) => (
+            <path
+              key={`${edge.sourceId}-${edge.targetId}`}
+              d={edge.path}
+              fill="none"
+              stroke="var(--color-accent)"
+              strokeOpacity="0.52"
+              strokeWidth="2"
+              markerEnd="url(#free-creation-edge-arrow)"
+            />
+          )) : null}
           {showRelations ? subtitleTracks.map((track, index) => {
-            const from = positions[track.creation_id];
+            const from = nodeBox(track.creation_id, positions, uploadsById);
             if (!from || hiddenSet.has(track.creation_id)) return null;
             const siblingIndex = subtitleTracks.slice(0, index).filter((item) => item.creation_id === track.creation_id).length;
-            const to = subtitlePosition(from, siblingIndex);
-            return <path key={`subtitle-${track.subtitle_id}`} d={`M ${from.x + NODE_WIDTH} ${from.y + NODE_HEIGHT / 2} C ${from.x + NODE_WIDTH + 48} ${from.y + NODE_HEIGHT / 2}, ${to.x - 48} ${to.y + SUBTITLE_NODE_HEIGHT / 2}, ${to.x} ${to.y + SUBTITLE_NODE_HEIGHT / 2}`} fill="none" stroke="var(--color-accent-2)" strokeDasharray="6 5" strokeOpacity="0.48" strokeWidth="1.5" />;
+            const subtitle = subtitlePosition({ x: from.x, y: from.y }, siblingIndex);
+            const to: CanvasNodeBox = { x: subtitle.x, y: subtitle.y, width: SUBTITLE_NODE_WIDTH, height: SUBTITLE_NODE_HEIGHT };
+            return <path key={`subtitle-${track.subtitle_id}`} d={dependencyPath(from, to, relationLane(siblingIndex))} fill="none" stroke="var(--color-accent-2)" markerEnd="url(#free-creation-subtitle-arrow)" strokeDasharray="6 5" strokeOpacity="0.48" strokeWidth="1.5" />;
           }) : null}
         </svg>
+
+        {showRelations ? groupFrames.map((frame) => (
+          <div
+            key={frame.groupId}
+            data-canvas-group={frame.groupId}
+            className="pointer-events-none absolute rounded-xl border border-dashed border-[var(--color-accent-2)] bg-[var(--color-accent-dim)]/20"
+            style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
+          >
+            <span className="absolute left-3 top-1.5 rounded bg-[var(--color-surface)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-accent-2)] shadow-sm">
+              {t("free_creation_group_label", { count: frame.labelIndex })}
+            </span>
+          </div>
+        )) : null}
 
         {visibleUploads.map((upload) => {
           const position = positions[upload.reference_id];
@@ -1289,6 +1513,7 @@ export function FreeCreationInfiniteCanvas({
         <div ref={contextMenuRef} tabIndex={-1} className="absolute z-[200] min-w-44 rounded-md border border-[var(--color-hairline)] p-1 shadow-2xl" style={{ left: Math.max(4, contextMenu.x), top: Math.max(4, contextMenu.y), background: "var(--color-surface-2)", opacity: 1 }} role="menu" aria-label={t("free_creation_more_actions")}>
           {activeContextCreation ? <>
             {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => contextSelectionIsHidden ? restoreNodes(contextSelectionIds) : hideNodes(contextSelectionIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]">{contextSelectionIsHidden ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}{t(contextSelectionIsHidden ? "free_creation_restore" : "free_creation_hide")}</button> : null}
+            {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => arrangeNodes("selected")} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><LayoutGrid className="h-3.5 w-3.5" aria-hidden />{t("free_creation_arrange_selected")}</button> : null}
             {canGroupSelection ? <button type="button" role="menuitem" onClick={groupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Group className="h-3.5 w-3.5" aria-hidden />{t("free_creation_group_selected")}</button> : null}
             {activeContextGroup ? <button type="button" role="menuitem" onClick={ungroupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Ungroup className="h-3.5 w-3.5" aria-hidden />{t("free_creation_ungroup")}</button> : null}
             {showBatchDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes(deletableCreationIds, selectedUploadIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete_selected", { count: contextSelectionIds.length })}</button> : null}
@@ -1303,6 +1528,7 @@ export function FreeCreationInfiniteCanvas({
           </> : null}
           {activeContextUpload ? <>
             {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => contextSelectionIsHidden ? restoreNodes(contextSelectionIds) : hideNodes(contextSelectionIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]">{contextSelectionIsHidden ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}{t(contextSelectionIsHidden ? "free_creation_restore" : "free_creation_hide")}</button> : null}
+            {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => arrangeNodes("selected")} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><LayoutGrid className="h-3.5 w-3.5" aria-hidden />{t("free_creation_arrange_selected")}</button> : null}
             {canGroupSelection ? <button type="button" role="menuitem" onClick={groupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Group className="h-3.5 w-3.5" aria-hidden />{t("free_creation_group_selected")}</button> : null}
             {activeContextGroup ? <button type="button" role="menuitem" onClick={ungroupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Ungroup className="h-3.5 w-3.5" aria-hidden />{t("free_creation_ungroup")}</button> : null}
             {showBatchDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes(deletableCreationIds, selectedUploadIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete_selected", { count: contextSelectionIds.length })}</button> : null}
