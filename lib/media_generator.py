@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from lib.reference_compression import CompressedRef, PayloadLimits, ReferenceSpec
 
 from lib.async_thread import run_noninterruptible_sync
-from lib.audio_utils import probe_reference_audio_total_seconds
+from lib.audio_utils import probe_reference_audio_total_seconds, probe_reference_video_durations
 from lib.db.base import DEFAULT_USER_ID
 from lib.gemini_shared import RateLimiter
 from lib.ledger import Ledger
@@ -937,11 +937,20 @@ class MediaGenerator:
         # （如 wan2.7）不必为每个请求多付一轮 ffprobe 子进程开销。
         reference_audio_total_seconds = (
             await probe_reference_audio_total_seconds(reference_audio_files)
-            if reference_audio_files
-            and video_caps is not None
-            and video_caps.max_reference_audio_total_seconds is not None
+            if reference_audio_files and video_caps.max_reference_audio_total_seconds is not None
             else None
         )
+        reference_video_durations = (
+            await probe_reference_video_durations(reference_videos)
+            if reference_videos
+            and (
+                video_caps.min_reference_video_seconds is not None
+                or video_caps.max_reference_video_seconds is not None
+                or video_caps.max_reference_video_total_seconds is not None
+            )
+            else None
+        )
+        reference_video_total_seconds = None if reference_video_durations is None else sum(reference_video_durations)
         gate_video_request(
             caps=video_caps,
             provider=self._video_backend.name,
@@ -950,6 +959,8 @@ class MediaGenerator:
             end_image=end_image,
             reference_images=reference_images,
             reference_videos=reference_videos,
+            reference_video_durations=reference_video_durations,
+            reference_video_total_seconds=reference_video_total_seconds,
             reference_audio_files=reference_audio_files,
             reference_audio_total_seconds=reference_audio_total_seconds,
         )

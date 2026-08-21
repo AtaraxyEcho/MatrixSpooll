@@ -2,11 +2,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
+  Captions,
   Clapperboard,
   Download,
   Eye,
   EyeOff,
   FileText,
+  Group,
+  Keyboard,
   Link2,
   Loader2,
   LocateFixed,
@@ -14,6 +17,7 @@ import {
   Pencil,
   RotateCcw,
   Trash2,
+  Ungroup,
   UploadCloud,
   ZoomIn,
   ZoomOut,
@@ -30,6 +34,7 @@ import type {
   FreeCreationArtifactMediaType,
   FreeCreationReferenceClaim,
   FreeCreationReferenceRole,
+  FreeSubtitleTrack,
   FreeCreationUpload,
 } from "@/types";
 import { freeCreationUploadRole } from "@/types";
@@ -44,6 +49,7 @@ interface FreeCreationInfiniteCanvasProps {
   projectName: string;
   creations: FreeCreation[];
   uploads: FreeCreationUpload[];
+  subtitleTracks?: FreeSubtitleTrack[];
   readOnly: boolean;
   actingId: string | null;
   onCancel: (creationId: string) => void;
@@ -52,9 +58,17 @@ interface FreeCreationInfiniteCanvasProps {
   onReference: (reference: FreeCreationReferenceClaim, label: string) => void;
   onReferences?: (references: Array<{ claim: FreeCreationReferenceClaim; label: string }>) => void;
   onPreview?: (target: FreeCreationPreviewTarget) => void;
-  onDetachUpload?: (referenceId: string) => void;
-  onDeleteUpload?: (referenceId: string) => void;
+  onEditSubtitle?: (creationId: string) => void;
+  onDeleteItems?: (selection: {
+    creationIds: readonly string[];
+    referenceIds: readonly string[];
+  }) => boolean | Promise<boolean>;
+  onDeleteCreations?: (creationIds: readonly string[]) => boolean | Promise<boolean>;
+  onRestoreCreations?: (creationIds: readonly string[]) => boolean | Promise<boolean>;
+  onDeleteUpload?: (referenceId: string) => boolean | Promise<boolean>;
+  onRestoreUpload?: (referenceId: string) => boolean | Promise<boolean>;
   onMerge?: (creationIds: string[]) => void;
+  onCompositeAudio?: (videoCreationId: string, audioCreationId: string) => void;
   onUploadFiles?: (files: readonly File[]) => Promise<FreeCreationUpload[]>;
 }
 
@@ -72,11 +86,15 @@ interface ContextMenuState {
 
 const NODE_WIDTH = 272;
 const NODE_HEIGHT = 322;
+const UPLOAD_NODE_HEIGHT = 238;
 const NODE_GAP_X = 72;
 const NODE_GAP_Y = 56;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 1.8;
 const PLACEMENT_PADDING = 24;
+const SUBTITLE_NODE_WIDTH = 236;
+const SUBTITLE_NODE_HEIGHT = 166;
+const SUBTITLE_NODE_GAP = 32;
 
 interface CanvasBounds {
   left: number;
@@ -85,10 +103,18 @@ interface CanvasBounds {
   bottom: number;
 }
 
+interface CanvasGroup {
+  group_id: string;
+  member_ids: string[];
+}
+
 interface CanvasHistoryState {
   positions: Record<string, Point>;
   hiddenCreationIds: string[];
   hiddenUploadIds: string[];
+  groups: CanvasGroup[];
+  restoreCreationIds?: string[];
+  restoreReferenceIds?: string[];
 }
 
 function creationMediaType(creation: FreeCreation): FreeCreationArtifactMediaType {
@@ -104,6 +130,13 @@ function initialPosition(index: number): Point {
   const column = index % 4;
   const row = Math.floor(index / 4);
   return { x: 96 + column * (NODE_WIDTH + NODE_GAP_X), y: 88 + row * (NODE_HEIGHT + NODE_GAP_Y) };
+}
+
+function subtitlePosition(parent: Point, index: number): Point {
+  return {
+    x: parent.x + NODE_WIDTH + NODE_GAP_X,
+    y: parent.y + index * (SUBTITLE_NODE_HEIGHT + SUBTITLE_NODE_GAP),
+  };
 }
 
 function overlapsPosition(candidate: Point, occupied: Point[]): boolean {
@@ -173,19 +206,47 @@ function isEditableTarget(target: EventTarget | null): boolean {
     || (target instanceof HTMLElement && target.isContentEditable);
 }
 
+function isCanvasNodeTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest("[data-canvas-node='true']"));
+}
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(
+    target.closest("button, a, input, textarea, select, video, audio, [role='button'], [data-canvas-node='true']"),
+  );
+}
+
+function isNodeControlTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest("button, a, input, textarea, select, video, audio"));
+}
+
+function uploadMediaUrl(projectName: string, upload: FreeCreationUpload): string {
+  return upload.url ?? API.getFileUrl(projectName, upload.path);
+}
+
 function canvasSnapshot(
   viewport: { x: number; y: number; scale: number },
   positions: Record<string, Point>,
   hiddenCreationIds: string[],
   hiddenReferenceIds: string[],
+  groups: CanvasGroup[],
+  showRelations: boolean,
 ): string {
-  return JSON.stringify({ viewport, positions, hidden_creation_ids: [...hiddenCreationIds].sort(), hidden_reference_ids: [...hiddenReferenceIds].sort() });
+  return JSON.stringify({
+    viewport,
+    positions,
+    hidden_creation_ids: [...hiddenCreationIds].sort(),
+    hidden_reference_ids: [...hiddenReferenceIds].sort(),
+    groups,
+    show_relations: showRelations,
+  });
 }
 
 export function FreeCreationInfiniteCanvas({
   projectName,
   creations,
   uploads,
+  subtitleTracks = [],
   readOnly,
   actingId,
   onCancel,
@@ -194,9 +255,14 @@ export function FreeCreationInfiniteCanvas({
   onReference,
   onReferences,
   onPreview,
-  onDetachUpload,
+  onEditSubtitle,
+  onDeleteItems,
+  onDeleteCreations,
+  onRestoreCreations,
   onDeleteUpload,
+  onRestoreUpload,
   onMerge,
+  onCompositeAudio,
   onUploadFiles,
 }: FreeCreationInfiniteCanvasProps) {
   const { t } = useTranslation("dashboard");
@@ -209,7 +275,11 @@ export function FreeCreationInfiniteCanvas({
   const lastSavedSnapshotRef = useRef("");
   const disposedRef = useRef(false);
   const viewportAnimationTimerRef = useRef<number | null>(null);
+  const nativeNodeDragRef = useRef(false);
   const historyRef = useRef<CanvasHistoryState[]>([]);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const workspaceOperationRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingWorkspaceOperationsRef = useRef(0);
   const [positions, setPositions] = useState<Record<string, Point>>({});
   const positionsRef = useRef<Record<string, Point>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -217,6 +287,7 @@ export function FreeCreationInfiniteCanvas({
   const hiddenIdsRef = useRef<string[]>([]);
   const [hiddenUploadIds, setHiddenUploadIds] = useState<string[]>([]);
   const hiddenUploadIdsRef = useRef<string[]>([]);
+  const groupsRef = useRef<CanvasGroup[]>([]);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
   const [spacePressed, setSpacePressed] = useState(false);
@@ -225,6 +296,9 @@ export function FreeCreationInfiniteCanvas({
   const [showHidden, setShowHidden] = useState(false);
   const [hydratedProject, setHydratedProject] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [groups, setGroups] = useState<CanvasGroup[]>([]);
+  const [showRelations, setShowRelations] = useState(true);
   const [viewportAnimating, setViewportAnimating] = useState(false);
   const canvasReady = hydratedProject === projectName;
 
@@ -240,18 +314,56 @@ export function FreeCreationInfiniteCanvas({
     hiddenUploadIdsRef.current = hiddenUploadIds;
   }, [hiddenUploadIds]);
 
-  const pushHistory = useCallback((state?: CanvasHistoryState) => {
+  useEffect(() => {
+    groupsRef.current = groups;
+  }, [groups]);
+
+  const pushHistory = useCallback((
+    state?: CanvasHistoryState,
+    restoreCreationIds: string[] = [],
+    restoreReferenceIds: string[] = [],
+  ) => {
     const snapshot = state ?? {
       positions: { ...positionsRef.current },
       hiddenCreationIds: [...hiddenIdsRef.current],
       hiddenUploadIds: [...hiddenUploadIdsRef.current],
+      groups: groupsRef.current.map((group) => ({ ...group, member_ids: [...group.member_ids] })),
+      restoreCreationIds,
+      restoreReferenceIds,
     };
     historyRef.current = [...historyRef.current.slice(-49), snapshot];
+    return snapshot;
+  }, []);
+
+  const enqueueWorkspaceOperation = useCallback((operation: () => Promise<void>) => {
+    pendingWorkspaceOperationsRef.current += 1;
+    const queued = workspaceOperationRef.current.then(operation);
+    workspaceOperationRef.current = queued.then(() => undefined, () => undefined);
+    void queued.then(
+      () => { pendingWorkspaceOperationsRef.current = Math.max(0, pendingWorkspaceOperationsRef.current - 1); },
+      () => { pendingWorkspaceOperationsRef.current = Math.max(0, pendingWorkspaceOperationsRef.current - 1); },
+    );
+    return queued;
   }, []);
 
   const orderedCreations = useMemo(
     () => [...creations].sort((left, right) => (left.updated_at ?? "").localeCompare(right.updated_at ?? "")),
     [creations],
+  );
+  const creationsById = useMemo(
+    () => new Map(creations.map((creation) => [creation.creation_id, creation])),
+    [creations],
+  );
+  const subtitleCountByCreation = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const track of subtitleTracks) {
+      counts.set(track.creation_id, (counts.get(track.creation_id) ?? 0) + 1);
+    }
+    return counts;
+  }, [subtitleTracks]);
+  const uploadsById = useMemo(
+    () => new Map(uploads.map((upload) => [upload.reference_id, upload])),
+    [uploads],
   );
   const hiddenSet = useMemo(() => new Set(hiddenIds), [hiddenIds]);
   const visibleCreations = useMemo(
@@ -271,6 +383,13 @@ export function FreeCreationInfiniteCanvas({
     [orderedCreations, uploads],
   );
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const groupByMember = useMemo(() => {
+    const result = new Map<string, CanvasGroup>();
+    for (const group of groups) {
+      for (const memberId of group.member_ids) result.set(memberId, group);
+    }
+    return result;
+  }, [groups]);
   const selectedMergeIds = useMemo(() => {
     if (selectedIds.length < 2) return [];
     const selectedCreations = selectedIds
@@ -309,22 +428,61 @@ export function FreeCreationInfiniteCanvas({
       (item) => ids.includes(item.creation_id) && item.status === "succeeded" && Boolean(item.media_path),
     );
     const requestIds = new Set(selectedCreations.map((item) => item.request_id).filter(Boolean));
+    const selectedVideoIds = selectedCreations
+      .filter((item) => creationMediaType(item) === "video")
+      .map((item) => item.creation_id);
     useFreeCreationStore.getState().setSelection(
       selectedCreations.map((item) => item.creation_id),
       requestIds.size === 1 ? [...requestIds][0] ?? null : null,
+      selectedVideoIds,
     );
   }, [creations]);
 
-  const undoCanvasChange = useCallback(() => {
-    const previous = historyRef.current.pop();
+  useEffect(() => {
+    const validIds = new Set(allNodes.map((node) => node.id));
+    const nextSelection = selectedIds.filter((id) => validIds.has(id));
+    const nextGroups = groups
+      .map((group) => ({ ...group, member_ids: group.member_ids.filter((id) => validIds.has(id)) }))
+      .filter((group) => group.member_ids.length >= 2);
+    const groupsChanged = nextGroups.length !== groups.length || nextGroups.some(
+      (group, index) => group.member_ids.length !== groups[index]?.member_ids.length,
+    );
+    if (nextSelection.length === selectedIds.length && !groupsChanged) return;
+    // Keep selection and persisted groups aligned when SSE, polling, or deletion removes a node.
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (nextSelection.length !== selectedIds.length) publishSelection(nextSelection);
+    if (groupsChanged) setGroups(nextGroups);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [allNodes, groups, publishSelection, selectedIds]);
+
+  const undoCanvasChange = useCallback(async () => {
+    if (pendingWorkspaceOperationsRef.current > 0) return;
+    const previous = historyRef.current[historyRef.current.length - 1];
     if (!previous) return;
-    setPositions(previous.positions);
-    setHiddenIds(previous.hiddenCreationIds);
-    setHiddenUploadIds(previous.hiddenUploadIds);
-    setShowHidden(false);
-    setContextMenu(null);
-    publishSelection([]);
-  }, [publishSelection]);
+    await enqueueWorkspaceOperation(async () => {
+      let succeeded = true;
+      if (previous.restoreCreationIds?.length) {
+        succeeded = Boolean(onRestoreCreations)
+          && (await onRestoreCreations?.(previous.restoreCreationIds)) !== false
+          && succeeded;
+      }
+      if (previous.restoreReferenceIds?.length) {
+        const results = onRestoreUpload
+          ? await Promise.all(previous.restoreReferenceIds.map((referenceId) => Promise.resolve(onRestoreUpload(referenceId))))
+          : [false];
+        succeeded = results.every((result) => result !== false) && succeeded;
+      }
+      if (!succeeded) return;
+      historyRef.current = historyRef.current.slice(0, -1);
+      setPositions(previous.positions);
+      setHiddenIds(previous.hiddenCreationIds);
+      setHiddenUploadIds(previous.hiddenUploadIds);
+      setGroups(previous.groups);
+      setShowHidden(false);
+      setContextMenu(null);
+      publishSelection([]);
+    });
+  }, [enqueueWorkspaceOperation, onRestoreCreations, onRestoreUpload, publishSelection]);
 
   useEffect(() => {
     disposedRef.current = false;
@@ -336,12 +494,14 @@ export function FreeCreationInfiniteCanvas({
     void API.getFreeCreationCanvas(projectName)
       .then(({ canvas }) => {
         if (controller.signal.aborted) return;
-        lastSavedSnapshotRef.current = canvasSnapshot(canvas.viewport, canvas.positions, canvas.hidden_creation_ids, canvas.hidden_reference_ids ?? []);
+        lastSavedSnapshotRef.current = canvasSnapshot(canvas.viewport, canvas.positions, canvas.hidden_creation_ids, canvas.hidden_reference_ids ?? [], canvas.groups ?? [], canvas.show_relations ?? true);
         setPositions(canvas.positions);
         setPan({ x: canvas.viewport.x, y: canvas.viewport.y });
         setScale(canvas.viewport.scale);
         setHiddenIds(canvas.hidden_creation_ids);
         setHiddenUploadIds(canvas.hidden_reference_ids ?? []);
+        setGroups(canvas.groups ?? []);
+        setShowRelations(canvas.show_relations ?? true);
         revisionRef.current = canvas.revision;
         hydratedRef.current = true;
         setHydratedProject(projectName);
@@ -409,7 +569,7 @@ export function FreeCreationInfiniteCanvas({
   useEffect(() => {
     if (!hydratedRef.current || readOnly) return;
     const viewport = { x: pan.x, y: pan.y, scale };
-    const snapshot = canvasSnapshot(viewport, positions, hiddenIds, hiddenUploadIds);
+    const snapshot = canvasSnapshot(viewport, positions, hiddenIds, hiddenUploadIds, groups, showRelations);
     if (snapshot === lastSavedSnapshotRef.current) return;
     if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
@@ -420,6 +580,8 @@ export function FreeCreationInfiniteCanvas({
             positions,
             hidden_creation_ids: hiddenIds,
             hidden_reference_ids: hiddenUploadIds,
+            groups,
+            show_relations: showRelations,
             expected_revision: revisionRef.current,
           });
           revisionRef.current = canvas.revision;
@@ -431,12 +593,14 @@ export function FreeCreationInfiniteCanvas({
             const { canvas } = await API.getFreeCreationCanvas(projectName);
             if (disposedRef.current) return;
             revisionRef.current = canvas.revision;
-            lastSavedSnapshotRef.current = canvasSnapshot(canvas.viewport, canvas.positions, canvas.hidden_creation_ids, canvas.hidden_reference_ids ?? []);
+            lastSavedSnapshotRef.current = canvasSnapshot(canvas.viewport, canvas.positions, canvas.hidden_creation_ids, canvas.hidden_reference_ids ?? [], canvas.groups ?? [], canvas.show_relations ?? true);
             setPositions(canvas.positions);
             setPan({ x: canvas.viewport.x, y: canvas.viewport.y });
             setScale(canvas.viewport.scale);
             setHiddenIds(canvas.hidden_creation_ids);
             setHiddenUploadIds(canvas.hidden_reference_ids ?? []);
+            setGroups(canvas.groups ?? []);
+            setShowRelations(canvas.show_relations ?? true);
           } catch {
             // The next local change retries synchronization.
           }
@@ -446,11 +610,13 @@ export function FreeCreationInfiniteCanvas({
     return () => {
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
     };
-  }, [hiddenIds, hiddenUploadIds, pan.x, pan.y, positions, projectName, readOnly, scale]);
+  }, [groups, hiddenIds, hiddenUploadIds, pan.x, pan.y, positions, projectName, readOnly, scale, showRelations]);
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
-      if (event.code === "Space" && !isEditableTarget(event.target)) {
+      if (event.defaultPrevented) return;
+      if (event.code === "Space" && !isEditableTarget(event.target) && !isInteractiveTarget(event.target)) {
+        event.preventDefault();
         setSpacePressed(true);
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a" && !isEditableTarget(event.target)) {
@@ -462,10 +628,11 @@ export function FreeCreationInfiniteCanvas({
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !event.shiftKey && !isEditableTarget(event.target)) {
         event.preventDefault();
-        if (!readOnly) undoCanvasChange();
+        if (!readOnly) void undoCanvasChange().catch(() => undefined);
       }
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !isEditableTarget(event.target)) {
         setContextMenu(null);
+        setShortcutsOpen(false);
         publishSelection([]);
       }
     };
@@ -474,18 +641,49 @@ export function FreeCreationInfiniteCanvas({
     };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
+    const clearSpace = () => setSpacePressed(false);
+    window.addEventListener("blur", clearSpace);
+    document.addEventListener("visibilitychange", clearSpace);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", clearSpace);
+      document.removeEventListener("visibilitychange", clearSpace);
     };
   }, [publishSelection, readOnly, undoCanvasChange, visibleCreations, visibleUploads]);
 
+  useEffect(() => {
+    if (!contextMenu) return;
+    const firstMenuItem = contextMenuRef.current?.querySelector<HTMLElement>("[role='menuitem']");
+    firstMenuItem?.focus();
+  }, [contextMenu]);
+
   useEffect(() => () => useFreeCreationStore.getState().clearSelection(), []);
+
+  const beginCanvasPan = (event: React.PointerEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    pointerRef.current = {
+      kind: "pan",
+      pointerId: event.pointerId,
+      start: { x: event.clientX, y: event.clientY },
+      origin: pan,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
 
   const beginNodeDrag = (event: React.PointerEvent<HTMLElement>, creationId: string) => {
     if (event.button !== 0 || readOnly) return;
+    if (spacePressed) {
+      beginCanvasPan(event);
+      return;
+    }
+    event.preventDefault();
     event.stopPropagation();
-    const nextSelection = selectedSet.has(creationId) ? selectedIds : [creationId];
+    const groupedIds = groupByMember.get(creationId)?.member_ids ?? [];
+    const nextSelection = selectedSet.has(creationId)
+      ? [...new Set([...selectedIds, ...groupedIds])]
+      : groupedIds.length ? groupedIds : [creationId];
     publishSelection(nextSelection);
     const origins = Object.fromEntries(nextSelection.map((id) => [id, positions[id] ?? { x: 0, y: 0 }]));
     pointerRef.current = {
@@ -499,8 +697,16 @@ export function FreeCreationInfiniteCanvas({
 
   const beginUploadDrag = (event: React.PointerEvent<HTMLElement>, referenceId: string) => {
     if (event.button !== 0 || readOnly) return;
+    if (spacePressed) {
+      beginCanvasPan(event);
+      return;
+    }
+    event.preventDefault();
     event.stopPropagation();
-    const nextSelection = selectedSet.has(referenceId) ? selectedIds : [referenceId];
+    const groupedIds = groupByMember.get(referenceId)?.member_ids ?? [];
+    const nextSelection = selectedSet.has(referenceId)
+      ? [...new Set([...selectedIds, ...groupedIds])]
+      : groupedIds.length ? groupedIds : [referenceId];
     publishSelection(nextSelection);
     pointerRef.current = {
       kind: "nodes",
@@ -512,9 +718,13 @@ export function FreeCreationInfiniteCanvas({
   };
 
   const handleSurfacePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button === 1) {
+      beginCanvasPan(event);
+      return;
+    }
     if ((event.target as HTMLElement).closest("[data-canvas-node='true'], button, a, input, video")) return;
     setContextMenu(null);
-    if (event.button === 1 || (event.button === 0 && spacePressed)) {
+    if (event.button === 0 && spacePressed) {
       event.preventDefault();
       pointerRef.current = {
         kind: "pan",
@@ -580,6 +790,7 @@ export function FreeCreationInfiniteCanvas({
           positions: { ...positionsRef.current, ...operation.origins },
           hiddenCreationIds: [...hiddenIdsRef.current],
           hiddenUploadIds: [...hiddenUploadIdsRef.current],
+          groups: groupsRef.current.map((group) => ({ ...group, member_ids: [...group.member_ids] })),
         });
       }
     }
@@ -608,6 +819,10 @@ export function FreeCreationInfiniteCanvas({
     event.preventDefault();
     event.stopPropagation();
     setDragActive(false);
+    if (nativeNodeDragRef.current || pointerRef.current?.kind === "nodes" || isCanvasNodeTarget(event.target)) {
+      nativeNodeDragRef.current = false;
+      return;
+    }
     if (readOnly || !onUploadFiles) return;
     const files = Array.from(event.dataTransfer.files);
     if (!files.length) return;
@@ -658,6 +873,48 @@ export function FreeCreationInfiniteCanvas({
   const restoreUpload = (referenceId: string) => restoreNodes([referenceId]);
   const restoreCreation = (creationId: string) => restoreNodes([creationId]);
 
+  const deleteNodes = (creationIds: string[], referenceIds: string[]) => {
+    const creationTargets = [...new Set(creationIds.filter((creationId) => {
+      const creation = creationsById.get(creationId);
+      return creation && !["queued", "running", "cancelling"].includes(creation.status);
+    }))];
+    const referenceTargets = [...new Set(referenceIds.filter((referenceId) => uploadsById.has(referenceId)))];
+    const canDeleteSelection = Boolean(onDeleteItems)
+      || ((creationTargets.length === 0 || Boolean(onDeleteCreations))
+        && (referenceTargets.length === 0 || Boolean(onDeleteUpload)));
+    if ((!creationTargets.length && !referenceTargets.length) || !canDeleteSelection) return;
+    const historyEntry = pushHistory(undefined, creationTargets, referenceTargets);
+    const targetSet = new Set([...creationTargets, ...referenceTargets]);
+    publishSelection(selectedIds.filter((id) => !targetSet.has(id)));
+    setHiddenIds((current) => current.filter((id) => !targetSet.has(id)));
+    setHiddenUploadIds((current) => current.filter((id) => !targetSet.has(id)));
+    setContextMenu(null);
+    void enqueueWorkspaceOperation(async () => {
+      if (onDeleteItems) {
+        const result = await onDeleteItems({
+          creationIds: creationTargets,
+          referenceIds: referenceTargets,
+        });
+        if (result === false) {
+          historyRef.current = historyRef.current.filter((entry) => entry !== historyEntry);
+        }
+        return;
+      }
+      const results: Array<boolean | undefined> = [];
+      if (creationTargets.length) results.push(await onDeleteCreations?.(creationTargets));
+      if (referenceTargets.length) {
+        results.push(...await Promise.all(
+          referenceTargets.map((referenceId) => Promise.resolve(onDeleteUpload?.(referenceId))),
+        ));
+      }
+      if (results.some((result) => result === false)) {
+        historyRef.current = historyRef.current.filter((entry) => entry !== historyEntry);
+      }
+    }).catch(() => {
+      historyRef.current = historyRef.current.filter((entry) => entry !== historyEntry);
+    });
+  };
+
   const activeContextCreation = contextMenu
     ? contextMenu.kind === "creation" ? creations.find((creation) => creation.creation_id === contextMenu.nodeId) ?? null : null
     : null;
@@ -668,7 +925,57 @@ export function FreeCreationInfiniteCanvas({
   const contextSelectionIsHidden = contextSelectionIds.length > 0 && contextSelectionIds.every(
     (id) => hiddenSet.has(id) || hiddenUploadSet.has(id),
   );
+  const selectedUploadIds = contextSelectionIds.filter((id) => uploadsById.has(id));
+  const selectedCreationIds = contextSelectionIds.filter((id) => creationsById.has(id));
+  const audioCompositePair = (() => {
+    if (selectedCreationIds.length !== 2 || contextSelectionIds.length !== 2) return null;
+    const selected = selectedCreationIds.map((id) => creationsById.get(id)).filter(Boolean) as FreeCreation[];
+    if (selected.length !== 2 || selected.some((item) => item.status !== "succeeded" || !item.media_path)) return null;
+    const video = selected.find((item) => creationMediaType(item) === "video");
+    const audio = selected.find((item) => creationMediaType(item) === "audio");
+    return video && audio ? { videoId: video.creation_id, audioId: audio.creation_id } : null;
+  })();
+  const deletableCreationIds = selectedCreationIds.filter((id) => {
+    const creation = creationsById.get(id);
+    return creation && !["queued", "running", "cancelling"].includes(creation.status);
+  });
+  const contextSelectionCanDelete = contextSelectionIds.length > 0
+    && selectedCreationIds.length + selectedUploadIds.length === contextSelectionIds.length
+    && deletableCreationIds.length === selectedCreationIds.length
+    && (Boolean(onDeleteItems)
+      || ((selectedCreationIds.length === 0 || Boolean(onDeleteCreations))
+        && (selectedUploadIds.length === 0 || Boolean(onDeleteUpload))));
+  const showBatchDelete = contextSelectionIds.length >= 2 && contextSelectionCanDelete;
+  const showSingleCreationDelete = Boolean(
+    contextSelectionIds.length < 2
+      && activeContextCreation
+      && deletableCreationIds.length === 1
+      && (onDeleteItems || onDeleteCreations),
+  );
+  const showSingleUploadDelete = Boolean(
+    contextSelectionIds.length < 2 && activeContextUpload && (onDeleteItems || onDeleteUpload),
+  );
+  const activeContextGroup = contextMenu ? groupByMember.get(contextMenu.nodeId) : undefined;
+  const canGroupSelection = contextSelectionIds.length >= 2
+    && contextSelectionIds.every((id) => !groupByMember.has(id));
   const hiddenCount = hiddenIds.length + hiddenUploadIds.length;
+
+  const groupSelection = () => {
+    if (!canGroupSelection) return;
+    pushHistory();
+    setGroups((current) => [...current, {
+      group_id: `g_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`,
+      member_ids: [...contextSelectionIds],
+    }]);
+    setContextMenu(null);
+  };
+
+  const ungroupSelection = () => {
+    if (!activeContextGroup) return;
+    pushHistory();
+    setGroups((current) => current.filter((group) => group.group_id !== activeContextGroup.group_id));
+    setContextMenu(null);
+  };
 
   const renderActions = (creation: FreeCreation) => {
     const mediaType = creationMediaType(creation);
@@ -680,7 +987,7 @@ export function FreeCreationInfiniteCanvas({
           </button>
         ) : null}
         {creation.status === "failed" || creation.status === "cancelled" ? (
-          <button type="button" onClick={() => onRetry(creation.creation_id)} disabled={actingId === creation.creation_id} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)] disabled:opacity-50" aria-label={t("free_creation_retry")} title={t("free_creation_retry")}>
+          <button type="button" onClick={() => onRetry(creation.creation_id)} disabled={actingId === creation.creation_id} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)] disabled:opacity-50" aria-label={t("free_creation_retry")} title={creation.model ? t("free_creation_retry_original_model", { model: creation.model }) : t("free_creation_retry")}>
             {actingId === creation.creation_id ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <RotateCcw className="h-4 w-4" aria-hidden />}
           </button>
         ) : null}
@@ -716,6 +1023,21 @@ export function FreeCreationInfiniteCanvas({
     onReference(claim, label);
   };
 
+  const handleNodeKeyboard = (
+    event: React.KeyboardEvent<HTMLElement>,
+    nodeId: string,
+    selected: boolean,
+  ) => {
+    if (event.currentTarget !== event.target || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.shiftKey) {
+      publishSelection(selected ? selectedIds.filter((id) => id !== nodeId) : [...selectedIds, nodeId]);
+    } else {
+      publishSelection([nodeId]);
+    }
+  };
+
   return (
     <div
       ref={surfaceRef}
@@ -726,11 +1048,13 @@ export function FreeCreationInfiniteCanvas({
       onPointerCancel={finishPointer}
       onDragEnter={(event) => {
         if (!event.dataTransfer.types.includes("Files")) return;
+        if (nativeNodeDragRef.current || pointerRef.current?.kind === "nodes" || isCanvasNodeTarget(event.target)) return;
         event.preventDefault();
         setDragActive(true);
       }}
       onDragOver={(event) => {
         if (!event.dataTransfer.types.includes("Files")) return;
+        if (nativeNodeDragRef.current || pointerRef.current?.kind === "nodes" || isCanvasNodeTarget(event.target)) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
       }}
@@ -761,25 +1085,80 @@ export function FreeCreationInfiniteCanvas({
         <span className="min-w-12 text-center text-[11px] text-[var(--color-text-muted)]">{Math.round(scale * 100)}%</span>
         <button type="button" onClick={() => setScale((value) => Math.max(MIN_SCALE, value - 0.1))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_zoom_out")} aria-label={t("free_creation_zoom_out")}><ZoomOut className="h-4 w-4" aria-hidden /></button>
         <button type="button" onClick={() => { setPan({ x: 0, y: 0 }); setScale(1); }} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_reset_canvas")} aria-label={t("free_creation_reset_canvas")}><LocateFixed className="h-4 w-4" aria-hidden /></button>
+        <button type="button" onClick={() => setShowRelations((value) => !value)} className={`focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${showRelations ? "bg-[var(--color-accent-dim)] text-[var(--color-accent-2)]" : ""}`} title={t(showRelations ? "free_creation_hide_relations" : "free_creation_show_relations")} aria-label={t(showRelations ? "free_creation_hide_relations" : "free_creation_show_relations")}><Link2 className="h-4 w-4" aria-hidden /></button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShortcutsOpen((value) => !value)}
+            className={`focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${shortcutsOpen ? "bg-[var(--color-accent-dim)] text-[var(--color-accent-2)]" : ""}`}
+            title={t("free_creation_shortcuts")}
+            aria-label={t("free_creation_shortcuts")}
+            aria-expanded={shortcutsOpen}
+            aria-haspopup="dialog"
+          >
+            <Keyboard className="h-4 w-4" aria-hidden />
+          </button>
+          {shortcutsOpen ? (
+            <div className="absolute right-0 top-[calc(100%+8px)] z-[210] w-[min(330px,calc(100vw-32px))] rounded-md border border-[var(--color-hairline-strong)] bg-[var(--color-surface-2)] p-3 shadow-2xl" role="dialog" aria-label={t("free_creation_shortcuts")}>
+              <h2 className="mb-2 text-xs font-semibold text-[var(--color-text)]">{t("free_creation_shortcuts")}</h2>
+              <div className="grid gap-1.5">
+                {[
+                  [t("free_creation_shortcut_undo"), "Ctrl/Cmd + Z"],
+                  [t("free_creation_shortcut_select_all"), "Ctrl/Cmd + A"],
+                  [t("free_creation_shortcut_reference"), t("free_creation_shortcut_combo_reference")],
+                  [t("free_creation_shortcut_preview"), t("free_creation_shortcut_combo_preview")],
+                  [t("free_creation_shortcut_move"), t("free_creation_shortcut_combo_move")],
+                  [t("free_creation_shortcut_pan"), t("free_creation_shortcut_combo_pan")],
+                  [t("free_creation_shortcut_zoom"), t("free_creation_shortcut_combo_zoom")],
+                ].map(([label, shortcut]) => (
+                  <div key={label} className="flex items-center justify-between gap-3 text-[11px] text-[var(--color-text-2)]">
+                    <span>{label}</span>
+                    <kbd className="shrink-0 rounded border border-[var(--color-hairline-strong)] bg-[var(--color-surface)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-muted)]">{shortcut}</kbd>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
         {hiddenCount ? <button type="button" onClick={() => setShowHidden((value) => !value)} className={`focus-ring grid h-8 min-w-8 place-items-center rounded px-1.5 ${showHidden ? "bg-[var(--color-accent-dim)] text-[var(--color-accent-2)]" : "text-[var(--color-text-muted)]"}`} title={t("free_creation_show_hidden", { count: hiddenCount })} aria-label={t("free_creation_show_hidden", { count: hiddenCount })}>{showHidden ? <Eye className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}</button> : null}
         {hiddenCount && !readOnly ? <button type="button" onClick={() => restoreNodes([...hiddenIds, ...hiddenUploadIds])} className="focus-ring grid h-8 min-w-8 place-items-center rounded px-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_restore_all_hidden", { count: hiddenCount })} aria-label={t("free_creation_restore_all_hidden", { count: hiddenCount })}><RotateCcw className="h-4 w-4" aria-hidden /></button> : null}
       </div>
 
       <div className="absolute left-0 top-0" style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${scale})`, transformOrigin: "0 0", transition: viewportAnimating ? "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)" : undefined }}>
         <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1" aria-hidden>
-          {visibleCreations.flatMap((creation) => {
+          {showRelations ? visibleCreations.flatMap((creation) => {
             const targets = [
               ...(creation.parent_creation_id ? [creation.parent_creation_id] : []),
-              ...(creation.reference_claims ?? []).flatMap((claim) => claim.type === "creation" ? [claim.creation_id] : []),
+              ...(creation.reference_claims ?? []).map((claim) => claim.type === "creation" ? claim.creation_id : claim.reference_id),
             ];
             const to = positions[creation.creation_id];
             if (!to) return [];
             return [...new Set(targets)].flatMap((sourceId) => {
               const from = positions[sourceId];
-              if (!from || hiddenSet.has(sourceId)) return [];
-              return <path key={`${sourceId}-${creation.creation_id}`} d={`M ${from.x + NODE_WIDTH} ${from.y + NODE_HEIGHT / 2} C ${from.x + NODE_WIDTH + 48} ${from.y + NODE_HEIGHT / 2}, ${to.x - 48} ${to.y + NODE_HEIGHT / 2}, ${to.x} ${to.y + NODE_HEIGHT / 2}`} fill="none" stroke="var(--color-accent)" strokeOpacity="0.42" strokeWidth="2" />;
+              if (!from || hiddenSet.has(sourceId) || hiddenUploadSet.has(sourceId)) return [];
+              const sourceHeight = uploadsById.has(sourceId) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
+              return <path key={`${sourceId}-${creation.creation_id}`} d={`M ${from.x + NODE_WIDTH} ${from.y + sourceHeight / 2} C ${from.x + NODE_WIDTH + 48} ${from.y + sourceHeight / 2}, ${to.x - 48} ${to.y + NODE_HEIGHT / 2}, ${to.x} ${to.y + NODE_HEIGHT / 2}`} fill="none" stroke="var(--color-accent)" strokeOpacity="0.42" strokeWidth="2" />;
             });
-          })}
+          }) : null}
+          {showRelations ? groups.flatMap((group) => {
+            const [anchorId, ...memberIds] = group.member_ids;
+            const anchor = positions[anchorId];
+            if (!anchor || hiddenSet.has(anchorId) || hiddenUploadSet.has(anchorId)) return [];
+            const anchorHeight = uploadsById.has(anchorId) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
+            return memberIds.flatMap((memberId) => {
+              const member = positions[memberId];
+              if (!member || hiddenSet.has(memberId) || hiddenUploadSet.has(memberId)) return [];
+              const memberHeight = uploadsById.has(memberId) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
+              return <path key={`${group.group_id}-${memberId}`} d={`M ${anchor.x + NODE_WIDTH / 2} ${anchor.y + anchorHeight / 2} L ${member.x + NODE_WIDTH / 2} ${member.y + memberHeight / 2}`} fill="none" stroke="var(--color-text-muted)" strokeDasharray="4 6" strokeOpacity="0.5" strokeWidth="1.5" />;
+            });
+          }) : null}
+          {showRelations ? subtitleTracks.map((track, index) => {
+            const from = positions[track.creation_id];
+            if (!from || hiddenSet.has(track.creation_id)) return null;
+            const siblingIndex = subtitleTracks.slice(0, index).filter((item) => item.creation_id === track.creation_id).length;
+            const to = subtitlePosition(from, siblingIndex);
+            return <path key={`subtitle-${track.subtitle_id}`} d={`M ${from.x + NODE_WIDTH} ${from.y + NODE_HEIGHT / 2} C ${from.x + NODE_WIDTH + 48} ${from.y + NODE_HEIGHT / 2}, ${to.x - 48} ${to.y + SUBTITLE_NODE_HEIGHT / 2}, ${to.x} ${to.y + SUBTITLE_NODE_HEIGHT / 2}`} fill="none" stroke="var(--color-accent-2)" strokeDasharray="6 5" strokeOpacity="0.48" strokeWidth="1.5" />;
+          }) : null}
         </svg>
 
         {visibleUploads.map((upload) => {
@@ -793,15 +1172,21 @@ export function FreeCreationInfiniteCanvas({
             role: freeCreationUploadRole(upload.media_type),
           };
           return (
-              <article key={upload.reference_id} ref={(node) => { if (node) nodeRefs.current.set(upload.reference_id, node); else nodeRefs.current.delete(upload.reference_id); }} data-canvas-node="true" data-canvas-id={upload.reference_id} className={`absolute overflow-hidden rounded-md border-2 bg-[var(--color-surface-2)] shadow-[0_16px_30px_-18px_oklch(0_0_0_/_0.95)] ${selected ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent-dim)]" : "border-[var(--color-hairline-strong)]"} ${hidden ? "opacity-55" : ""}`} style={{ left: position.x, top: position.y, width: NODE_WIDTH, height: 238 }} onPointerDown={(event) => { if (event.button === 0 && (event.ctrlKey || event.metaKey)) { event.preventDefault(); return; } if (event.button === 0 && !event.shiftKey) publishSelection([upload.reference_id]); else if (event.button === 0 && event.shiftKey) publishSelection(selected ? selectedIds.filter((id) => id !== upload.reference_id) : [...selectedIds, upload.reference_id]); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onPreview?.({ kind: "upload", upload }); }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (readOnly) return; if (!selectedSet.has(upload.reference_id)) publishSelection([upload.reference_id]); const rect = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "upload", nodeId: upload.reference_id, x: Math.min(event.clientX - (rect?.left ?? 0), (rect?.width ?? 260) - 190), y: Math.min(event.clientY - (rect?.top ?? 0), (rect?.height ?? 200) - 150) }); }}>
+               <div role="button" aria-pressed={selected} key={upload.reference_id} ref={(node) => { if (node) nodeRefs.current.set(upload.reference_id, node); else nodeRefs.current.delete(upload.reference_id); }} draggable={false} onDragStart={(event) => { event.preventDefault(); event.stopPropagation(); nativeNodeDragRef.current = true; }} onDragEnd={() => { nativeNodeDragRef.current = false; }} data-canvas-node="true" data-canvas-id={upload.reference_id} tabIndex={0} aria-label={selected ? [upload.original_filename, t("free_creation_selected")].join(", ") : upload.original_filename} onKeyDown={(event) => handleNodeKeyboard(event, upload.reference_id, selected)} className={`absolute overflow-hidden rounded-md border-2 bg-[var(--color-surface-2)] shadow-[0_16px_30px_-18px_oklch(0_0_0_/_0.95)] ${selected ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent-dim)]" : "border-[var(--color-hairline-strong)]"} ${hidden ? "opacity-55" : ""}`} style={{ left: position.x, top: position.y, width: NODE_WIDTH, height: UPLOAD_NODE_HEIGHT }} onPointerDown={(event) => { if (event.button === 0 && spacePressed) { beginCanvasPan(event); return; } if (event.button === 0 && (event.ctrlKey || event.metaKey)) { event.preventDefault(); return; } if (event.button === 0 && !event.shiftKey && !isNodeControlTarget(event.target)) { beginUploadDrag(event, upload.reference_id); return; } if (event.button === 0 && !event.shiftKey) publishSelection([upload.reference_id]); else if (event.button === 0 && event.shiftKey) publishSelection(selected ? selectedIds.filter((id) => id !== upload.reference_id) : [...selectedIds, upload.reference_id]); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onPreview?.({ kind: "upload", upload }); }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (readOnly) return; if (!selectedSet.has(upload.reference_id)) publishSelection([upload.reference_id]); const rect = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "upload", nodeId: upload.reference_id, x: Math.min(event.clientX - (rect?.left ?? 0), (rect?.width ?? 260) - 190), y: Math.min(event.clientY - (rect?.top ?? 0), (rect?.height ?? 200) - 150) }); }}>
               <div className="flex h-10 items-center justify-between border-b border-[var(--color-hairline)] px-3 text-xs font-medium text-[var(--color-text-2)]" onPointerDown={(event) => beginUploadDrag(event, upload.reference_id)}><span className="truncate">{upload.original_filename}</span><span className="text-[10px] text-[var(--color-text-muted)]">{t("free_creation_reference")}</span></div>
-              <div role={upload.media_type === "audio" ? undefined : "button"} tabIndex={upload.media_type === "audio" ? undefined : 0} className="block h-[154px] w-full bg-black" onClick={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} onKeyDown={upload.media_type === "audio" ? undefined : (event) => handleReferenceShortcut(event, claim, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
-                {upload.media_type === "image" ? <img src={API.getFileUrl(projectName, upload.path)} alt={upload.original_filename} className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
-                  <video src={API.getFileUrl(projectName, upload.path)} className="h-full w-full object-contain" aria-label={upload.original_filename} />
-                ) : upload.media_type === "audio" ? <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={API.getFileUrl(projectName, upload.path)} controls className="w-full" aria-label={upload.original_filename} /></div> : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="max-w-[90%] truncate text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto mt-16 h-5 w-5 -translate-y-1/2 text-[var(--color-text-muted)]" aria-hidden />}
-              </div>
+              {upload.media_type === "audio" ? (
+                <div className="block h-[154px] w-full bg-black">
+                  <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={uploadMediaUrl(projectName, upload)} controls className="w-full" aria-label={upload.original_filename} /></div>
+                </div>
+              ) : (
+                <div role="button" tabIndex={0} className="block h-[154px] w-full bg-black" onClick={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} onKeyDown={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
+                  {upload.media_type === "image" ? <img src={uploadMediaUrl(projectName, upload)} alt={upload.original_filename} className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
+                    <video src={uploadMediaUrl(projectName, upload)} className="h-full w-full object-contain" aria-label={upload.original_filename} />
+                  ) : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="max-w-[90%] truncate text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto mt-16 h-5 w-5 -translate-y-1/2 text-[var(--color-text-muted)]" aria-hidden />}
+                </div>
+              )}
               <div className="flex h-11 items-center justify-end px-2"><button type="button" onClick={(event) => { event.stopPropagation(); onReference(claim, upload.original_filename); }} className="focus-ring inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button></div>
-            </article>
+            </div>
           );
         })}
 
@@ -814,16 +1199,32 @@ export function FreeCreationInfiniteCanvas({
           const referenceRole = creationReferenceRole(creation);
           const statusLabel = t(`free_creation_status_${creation.status}`);
           return (
-            <article
+            <div
               key={creation.creation_id}
               ref={(node) => { if (node) nodeRefs.current.set(creation.creation_id, node); else nodeRefs.current.delete(creation.creation_id); }}
               data-canvas-node="true"
+              draggable={false}
+              onDragStart={(event) => { event.preventDefault(); event.stopPropagation(); nativeNodeDragRef.current = true; }}
+              onDragEnd={() => { nativeNodeDragRef.current = false; }}
               data-canvas-id={creation.creation_id}
+              role="button"
+              tabIndex={0}
+              aria-pressed={selected}
+              aria-label={selected ? `${creation.prompt || t("free_creation")}, ${t("free_creation_selected")}` : creation.prompt || t("free_creation")}
+              onKeyDown={(event) => handleNodeKeyboard(event, creation.creation_id, selected)}
               className={`absolute overflow-hidden rounded-md border-2 bg-[var(--color-surface-2)] shadow-[0_16px_30px_-18px_oklch(0_0_0_/_0.95)] ${selected ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent-dim)]" : "border-[var(--color-hairline-strong)]"} ${hidden ? "opacity-55" : ""}`}
               style={{ left: position.x, top: position.y, width: NODE_WIDTH, height: NODE_HEIGHT }}
               onPointerDown={(event) => {
+                if (event.button === 0 && spacePressed) {
+                  beginCanvasPan(event);
+                  return;
+                }
                 if (event.button === 0 && (event.ctrlKey || event.metaKey)) {
                   event.preventDefault();
+                  return;
+                }
+                if (event.button === 0 && !event.shiftKey && !isNodeControlTarget(event.target)) {
+                  beginNodeDrag(event, creation.creation_id);
                   return;
                 }
                 if (event.button === 0 && !event.shiftKey) publishSelection([creation.creation_id]);
@@ -834,18 +1235,50 @@ export function FreeCreationInfiniteCanvas({
             >
               <div className="flex h-10 items-center justify-between gap-2 border-b border-[var(--color-hairline)] px-3" onPointerDown={(event) => beginNodeDrag(event, creation.creation_id)}>
                 <span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] font-semibold text-[var(--color-text)]"><span className="truncate">{t(`free_creation_${creation.output_type}`)}</span>{creation.sequence_index !== null && creation.sequence_index !== undefined ? <span className="shrink-0 rounded bg-[var(--color-accent-dim)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--color-accent-2)]">{t("free_creation_storyboard_shot_badge", { index: creation.sequence_index + 1 })}</span> : null}</span>
-                <div className="flex items-center gap-1"><span className="text-[10px] text-[var(--color-text-muted)]">{statusLabel}</span>{!readOnly ? <button type="button" className="focus-ring grid h-7 w-7 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)]" onClick={(event) => { event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); const surface = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "creation", nodeId: creation.creation_id, x: rect.right - (surface?.left ?? 0), y: rect.bottom - (surface?.top ?? 0) }); }} aria-label={t("free_creation_more_actions")} title={t("free_creation_more_actions")}><MoreHorizontal className="h-4 w-4" aria-hidden /></button> : null}</div>
+                <div className="flex items-center gap-1"><span className="text-[10px] text-[var(--color-text-muted)]">{statusLabel}</span>{!readOnly ? <button type="button" className="focus-ring grid h-7 w-7 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)]" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); publishSelection([creation.creation_id]); const rect = event.currentTarget.getBoundingClientRect(); const surface = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "creation", nodeId: creation.creation_id, x: rect.right - (surface?.left ?? 0), y: rect.bottom - (surface?.top ?? 0) }); }} aria-label={t("free_creation_more_actions")} title={t("free_creation_more_actions")}><MoreHorizontal className="h-4 w-4" aria-hidden /></button> : null}</div>
               </div>
               <div role="button" tabIndex={creation.status === "succeeded" && creation.media_path ? 0 : -1} className="h-[174px] bg-black" onClick={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation")); }} onKeyDown={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation")); }} title={creation.status === "succeeded" && creation.media_path ? t("free_creation_reference_shortcut") : undefined}>
                 {creation.status === "succeeded" && creation.media_path ? mediaType === "video" ? (
                   <video className="h-full w-full object-contain" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} aria-label={creation.prompt ?? creation.creation_id} controls />
                 ) : mediaType === "audio" ? (
                   <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio className="w-full" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} aria-label={creation.prompt ?? creation.creation_id} controls /></div>
-                ) : <img className="h-full w-full object-contain" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} alt={creation.prompt ?? creation.creation_id} /> : <div className="flex h-full items-center justify-center px-3 text-center text-xs text-[var(--color-text-muted)]">{creation.status === "failed" ? t("free_creation_failed") : statusLabel}</div>}
+                ) : <img className="h-full w-full object-contain" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} alt={creation.prompt ?? creation.creation_id} /> : <div className="flex h-full items-center justify-center px-3 text-center text-xs leading-5 text-[var(--color-text-muted)]"><span className="line-clamp-5">{creation.status === "failed" ? creation.error || t("free_creation_failed") : statusLabel}</span></div>}
               </div>
-              <div className="h-[66px] px-3 py-2"><p className="line-clamp-2 text-xs leading-5 text-[var(--color-text-2)]">{creation.prompt || t("free_creation_prompt")}</p></div>
+              <div className="h-[66px] px-3 py-2"><p className="line-clamp-2 text-xs leading-5 text-[var(--color-text-2)]">{creation.prompt || t("free_creation_prompt")}</p>{subtitleCountByCreation.get(creation.creation_id) ? <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-[var(--color-accent-2)]"><Captions className="h-3 w-3" aria-hidden />{t("free_creation_subtitle_badge", { count: subtitleCountByCreation.get(creation.creation_id) })}</span> : null}</div>
               {!readOnly ? <div className="flex h-10 items-center justify-end gap-0.5 border-t border-[var(--color-hairline)] px-2">{renderActions(creation)}</div> : null}
-            </article>
+            </div>
+          );
+        })}
+
+        {subtitleTracks.map((track, index) => {
+          const parent = positions[track.creation_id];
+          if (!parent || hiddenSet.has(track.creation_id)) return null;
+          const siblingIndex = subtitleTracks.slice(0, index).filter((item) => item.creation_id === track.creation_id).length;
+          const position = subtitlePosition(parent, siblingIndex);
+          const cuePreview = track.cues.slice(0, 3);
+          return (
+            <button
+              type="button"
+              key={`subtitle-node-${track.subtitle_id}`}
+              data-canvas-node="true"
+              className="absolute overflow-hidden rounded-md border border-dashed border-[var(--color-accent-2)]/70 bg-[var(--color-surface-2)] text-left shadow-[0_16px_30px_-18px_oklch(0_0_0_/_0.95)]"
+              style={{ left: position.x, top: position.y, width: SUBTITLE_NODE_WIDTH, minHeight: SUBTITLE_NODE_HEIGHT }}
+              onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
+              onClick={() => onEditSubtitle?.(track.creation_id)}
+              aria-label={t("free_creation_subtitle_title")}
+            >
+              <div className="flex h-10 items-center gap-2 border-b border-[var(--color-hairline)] px-3 text-xs font-semibold text-[var(--color-text)]">
+                <Captions className="h-3.5 w-3.5 text-[var(--color-accent-2)]" aria-hidden />
+                <span className="min-w-0 flex-1 truncate">{t("free_creation_subtitle_title")}</span>
+                <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{t("free_creation_subtitle_badge", { count: track.cues.length })}</span>
+              </div>
+              <div className="space-y-1 px-3 py-2">
+                {cuePreview.length ? cuePreview.map((cue, cueIndex) => (
+                  <p key={`${track.subtitle_id}-${cueIndex}`} className="line-clamp-2 text-[11px] leading-4 text-[var(--color-text-2)]">{cue.text}</p>
+                )) : <p className="text-[11px] text-[var(--color-text-muted)]">{t("free_creation_subtitle_action")}</p>}
+              </div>
+              <div className="border-t border-[var(--color-hairline)] px-3 py-2 text-[10px] text-[var(--color-text-muted)]">{t("free_creation_subtitle_action")}</div>
+            </button>
           );
         })}
       </div>
@@ -853,24 +1286,31 @@ export function FreeCreationInfiniteCanvas({
       {marquee ? <div className="pointer-events-none fixed z-30 border border-[var(--color-accent)] bg-[var(--color-accent-dim)]" style={{ left: Math.min(marquee.start.x, marquee.current.x), top: Math.min(marquee.start.y, marquee.current.y), width: Math.abs(marquee.current.x - marquee.start.x), height: Math.abs(marquee.current.y - marquee.start.y) }} /> : null}
 
       {(activeContextCreation || activeContextUpload) && contextMenu ? (
-        <div className="absolute z-[200] min-w-44 rounded-md border border-[var(--color-hairline)] p-1 shadow-2xl" style={{ left: Math.max(4, contextMenu.x), top: Math.max(4, contextMenu.y), background: "var(--color-surface-2)", opacity: 1 }} role="menu">
+        <div ref={contextMenuRef} tabIndex={-1} className="absolute z-[200] min-w-44 rounded-md border border-[var(--color-hairline)] p-1 shadow-2xl" style={{ left: Math.max(4, contextMenu.x), top: Math.max(4, contextMenu.y), background: "var(--color-surface-2)", opacity: 1 }} role="menu" aria-label={t("free_creation_more_actions")}>
           {activeContextCreation ? <>
-            {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => contextSelectionIsHidden ? restoreNodes(contextSelectionIds) : hideNodes(contextSelectionIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]">{contextSelectionIsHidden ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}{t(contextSelectionIsHidden ? "free_creation_restore_selected" : "free_creation_hide_selected", { count: contextSelectionIds.length })}</button> : null}
+            {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => contextSelectionIsHidden ? restoreNodes(contextSelectionIds) : hideNodes(contextSelectionIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]">{contextSelectionIsHidden ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}{t(contextSelectionIsHidden ? "free_creation_restore" : "free_creation_hide")}</button> : null}
+            {canGroupSelection ? <button type="button" role="menuitem" onClick={groupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Group className="h-3.5 w-3.5" aria-hidden />{t("free_creation_group_selected")}</button> : null}
+            {activeContextGroup ? <button type="button" role="menuitem" onClick={ungroupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Ungroup className="h-3.5 w-3.5" aria-hidden />{t("free_creation_ungroup")}</button> : null}
+            {showBatchDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes(deletableCreationIds, selectedUploadIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete_selected", { count: contextSelectionIds.length })}</button> : null}
             {selectedReferences.length >= 2 && selectedSet.has(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => { if (onReferences) onReferences(selectedReferences); else selectedReferences.forEach(({ claim, label }) => onReference(claim, label)); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_selected_references", { count: selectedReferences.length })}</button> : null}
             {onMerge && selectedMergeIds.length >= 2 && selectedMergeIds.includes(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => { onMerge(selectedMergeIds); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Clapperboard className="h-3.5 w-3.5" aria-hidden />{t("free_creation_merge_selected")}</button> : null}
+            {onCompositeAudio && audioCompositePair ? <button type="button" role="menuitem" onClick={() => { onCompositeAudio(audioCompositePair.videoId, audioCompositePair.audioId); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><AudioLines className="h-3.5 w-3.5" aria-hidden />{t("free_creation_composite_audio")}</button> : null}
+            {showSingleCreationDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes([activeContextCreation.creation_id], [])} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path && creationMediaType(activeContextCreation) === "image" ? <button type="button" role="menuitem" onClick={() => { onEdit(activeContextCreation.creation_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Pencil className="h-3.5 w-3.5" aria-hidden />{t("free_creation_use_as_parent")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onPreview?.({ kind: "creation", creation: activeContextCreation }); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_preview")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onReference({ type: "creation", creation_id: activeContextCreation.creation_id, version: activeContextCreation.version, role: creationReferenceRole(activeContextCreation) }, activeContextCreation.prompt || t("free_creation")); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button> : null}
-            {hiddenSet.has(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => restoreCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore_to_canvas")}</button> : <button type="button" role="menuitem" onClick={() => hideCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide_from_canvas")}</button>}
+            {contextSelectionIds.length < 2 ? (hiddenSet.has(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => restoreCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore")}</button> : <button type="button" role="menuitem" onClick={() => hideCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide")}</button>) : null}
           </> : null}
           {activeContextUpload ? <>
-            {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => contextSelectionIsHidden ? restoreNodes(contextSelectionIds) : hideNodes(contextSelectionIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]">{contextSelectionIsHidden ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}{t(contextSelectionIsHidden ? "free_creation_restore_selected" : "free_creation_hide_selected", { count: contextSelectionIds.length })}</button> : null}
+            {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => contextSelectionIsHidden ? restoreNodes(contextSelectionIds) : hideNodes(contextSelectionIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]">{contextSelectionIsHidden ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}{t(contextSelectionIsHidden ? "free_creation_restore" : "free_creation_hide")}</button> : null}
+            {canGroupSelection ? <button type="button" role="menuitem" onClick={groupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Group className="h-3.5 w-3.5" aria-hidden />{t("free_creation_group_selected")}</button> : null}
+            {activeContextGroup ? <button type="button" role="menuitem" onClick={ungroupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Ungroup className="h-3.5 w-3.5" aria-hidden />{t("free_creation_ungroup")}</button> : null}
+            {showBatchDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes(deletableCreationIds, selectedUploadIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete_selected", { count: contextSelectionIds.length })}</button> : null}
             {selectedReferences.length >= 2 && selectedSet.has(activeContextUpload.reference_id) ? <button type="button" role="menuitem" onClick={() => { if (onReferences) onReferences(selectedReferences); else selectedReferences.forEach(({ claim, label }) => onReference(claim, label)); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_selected_references", { count: selectedReferences.length })}</button> : null}
             <button type="button" role="menuitem" onClick={() => { onPreview?.({ kind: "upload", upload: activeContextUpload }); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_preview")}</button>
             <button type="button" role="menuitem" onClick={() => { onReference({ type: "upload", reference_id: activeContextUpload.reference_id, role: freeCreationUploadRole(activeContextUpload.media_type) }, activeContextUpload.original_filename); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button>
-            {hiddenUploadSet.has(activeContextUpload.reference_id) ? <button type="button" role="menuitem" onClick={() => restoreUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore_to_canvas")}</button> : <button type="button" role="menuitem" onClick={() => hideUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide_from_canvas")}</button>}
-            {onDetachUpload ? <button type="button" role="menuitem" onClick={() => { onDetachUpload(activeContextUpload.reference_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_detach_reference")}</button> : null}
-            {onDeleteUpload ? <button type="button" role="menuitem" onClick={() => { onDeleteUpload(activeContextUpload.reference_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_remove_reference")}</button> : null}
+            {contextSelectionIds.length < 2 && (hiddenUploadSet.has(activeContextUpload.reference_id) ? <button type="button" role="menuitem" onClick={() => restoreUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore")}</button> : <button type="button" role="menuitem" onClick={() => hideUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide")}</button>)}
+            {showSingleUploadDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes([], [activeContextUpload.reference_id])} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete")}</button> : null}
           </> : null}
         </div>
       ) : null}

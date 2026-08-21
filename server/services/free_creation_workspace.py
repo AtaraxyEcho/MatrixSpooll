@@ -176,7 +176,11 @@ def derive_storyboard_plan_status(
             statuses.append("missing")
             continue
         creation = load_creation(project_path, creation_id)
-        statuses.append(str(creation.get("status") or "queued") if isinstance(creation, dict) else "missing")
+        statuses.append(
+            str(creation.get("status") or "queued")
+            if isinstance(creation, dict) and not creation.get("deleted_at")
+            else "missing"
+        )
     if any(status in {"queued", "running", "cancelling"} for status in statuses):
         return "generating"
     if all(status == "succeeded" for status in statuses):
@@ -281,6 +285,37 @@ def list_subtitle_tracks(project_path: Path, creation_id: str | None = None) -> 
     return tracks
 
 
+def _format_webvtt_timestamp(seconds: float) -> str:
+    milliseconds = max(0, round(seconds * 1000))
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    whole_seconds, millis = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}.{millis:03d}"
+
+
+def subtitle_track_webvtt(track: dict[str, Any]) -> str:
+    """Serialize one free-creation subtitle track for download and editing tools."""
+
+    lines = ["WEBVTT", ""]
+    for index, cue in enumerate(track.get("cues", []), start=1):
+        if not isinstance(cue, dict):
+            continue
+        start = cue.get("start_seconds")
+        end = cue.get("end_seconds")
+        text = cue.get("text")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or not isinstance(text, str):
+            continue
+        lines.extend(
+            [
+                str(index),
+                f"{_format_webvtt_timestamp(float(start))} --> {_format_webvtt_timestamp(float(end))}",
+                text.strip(),
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def load_subtitle_track(project_path: Path, subtitle_id: str) -> dict[str, Any] | None:
     track = load_json_or_none(_subtitle_path(project_path, subtitle_id))
     return track if isinstance(track, dict) and not track.get("deleted_at") else None
@@ -326,6 +361,8 @@ def default_canvas_state() -> dict[str, Any]:
         "positions": {},
         "hidden_creation_ids": [],
         "hidden_reference_ids": [],
+        "groups": [],
+        "show_relations": True,
         "updated_at": None,
     }
 
@@ -344,6 +381,8 @@ def save_canvas_state(
     positions: dict[str, dict[str, float]],
     hidden_creation_ids: list[str],
     hidden_reference_ids: list[str] | None = None,
+    groups: list[dict[str, Any]] | None = None,
+    show_relations: bool = True,
     expected_revision: int | None,
 ) -> dict[str, Any]:
     with project_metadata_lock(project_path):
@@ -357,6 +396,8 @@ def save_canvas_state(
             "positions": positions,
             "hidden_creation_ids": sorted(set(hidden_creation_ids)),
             "hidden_reference_ids": sorted(set(hidden_reference_ids or [])),
+            "groups": groups or [],
+            "show_relations": show_relations,
             "updated_at": _now(),
         }
         path = _canvas_state_path(project_path)
@@ -456,7 +497,7 @@ def read_reference_preview(project_path: Path, reference_id: str) -> dict[str, A
     record = load_json_or_none(record_path)
     if not isinstance(record, dict) or not isinstance(record.get("path"), str):
         raise FileNotFoundError(reference_id)
-    if record.get("detached_at"):
+    if record.get("detached_at") or record.get("deleted_at"):
         raise FileNotFoundError(reference_id)
     path = safe_join(project_path, str(record["path"]))
     if not path.is_file():
@@ -487,44 +528,40 @@ def list_reference_uploads(project_path: Path) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for path in sorted(root.glob("r_*.json"), key=lambda item: item.stat().st_mtime_ns, reverse=True):
         record = load_json_or_none(path)
-        if isinstance(record, dict) and isinstance(record.get("reference_id"), str) and not record.get("detached_at"):
+        if (
+            isinstance(record, dict)
+            and isinstance(record.get("reference_id"), str)
+            and not record.get("detached_at")
+            and not record.get("deleted_at")
+        ):
             records.append(record)
     return records
 
 
-def detach_reference_upload(project_path: Path, reference_id: str) -> None:
-    """Remove an upload from the active workspace without breaking provenance."""
+def restore_reference_upload(project_path: Path, reference_id: str) -> dict[str, Any]:
+    """Restore a detached or soft-deleted upload for an undo operation."""
 
     record_path = _reference_record_path(project_path, reference_id)
     record = load_json_or_none(record_path)
     if not isinstance(record, dict) or not isinstance(record.get("path"), str):
         raise FileNotFoundError(reference_id)
     with project_metadata_lock(project_path):
-        record["detached_at"] = _now()
+        record.pop("detached_at", None)
+        record.pop("deleted_at", None)
         atomic_write_json(record_path, record)
+    return record
 
 
 def delete_reference_upload(project_path: Path, reference_id: str) -> None:
-    """Delete an upload only when no persisted creation request still cites it."""
+    """Soft-delete an upload without discarding provenance required for undo."""
 
     record_path = _reference_record_path(project_path, reference_id)
     record = load_json_or_none(record_path)
     if not isinstance(record, dict) or not isinstance(record.get("path"), str):
         raise FileNotFoundError(reference_id)
-    workspace_root = _workspace_root(project_path)
-    for metadata_path in workspace_root.rglob("*.json"):
-        if metadata_path in {record_path, _canvas_state_path(project_path)}:
-            continue
-        try:
-            text = metadata_path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        if reference_id in text:
-            raise RuntimeError("free creation reference is in use")
     with project_metadata_lock(project_path):
-        media_path = safe_join(project_path, str(record["path"]))
-        media_path.unlink(missing_ok=True)
-        record_path.unlink(missing_ok=True)
+        record["deleted_at"] = _now()
+        atomic_write_json(record_path, record)
 
 
 def _creation_version_resource_type(creation: dict[str, Any]) -> str:
@@ -605,7 +642,12 @@ def resolve_reference_claims(
             if not isinstance(reference_id, str):
                 raise ValueError("invalid upload reference")
             record = load_json_or_none(_reference_record_path(project_path, reference_id))
-            if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+            if (
+                not isinstance(record, dict)
+                or not isinstance(record.get("path"), str)
+                or record.get("detached_at")
+                or record.get("deleted_at")
+            ):
                 raise FileNotFoundError(reference_id)
             paths.append(record["path"])
             claims.append(
@@ -621,7 +663,7 @@ def resolve_reference_claims(
             if not isinstance(creation_id, str):
                 raise ValueError("invalid creation reference")
             creation = load_creation(project_path, creation_id)
-            if not isinstance(creation, dict):
+            if not isinstance(creation, dict) or creation.get("deleted_at"):
                 raise FileNotFoundError(creation_id)
             media_path, selected_version = _resolve_creation_reference_path(
                 project_path,
@@ -708,6 +750,14 @@ def build_creation_export(
                 creation_id = str(creation["creation_id"])
                 filename = f"media/{creation_id}{path.suffix.lower()}"
                 archive.write(path, filename)
+                subtitle_files: list[str] = []
+                for track in list_subtitle_tracks(project_path, creation_id):
+                    subtitle_id = track.get("subtitle_id")
+                    if not isinstance(subtitle_id, str):
+                        continue
+                    subtitle_filename = f"subtitles/{creation_id}-{subtitle_id}.vtt"
+                    archive.writestr(subtitle_filename, subtitle_track_webvtt(track))
+                    subtitle_files.append(subtitle_filename)
                 manifest.append(
                     {
                         "creation_id": creation_id,
@@ -715,6 +765,7 @@ def build_creation_export(
                         "media_type": creation.get("media_type"),
                         "prompt": creation.get("prompt"),
                         "file": filename,
+                        "subtitles": subtitle_files,
                     }
                 )
             archive.writestr(
@@ -738,7 +789,7 @@ __all__ = [
     "delete_storyboard_plan",
     "default_canvas_state",
     "delete_reference_upload",
-    "detach_reference_upload",
+    "restore_reference_upload",
     "extract_reference_text",
     "list_creation_requests",
     "list_reference_uploads",
@@ -755,6 +806,7 @@ __all__ = [
     "save_reference_upload",
     "save_storyboard_plan",
     "save_subtitle_track",
+    "subtitle_track_webvtt",
     "delete_subtitle_track",
     "split_storyboard_text",
     "write_creation_request",

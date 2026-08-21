@@ -27,6 +27,7 @@ export interface FreeCreationUpload {
   original_filename: string;
   media_type: FreeCreationUploadMediaType;
   path: string;
+  url?: string;
   size_bytes: number;
   created_at: string;
 }
@@ -37,6 +38,8 @@ export interface FreeCreationCanvasState {
   positions: Record<string, { x: number; y: number }>;
   hidden_creation_ids: string[];
   hidden_reference_ids?: string[];
+  groups?: Array<{ group_id: string; member_ids: string[] }>;
+  show_relations?: boolean;
   updated_at: string | null;
 }
 
@@ -64,6 +67,7 @@ export interface FreeCreation {
   version?: number;
   task_id?: string | null;
   error_code?: string;
+  error_params?: Record<string, unknown>;
   error?: string;
   updated_at?: string;
 }
@@ -100,6 +104,9 @@ export interface FreeCreationCapabilities {
   durations: number[];
   max_reference_images: number | null;
   max_reference_videos: number | null;
+  min_reference_video_seconds?: number | null;
+  max_reference_video_seconds?: number | null;
+  max_reference_video_total_seconds?: number | null;
   max_reference_audio_count?: number | null;
   max_reference_media_count: number | null;
   text_to_video?: boolean;

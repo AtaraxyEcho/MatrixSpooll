@@ -70,7 +70,7 @@ docker compose up -d --force-recreate
 先完成备份，再在对应的 Compose 目录执行：
 
 ```bash
-docker compose pull
+docker compose build arcreel
 docker compose up -d
 ```
 
@@ -296,9 +296,9 @@ MatrixSpooll 是自托管 Web 应用，目前没有独立的 iOS 或 Android 原
 
 ### 可以商用或二次开发吗？ {#commercial-use}
 
-MatrixSpooll 按 [AGPL-3.0](https://github.com/MockMine/MatrixSpooll/blob/main/LICENSE) 发布，并附带 [NOTICE](https://github.com/MockMine/MatrixSpooll/blob/main/NOTICE) 中的署名和修改声明要求。MatrixSpooll 名称与 Logo 不在 AGPL-3.0 授权范围内。
+MatrixSpooll 按 [AGPL-3.0](https://github.com/MockMine/MatrixSpooll/blob/main/LICENSE) 发布，并附带 [NOTICE](https://github.com/MockMine/MatrixSpooll/blob/main/NOTICE) 中的署名和修改声明要求。AGPL-3.0 允许商业使用和二次开发，但交付修改版或提供网络服务时仍需遵守许可证和对应源码义务。
 
-如果希望在不承担 AGPL 开源义务的前提下进行商业使用，请联系 [support@arc-reel.com](mailto:support@arc-reel.com) 了解商业授权。具体项目是否合规应由使用者根据实际分发和部署方式自行评估；本说明不构成法律意见。
+MatrixSpooll 可以提供基于 AGPL-3.0 的定制开发、私有化部署和技术支持；相关费用属于开发、部署与服务费用，不改变软件本身的许可证。
 
 ## 故障诊断与求助 {#diagnostics-and-support}
 

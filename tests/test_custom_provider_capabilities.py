@@ -22,12 +22,18 @@ class TestOverrideFieldSchema:
     def test_schema_covers_every_video_capabilities_field(self):
         """覆盖 schema 通用支持 VideoCapabilities 全部字段，键名严格对齐 dataclass。"""
         assert set(CAPABILITY_OVERRIDE_FIELDS) == {
+            "text_to_video",
             "first_frame",
             "last_frame",
             "max_reference_images",
             "max_reference_videos",
+            "min_reference_video_seconds",
+            "max_reference_video_seconds",
+            "max_reference_video_total_seconds",
             "max_reference_media_count",
             "supported_aspect_ratios",
+            "supported_resolutions",
+            "supported_durations",
             "supported_durations_with_reference_video",
             "reference_audio_mode",
             "max_reference_audio_count",
@@ -37,7 +43,10 @@ class TestOverrideFieldSchema:
             "first_frame_ratio_adaptive_only",
         }
         assert CAPABILITY_OVERRIDE_FIELDS["last_frame"] is bool
+        assert CAPABILITY_OVERRIDE_FIELDS["text_to_video"] is bool
         assert CAPABILITY_OVERRIDE_FIELDS["max_reference_images"] is int
+        assert CAPABILITY_OVERRIDE_FIELDS["supported_resolutions"] == (tuple[str, ...] | None)
+        assert CAPABILITY_OVERRIDE_FIELDS["supported_durations"] == (tuple[int, ...] | None)
         assert CAPABILITY_OVERRIDE_FIELDS["reference_audio_mode"] is ReferenceAudioMode
         assert CAPABILITY_OVERRIDE_FIELDS["max_reference_audio_count"] is int
         assert CAPABILITY_OVERRIDE_FIELDS["max_reference_audio_total_seconds"] == (float | None)
@@ -113,6 +122,14 @@ class TestSystemCapabilities:
 
         caps = system_video_capabilities(endpoint="vidu-video", model_id="viduq3")
         assert caps == ViduVideoBackend.video_capabilities_for_model("viduq3")
+
+    @pytest.mark.unit
+    def test_kling_alias_exposes_custom_model_parameters(self):
+        caps = system_video_capabilities(endpoint="kling-video", model_id="kling-2.6")
+
+        assert caps.supported_aspect_ratios == ("16:9", "9:16", "1:1")
+        assert caps.supported_resolutions == ("720p", "1080p")
+        assert caps.supported_durations == (5, 10)
 
     @pytest.mark.unit
     def test_non_video_endpoint_raises(self):

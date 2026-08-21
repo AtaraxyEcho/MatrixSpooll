@@ -377,7 +377,7 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
                       <AspectFrame ratio={creation.aspect_ratio ?? "9:16"} className="bg-black">
                         <div className="flex h-full items-center justify-center text-xs text-[var(--color-text-muted)]">
                           {creation.status === "failed"
-                            ? t("free_creation_failed")
+                            ? creation.error || t("free_creation_failed")
                             : t(`free_creation_status_${creation.status}`)}
                         </div>
                       </AspectFrame>
@@ -392,7 +392,7 @@ export function FreeCreationCanvas({ projectName, readOnly = false }: FreeCreati
                       </p>
                       {creation.error ? (
                         <p className="mt-2 line-clamp-3 text-xs text-[var(--color-danger)]">
-                          {t("free_creation_error_generic")}
+                          {creation.error}
                         </p>
                       ) : null}
                       {!readOnly ? (

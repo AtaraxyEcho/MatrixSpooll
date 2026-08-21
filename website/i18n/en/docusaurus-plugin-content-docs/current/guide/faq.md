@@ -69,7 +69,7 @@ For a source deployment, restart the MatrixSpooll service. Do not disable authen
 Create a backup first, then run these commands in the appropriate Compose directory:
 
 ```bash
-docker compose pull
+docker compose build arcreel
 docker compose up -d
 ```
 
@@ -295,9 +295,9 @@ Linux, macOS, WSL2, or Docker is recommended for the server. Native Windows guar
 
 ### Can I use MatrixSpooll commercially or build derivative software? {#commercial-use}
 
-MatrixSpooll is released under [AGPL-3.0](https://github.com/MockMine/MatrixSpooll/blob/main/LICENSE) with the attribution and modification-notice requirements in [NOTICE](https://github.com/MockMine/MatrixSpooll/blob/main/NOTICE). The MatrixSpooll name and Logo are not licensed under AGPL-3.0.
+MatrixSpooll is released under [AGPL-3.0](https://github.com/MockMine/MatrixSpooll/blob/main/LICENSE) with the attribution and modification-notice requirements in [NOTICE](https://github.com/MockMine/MatrixSpooll/blob/main/NOTICE). AGPL-3.0 permits commercial use and derivative development, but modified distributions and network services must still comply with the license and corresponding-source requirements.
 
-To use MatrixSpooll commercially without taking on AGPL open-source obligations, contact [support@arc-reel.com](mailto:support@arc-reel.com) about a commercial license. Users must evaluate compliance for their specific distribution and deployment model. This information is not legal advice.
+MatrixSpooll may be customized, deployed privately, and supported under AGPL-3.0; those fees are for development, deployment, and services and do not change the software license.
 
 ## Troubleshooting and support {#diagnostics-and-support}
 

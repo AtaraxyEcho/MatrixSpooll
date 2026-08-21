@@ -59,6 +59,11 @@ _RESUMABLE_SUBPATHS = frozenset({_TEXT2VIDEO, _IMAGE2VIDEO, _MULTI_IMAGE2VIDEO})
 # 多图主体（R2V）参考图上限，由 backend caps 单独声明（编排层裁剪与生成时防御同读）。
 # 取保守值：官方文档未明确列出该上限。
 _R2V_MAX_REFERENCE_IMAGES = 4
+_KLING_ASPECT_RATIOS = ("16:9", "9:16", "1:1")
+_KLING_STANDARD_RESOLUTIONS = ("720p", "1080p")
+_KLING_STANDARD_DURATIONS = (5, 10)
+_KLING_V3_RESOLUTIONS = ("720p", "1080p", "4k")
+_KLING_V3_DURATIONS = tuple(range(3, 16))
 
 
 @dataclass(frozen=True)
@@ -145,8 +150,29 @@ def _lookup_video_caps(model: str) -> _KlingVideoModelCaps:
     kling-v4、归一化后仍不精确匹配的中转自定义 id）回落保守默认（首尾帧、无参考/音频）——绝不按子串猜
     未知 model 的能力上限：未知 model 的限额可能与已知档不同，误报参考图能力会在请求期触发 provider 400
     或计费漂移，宁可保守。"""
-    key = model.replace(":", "/").rsplit("/", 1)[-1].strip().lower()
+    key = _normalize_model_id(model)
     return _KLING_VIDEO_CAPS.get(key, _DEFAULT_VIDEO_CAPS)
+
+
+def _normalize_model_id(model: str) -> str:
+    """Normalize documented Kling aliases without guessing unknown model families."""
+
+    key = model.replace(":", "/").rsplit("/", 1)[-1].strip().lower()
+    return {
+        "kling-2.6": "kling-v2-6",
+        "kling-2-6": "kling-v2-6",
+    }.get(key, key)
+
+
+def _declared_parameter_caps(model: str) -> tuple[tuple[str, ...], tuple[str, ...], tuple[int, ...]]:
+    """Return only parameter values verified for a known Kling model family."""
+
+    key = _normalize_model_id(model)
+    if key not in _KLING_VIDEO_CAPS:
+        return (), (), ()
+    if key in {"kling-v3", "kling-v3-omni"}:
+        return _KLING_ASPECT_RATIOS, _KLING_V3_RESOLUTIONS, _KLING_V3_DURATIONS
+    return _KLING_ASPECT_RATIOS, _KLING_STANDARD_RESOLUTIONS, _KLING_STANDARD_DURATIONS
 
 
 _MIN_POLL_TIMEOUT_SECONDS = 900.0
@@ -231,10 +257,14 @@ class KlingVideoBackend(KlingBackendBase, ProviderJobIdPersistenceMixin):
         # 上下文的调用方按此位放行 end_image、多数请求撞硬失败；保守声明 False 更贴近默认档的
         # 真实执行结果，与未登记 model 回落保守默认同一原则。
         caps = _lookup_video_caps(model)
+        ratios, resolutions, durations = _declared_parameter_caps(model)
         return VideoCapabilities(
             first_frame=True,
             last_frame=caps.last_frame and not caps.last_frame_requires_pro,
             max_reference_images=caps.max_reference_images,
+            supported_aspect_ratios=ratios or None,
+            supported_resolutions=resolutions or None,
+            supported_durations=durations or None,
         )
 
     @staticmethod
@@ -266,12 +296,16 @@ class KlingVideoBackend(KlingBackendBase, ProviderJobIdPersistenceMixin):
         也避免 4k+pro 组合被误判放行（`_resolve_mode` 对该组合解出 ``"4k"`` 而非 ``"pro"``）。
         """
         caps = _lookup_video_caps(self._model)
+        ratios, resolutions, durations = _declared_parameter_caps(self._model)
         mode = self._resolve_mode_from(resolution, service_tier)
         last_frame = caps.last_frame and (not caps.last_frame_requires_pro or mode == "pro")
         return VideoCapabilities(
             first_frame=True,
             last_frame=last_frame,
             max_reference_images=caps.max_reference_images,
+            supported_aspect_ratios=ratios or None,
+            supported_resolutions=resolutions or None,
+            supported_durations=durations or None,
         )
 
     # ── request building ────────────────────────────────────────────────

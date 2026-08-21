@@ -363,6 +363,15 @@ export function ProjectCard(props: ProjectCardProps) {
   const episodes =
     status?.episodes_summary ?? { total: 0, scripted: 0, in_production: 0, completed: 0 };
   const projectDisplayName = getProjectDisplayName(project.title, t("untitled_project"));
+  const contentModeLabel = project.content_mode === "free"
+    ? t("free_creation")
+    : project.content_mode === "ad"
+      ? t("ad_short_video")
+      : project.content_mode === "drama"
+        ? t("drama_animation")
+        : project.content_mode === "narration"
+          ? t("narration")
+          : null;
   // 演示卡的可读名里带上「只读」：视觉上有 eyebrow 说明，只听朗读的人否则会以为点进的是自己的项目
   // 「需要修复」与原因也进可读名：视觉上是一枚 pill 加一行原因，只听朗读的人否则拿不到
   // 这张卡为什么被阻断
@@ -467,6 +476,14 @@ export function ProjectCard(props: ProjectCardProps) {
 
   return (
     <article className="group relative overflow-hidden rounded-[12px] border border-hairline bg-bg-grad-a/85 transition-[transform,border-color,box-shadow] duration-150 motion-safe:hover:-translate-y-0.5 hover:border-accent/45 hover:shadow-[0_18px_40px_-22px_oklch(0_0_0_/_0.6),0_0_0_1px_var(--color-accent-soft)] focus-within:border-accent/60 focus-within:shadow-[0_0_0_2px_var(--color-accent-soft)]">
+      {contentModeLabel ? (
+        <span
+          className="pointer-events-none absolute right-4 top-4 z-[3] rounded-md border border-[var(--color-hairline-strong)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[9px] font-semibold tracking-[0.06em] text-[var(--color-text-2)] shadow-sm"
+          data-testid="project-content-mode"
+        >
+          {contentModeLabel}
+        </span>
+      ) : null}
       <Link
         href={`/app/projects/${project.name}`}
         className="block w-full text-left text-text no-underline outline-none"

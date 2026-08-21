@@ -15,24 +15,24 @@ services:
       timeout: 5s
       retries: 5
 
-  arcreel:
-    image: ghcr.io/arcreel/arcreel:latest
+  matrixspooll:
+    # 构建版：在部署机使用仓库根目录的 Dockerfile 构建。
+    build: ../../
     ports:
       - "1241:1241"
     env_file: .env
     environment:
+      # 数据库连接串
       DATABASE_URL: postgresql+asyncpg://arcreel:${POSTGRES_PASSWORD}@postgres:5432/arcreel
       TZ: ${TZ:-Asia/Shanghai}
-    # Agent Bash 沙箱 (bwrap) 需要：
-    # 1) 非特权 user namespace → 放开 docker 默认 seccomp/apparmor profile
-    # 2) bwrap 嵌套出的 net namespace 内配置 loopback → 容器需要 NET_ADMIN cap
-    #    （否则报 "loopback: Failed RTM_NEWADDR: Operation not permitted"）
+    # Agent Bash 沙箱 (bwrap) 所需权限
     security_opt:
       - seccomp:unconfined
       - apparmor:unconfined
     cap_add:
       - NET_ADMIN
     volumes:
+      # 持久化运行时数据（不再挂载 .venv 和 uv_cache，因为依赖已固化在镜像中）
       - ./.env:/app/.env
       - ./projects:/app/projects
       - ./logs:/app/logs

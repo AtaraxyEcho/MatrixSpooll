@@ -200,6 +200,7 @@ class ViduVideoBackend:
             first_frame=first_frame,
             last_frame=last_frame,
             max_reference_images=_MAX_REFERENCE_IMAGES if reference_images else 0,
+            supported_aspect_ratios=("16:9", "9:16", "1:1", "4:3", "3:4"),
             # 参考图与首帧在 Vidu 上是互斥模式：_select_endpoint 见参考图即切 /reference2video，
             # start_image 不进请求体（首帧被丢弃）。
             #

@@ -93,6 +93,11 @@ def test_infer_supported_durations_known_and_unknown(model_id: str, expected: li
     assert infer_supported_durations(model_id) == expected
 
 
+@pytest.mark.parametrize("model_id", ["seedance2.5", "seedance-2-5", "seedance_2_5"])
+def test_seedance_25_aliases_infer_the_30_second_range(model_id: str) -> None:
+    assert infer_supported_durations(model_id) == list(range(4, 31))
+
+
 def test_returned_list_is_independent_copy():
     """连续两次调用返回的列表应是独立对象（防止外部修改污染预设表）。"""
     a = infer_supported_durations("sora-2")

@@ -150,7 +150,10 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
         当前全系模型能力一致，不按 model_id 分支；instance property 委托至此，
         保持 backend 为单一真相源。
         """
-        return VideoCapabilities(max_reference_images=1)
+        return VideoCapabilities(
+            max_reference_images=1,
+            supported_aspect_ratios=("16:9", "9:16"),
+        )
 
     @property
     def video_capabilities(self) -> VideoCapabilities:

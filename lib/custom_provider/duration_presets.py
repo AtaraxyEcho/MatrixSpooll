@@ -42,7 +42,7 @@ PRESETS: list[tuple[re.Pattern[str], list[int]]] = [
     # Luma Ray / Dream Machine
     (re.compile(r"\bray-?\d", re.I), [5, 10]),
     # Seedance 2.5（4-30 任意）；必须位于通用 Seedance 规则之前。
-    (re.compile(r"seedance[-.]?2[-.]?5", re.I), list(range(4, 31))),
+    (re.compile(r"seedance[-_.]?2[-_.]?5", re.I), list(range(4, 31))),
     # ByteDance Dreamina / Seedance 2.0（4-15 任意）
     (re.compile(r"dreamina|seedance", re.I), list(range(4, 16))),
     # 字节即梦

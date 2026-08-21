@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -22,18 +22,27 @@ from lib.config.resolver import VideoBucketCapabilityError
 from lib.db import async_session_factory
 from lib.generation_queue import free_video_capability, get_generation_queue
 from lib.generation_queue_client import TaskSpec
+from lib.i18n import Translator
 from lib.image_backends.base import ImageCapabilityError
 from lib.path_safety import PathTraversalError, safe_join
 from lib.project_change_hints import project_change_source
 from lib.project_manager import get_project_manager
+from lib.task_failure import parse_failure, render_failure
 from lib.video_backends.base import VideoCapabilityError
 from server.auth import CurrentUser, CurrentUserFlexible
-from server.services.free_creation_merge import merge_video_creations
+from server.services.free_creation_deletion import FreeCreationDeletionNotReadyError, delete_free_creation_items
+from server.services.free_creation_merge import (
+    composite_creation_audio,
+    merge_video_creations,
+    render_creation_subtitles,
+)
 from server.services.free_creation_planner import effective_free_creation_mode
 from server.services.free_creation_tasks import (
+    delete_creation_metadata,
     list_creation_metadata,
     load_creation_metadata,
     new_creation_id,
+    restore_creation_metadata,
     write_creation_metadata,
 )
 from server.services.free_creation_workspace import (
@@ -46,7 +55,6 @@ from server.services.free_creation_workspace import (
     delete_storyboard_plan,
     delete_subtitle_track,
     derive_storyboard_plan_status,
-    detach_reference_upload,
     list_creation_requests,
     list_reference_uploads,
     list_storyboard_plans,
@@ -57,6 +65,7 @@ from server.services.free_creation_workspace import (
     new_request_id,
     read_reference_preview,
     resolve_reference_claims,
+    restore_reference_upload,
     save_canvas_state,
     save_reference_upload,
     save_storyboard_plan,
@@ -86,10 +95,30 @@ FreeReferenceRole = Literal[
     "prompt_context",
 ]
 CreationId = Annotated[str, PathParam(pattern=r"^c_[a-f0-9]{20}$")]
+CreationBodyId = Annotated[str, Field(pattern=r"^c_[a-f0-9]{20}$")]
+ReferenceBodyId = Annotated[str, Field(pattern=r"^r_[a-f0-9]{20}$")]
 _IMAGE_REFERENCE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 _AUDIO_REFERENCE_SUFFIXES = frozenset({".wav", ".mp3"})
 _VIDEO_REFERENCE_SUFFIXES = frozenset({".mp4", ".mov"})
 _TEXT_REFERENCE_SUFFIXES = frozenset({".txt", ".text", ".md", ".markdown", ".rtf", ".doc", ".docx", ".pdf", ".epub"})
+
+
+def _localize_creation(creation: dict[str, Any], translate: Callable[..., str]) -> dict[str, Any]:
+    """Render a stored structured failure without mutating creation metadata."""
+
+    message = creation.get("error")
+    if not isinstance(message, str) or not message:
+        return creation
+    failure = parse_failure(message)
+    if failure is None:
+        return creation
+    code, params = failure
+    return {
+        **creation,
+        "error_code": code,
+        "error_params": params,
+        "error": render_failure(message, translate),
+    }
 
 
 class FreeCreationReference(BaseModel):
@@ -185,11 +214,26 @@ class CanvasViewport(CanvasPoint):
     scale: float = Field(ge=0.35, le=2.5)
 
 
+class CanvasGroup(BaseModel):
+    group_id: str = Field(pattern=r"^g_[a-f0-9]{20}$")
+    member_ids: list[str] = Field(min_length=2, max_length=100)
+
+    @field_validator("member_ids")
+    @classmethod
+    def validate_member_ids(cls, value: list[str]) -> list[str]:
+        members = list(dict.fromkeys(value))
+        if len(members) < 2 or any(not item.startswith(("c_", "r_")) for item in members):
+            raise ValueError("canvas groups require at least two creations or references")
+        return members
+
+
 class CanvasStateUpdate(BaseModel):
     viewport: CanvasViewport
     positions: dict[str, CanvasPoint] = Field(default_factory=dict, max_length=500)
     hidden_creation_ids: list[str] = Field(default_factory=list, max_length=500)
     hidden_reference_ids: list[str] = Field(default_factory=list, max_length=500)
+    groups: list[CanvasGroup] = Field(default_factory=list, max_length=100)
+    show_relations: bool = True
     expected_revision: int | None = Field(default=None, ge=0)
 
     @field_validator("positions")
@@ -213,6 +257,17 @@ class CanvasStateUpdate(BaseModel):
             raise ValueError("hidden reference ids must identify uploads")
         return value
 
+    @field_validator("groups")
+    @classmethod
+    def validate_groups(cls, value: list[CanvasGroup]) -> list[CanvasGroup]:
+        group_ids = [group.group_id for group in value]
+        if len(group_ids) != len(set(group_ids)):
+            raise ValueError("canvas group ids must be unique")
+        members = [member for group in value for member in group.member_ids]
+        if len(members) != len(set(members)):
+            raise ValueError("a canvas item can belong to only one group")
+        return value
+
 
 class FreeCreationExportRequest(BaseModel):
     scope: Literal["selected", "request", "all"]
@@ -230,6 +285,26 @@ class FreeCreationExportRequest(BaseModel):
 
 class FreeCreationMergeRequest(BaseModel):
     creation_ids: list[str] = Field(min_length=2, max_length=32)
+
+
+class FreeCreationAudioCompositeRequest(BaseModel):
+    video_creation_id: CreationBodyId
+    audio_creation_id: CreationBodyId
+
+
+class FreeCreationDeleteItemsRequest(BaseModel):
+    creation_ids: list[CreationBodyId] = Field(default_factory=list, max_length=500)
+    reference_ids: list[ReferenceBodyId] = Field(default_factory=list, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> FreeCreationDeleteItemsRequest:
+        self.creation_ids = list(dict.fromkeys(self.creation_ids))
+        self.reference_ids = list(dict.fromkeys(self.reference_ids))
+        if not self.creation_ids and not self.reference_ids:
+            raise ValueError("at least one canvas item is required")
+        if len(self.creation_ids) + len(self.reference_ids) > 500:
+            raise ValueError("canvas selection cannot exceed 500 items")
+        return self
 
 
 class StoryboardPlanRequest(BaseModel):
@@ -637,6 +712,11 @@ async def _preflight_free_creation(
                 audio_count = sum(Path(item).suffix.lower() in _AUDIO_REFERENCE_SUFFIXES for item in reference_names)
             has_visual_input = bool(first_frame_count or last_frame_count or image_count or video_count)
             model_name = f"{ctx.video.provider_model.provider_id}/{ctx.video.backend_model}"
+            if (first_frame_count or last_frame_count) and (image_count or video_count or audio_count):
+                raise VideoCapabilityError(
+                    "free_creation_input_combination_unsupported",
+                    model=model_name,
+                )
             if not has_visual_input and not getattr(ctx.video, "text_to_video", True):
                 raise VideoCapabilityError(
                     "free_creation_t2v_unsupported",
@@ -769,15 +849,70 @@ async def get_free_creation_capabilities(
 ):
     """Return the effective model capabilities used by the free composer."""
 
+    return await _get_generation_capabilities(
+        output_type=output_type,
+        model=model,
+        reference_kind=reference_kind,
+        project_name=project_name,
+        validate_reference_mode=True,
+    )
+
+
+@entry_router.get("/model-capabilities")
+async def get_model_capabilities(
+    output_type: Literal["image", "video"] = Query(default="video"),
+    model: str | None = Query(default=None, max_length=200),
+    project_name: str | None = None,
+):
+    """Return exact model parameters without requiring one generation mode."""
+
+    return await _get_generation_capabilities(
+        output_type=output_type,
+        model=model,
+        reference_kind="none",
+        project_name=project_name,
+        validate_reference_mode=False,
+    )
+
+
+async def _get_generation_capabilities(
+    *,
+    output_type: Literal["image", "video"],
+    model: str | None,
+    reference_kind: Literal["none", "frame", "image", "video", "audio"],
+    project_name: str | None,
+    validate_reference_mode: bool,
+):
+    """Build the normalized model capability response shared by settings and generation."""
+
     from lib.config.resolver import ConfigResolver
 
     payload: dict[str, Any] = {}
+    requested_model: str | None = None
+    requested_provider: str | None = None
+    requested_model_id: str | None = None
     if model:
         provider, separator, model_id = model.partition("/")
         if not separator or not provider or not model_id:
             raise BadRequestError("request_invalid")
-        payload["video_provider" if output_type == "video" else "image_provider"] = provider
-        payload["video_model" if output_type == "video" else "image_model"] = model_id
+        requested_model = f"{provider}/{model_id}"
+        requested_provider = provider
+        requested_model_id = model_id
+        if output_type == "video":
+            # ConfigResolver only trusts materialized capability-bucket
+            # identities. Pin both buckets for the context-free endpoint;
+            # reference-aware requests pin the bucket selected below.
+            pair = f"{provider}/{model_id}"
+            if reference_kind == "frame":
+                payload["video_provider_i2v"] = pair
+            elif reference_kind in {"image", "video", "audio"}:
+                payload["video_provider_r2v"] = pair
+            else:
+                payload["video_provider_i2v"] = pair
+                payload["video_provider_r2v"] = pair
+        else:
+            payload["image_provider"] = provider
+            payload["image_model"] = model_id
     resolver = ConfigResolver(async_session_factory)
     project = (
         (await asyncio.to_thread(_load_free_project, project_name))[0]
@@ -790,21 +925,41 @@ async def get_free_creation_capabilities(
                 "i2v" if reference_kind == "frame" else "r2v" if reference_kind in {"image", "video", "audio"} else None
             )
             resolved = await resolver.resolve_video_backend(project, payload, capability=capability)
+            resolved_model = f"{resolved.provider_id}/{resolved.model_id}"
+            if requested_model is not None and resolved_model != requested_model:
+                raise VideoCapabilityError(
+                    "video_model_unsupported",
+                    provider=requested_provider or resolved.provider_id,
+                    model=requested_model_id or resolved.model_id,
+                )
             caps = await resolver.video_capabilities_for_model(resolved.provider_id, resolved.model_id, project)
             info = model_info_for(resolved.provider_id, resolved.model_id)
             ratios = list(caps.get("supported_aspect_ratios") or [])
+            if caps.get("first_frame_ratio_adaptive_only"):
+                if reference_kind == "frame":
+                    ratios = [ratio for ratio in ratios if ratio == "adaptive"]
+                else:
+                    ratios = [ratio for ratio in ratios if ratio != "adaptive"]
             if not ratios:
                 raise VideoCapabilityError(
                     "free_creation_aspect_ratio_capabilities_missing",
                     model=f"{resolved.provider_id}/{resolved.model_id}",
                 )
-            resolutions = list(info.resolutions) if info is not None else []
+            backend_resolutions = list(caps.get("supported_resolutions") or [])
+            registry_resolutions = list(info.resolutions or []) if info is not None else []
+            if backend_resolutions and registry_resolutions:
+                registry_set = {value.casefold() for value in registry_resolutions}
+                resolutions = [value for value in backend_resolutions if value.casefold() in registry_set]
+                if not resolutions:
+                    resolutions = backend_resolutions
+            else:
+                resolutions = backend_resolutions or registry_resolutions
             if not resolutions:
                 default_resolution = await resolver.resolve_resolution(project, resolved.provider_id, resolved.model_id)
                 if default_resolution:
                     resolutions = [default_resolution]
             modes = ["t2v"] if caps.get("text_to_video", True) else []
-            if reference_kind == "none" and "t2v" not in modes:
+            if validate_reference_mode and reference_kind == "none" and "t2v" not in modes:
                 raise VideoCapabilityError(
                     "video_capability_missing_t2v",
                     provider=resolved.provider_id,
@@ -869,6 +1024,9 @@ async def get_free_creation_capabilities(
                 ),
                 "max_reference_images": caps.get("max_reference_images"),
                 "max_reference_videos": caps.get("max_reference_videos"),
+                "min_reference_video_seconds": caps.get("min_reference_video_seconds"),
+                "max_reference_video_seconds": caps.get("max_reference_video_seconds"),
+                "max_reference_video_total_seconds": caps.get("max_reference_video_total_seconds"),
                 "max_reference_audio_count": max_reference_audio_count,
                 "max_reference_media_count": caps.get("max_reference_media_count"),
                 "text_to_video": caps.get("text_to_video", True),
@@ -940,7 +1098,7 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
     media_type: Literal["image", "video"] = "video" if req.output_type == "video" else "image"
     if req.parent_creation_id:
         parent = await asyncio.to_thread(load_creation_metadata, project_path, req.parent_creation_id)
-        if not parent or parent.get("output_type") not in {"image", "video", "edit"}:
+        if not parent or parent.get("deleted_at") or parent.get("output_type") not in {"image", "video", "edit"}:
             raise NotFoundError("free_creation_parent_not_found", id=req.parent_creation_id)
         if parent.get("status") != "succeeded":
             raise NotFoundError("free_creation_parent_not_found", id=req.parent_creation_id)
@@ -1149,6 +1307,7 @@ async def create_free_project(req: CreateFreeProjectRequest, user: CurrentUser):
 @router.get("/projects/{project_name}/creations")
 async def list_free_creations(
     project_name: str,
+    _t: Translator,
     limit: int = Query(default=60, ge=1, le=100),
     cursor: str | None = Query(default=None, pattern=r"^c_[a-f0-9]{20}$"),
 ):
@@ -1157,7 +1316,7 @@ async def list_free_creations(
     start = 0
     if cursor:
         start = next((index + 1 for index, item in enumerate(creations) if item.get("creation_id") == cursor), 0)
-    page = creations[start : start + limit]
+    page = [_localize_creation(item, _t) for item in creations[start : start + limit]]
     next_cursor = page[-1].get("creation_id") if start + limit < len(creations) and page else None
     return {"creations": page, "next_cursor": next_cursor, "total": len(creations)}
 
@@ -1172,7 +1331,14 @@ async def list_free_creation_requests(
     requests = await asyncio.to_thread(list_creation_requests, project_path, None)
     creations = await asyncio.to_thread(list_creation_metadata, project_path, None)
     creations_by_id = {str(item["creation_id"]): item for item in creations if isinstance(item.get("creation_id"), str)}
-    summaries = [_free_creation_request_summary(item, creations_by_id) for item in requests]
+    summaries = [
+        _free_creation_request_summary(item, creations_by_id)
+        for item in requests
+        if any(
+            isinstance(creation_id, str) and creation_id in creations_by_id
+            for creation_id in item.get("creation_ids", [])
+        )
+    ]
     start = 0
     if cursor:
         start = next((index + 1 for index, item in enumerate(summaries) if item.get("request_id") == cursor), 0)
@@ -1599,6 +1765,8 @@ async def update_free_creation_canvas(project_name: str, req: CanvasStateUpdate)
             positions={key: value.model_dump() for key, value in req.positions.items()},
             hidden_creation_ids=req.hidden_creation_ids,
             hidden_reference_ids=req.hidden_reference_ids,
+            groups=[group.model_dump() for group in req.groups],
+            show_relations=req.show_relations,
             expected_revision=req.expected_revision,
         )
     except RuntimeError as exc:
@@ -1609,7 +1777,12 @@ async def update_free_creation_canvas(project_name: str, req: CanvasStateUpdate)
 @router.get("/projects/{project_name}/free-creation-references")
 async def get_free_creation_references(project_name: str):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
-    return {"references": await asyncio.to_thread(list_reference_uploads, project_path)}
+    references = await asyncio.to_thread(list_reference_uploads, project_path)
+    return {
+        "references": [
+            {**reference, "url": f"/api/v1/files/{project_name}/{reference['path']}"} for reference in references
+        ]
+    }
 
 
 @router.get("/projects/{project_name}/free-creation-references/{reference_id}/preview")
@@ -1655,14 +1828,62 @@ async def remove_free_creation_reference(project_name: str, reference_id: str):
     return {"success": True}
 
 
-@router.post("/projects/{project_name}/free-creation-references/{reference_id}/detach")
-async def detach_free_creation_reference(project_name: str, reference_id: str):
+@router.post("/projects/{project_name}/free-creation-subtitles/{subtitle_id}/render")
+async def render_free_creation_subtitle(project_name: str, subtitle_id: str):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    track = await asyncio.to_thread(load_subtitle_track, project_path, subtitle_id)
+    if track is None:
+        raise NotFoundError("free_creation_subtitle_not_found", id=subtitle_id)
+    creations = await asyncio.to_thread(list_creation_metadata, project_path, None)
+    output_creation_id = new_creation_id()
+    try:
+        creation = await render_creation_subtitles(
+            project_path,
+            track=track,
+            output_creation_id=output_creation_id,
+            creations=creations,
+        )
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_not_found", id=str(exc)) from exc
+    except ValueError as exc:
+        raise BadRequestError("free_creation_subtitle_render_invalid") from exc
+    except RuntimeError as exc:
+        raise BadRequestError("free_creation_subtitle_render_unavailable") from exc
+    return {"success": True, "creation": creation}
+
+
+@router.post("/projects/{project_name}/free-creation-items/delete")
+async def delete_free_creation_selection(project_name: str, req: FreeCreationDeleteItemsRequest):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
     try:
-        await asyncio.to_thread(detach_reference_upload, project_path, reference_id)
+        result = await asyncio.to_thread(
+            delete_free_creation_items,
+            project_path,
+            creation_ids=req.creation_ids,
+            reference_ids=req.reference_ids,
+        )
+    except FileNotFoundError as exc:
+        missing_id = str(exc.args[0]) if exc.args else ""
+        if missing_id.startswith("r_"):
+            raise NotFoundError("free_creation_reference_not_found", id=missing_id) from exc
+        raise NotFoundError("free_creation_not_found", id=missing_id) from exc
+    except FreeCreationDeletionNotReadyError as exc:
+        raise ConflictError("free_creation_delete_not_ready") from exc
+    return {"success": True, **result}
+
+
+@router.post("/projects/{project_name}/free-creation-references/{reference_id}/restore")
+async def restore_free_creation_reference(project_name: str, reference_id: str):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    try:
+        record = await asyncio.to_thread(restore_reference_upload, project_path, reference_id)
     except FileNotFoundError as exc:
         raise NotFoundError("free_creation_reference_not_found") from exc
-    return {"success": True}
+    return {
+        "success": True,
+        "reference": record,
+        "url": f"/api/v1/files/{project_name}/{record['path']}",
+    }
 
 
 @router.post("/projects/{project_name}/free-creation-export")
@@ -1710,20 +1931,64 @@ async def merge_free_creation_videos(project_name: str, req: FreeCreationMergeRe
     )
 
 
+@router.post("/projects/{project_name}/free-creation-audio-composite")
+async def composite_free_creation_audio(project_name: str, req: FreeCreationAudioCompositeRequest):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    creations = await asyncio.to_thread(list_creation_metadata, project_path, None)
+    output_creation_id = new_creation_id()
+    try:
+        creation = await composite_creation_audio(
+            project_path,
+            video_creation_id=req.video_creation_id,
+            audio_creation_id=req.audio_creation_id,
+            output_creation_id=output_creation_id,
+            creations=creations,
+        )
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_audio_composite_input_not_found", id=str(exc)) from exc
+    except ValueError as exc:
+        raise BadRequestError("free_creation_audio_composite_invalid") from exc
+    except RuntimeError as exc:
+        raise BadRequestError("free_creation_audio_composite_unavailable") from exc
+    return {"success": True, "creation": creation}
+
+
 @router.get("/projects/{project_name}/creations/{creation_id}")
-async def get_free_creation(project_name: str, creation_id: CreationId):
+async def get_free_creation(project_name: str, creation_id: CreationId, _t: Translator):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
     creation = await asyncio.to_thread(load_creation_metadata, project_path, creation_id)
-    if creation is None:
+    if creation is None or creation.get("deleted_at"):
         raise NotFoundError("free_creation_not_found", id=creation_id)
-    return {"creation": creation}
+    return {"creation": _localize_creation(creation, _t)}
+
+
+@router.delete("/projects/{project_name}/creations/{creation_id}")
+async def delete_free_creation(project_name: str, creation_id: CreationId):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    try:
+        creation = await asyncio.to_thread(delete_creation_metadata, project_path, creation_id)
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_not_found", id=creation_id) from exc
+    except RuntimeError as exc:
+        raise ConflictError("free_creation_delete_not_ready") from exc
+    return {"success": True, "creation": creation}
+
+
+@router.post("/projects/{project_name}/creations/{creation_id}/restore")
+async def restore_free_creation(project_name: str, creation_id: CreationId):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    try:
+        creation = await asyncio.to_thread(restore_creation_metadata, project_path, creation_id)
+    except FileNotFoundError as exc:
+        raise NotFoundError("free_creation_not_found", id=creation_id) from exc
+    return {"success": True, "creation": creation}
 
 
 @self_auth_router.get("/projects/{project_name}/creations/{creation_id}/media")
 async def get_free_creation_media(project_name: str, creation_id: CreationId, _user: CurrentUserFlexible):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
     creation = await asyncio.to_thread(load_creation_metadata, project_path, creation_id)
-    if creation is None:
+    if creation is None or creation.get("deleted_at"):
         raise NotFoundError("free_creation_not_found", id=creation_id)
     media_path = creation.get("media_path")
     if not isinstance(media_path, str):
@@ -1748,7 +2013,7 @@ async def get_free_creation_media(project_name: str, creation_id: CreationId, _u
 async def cancel_free_creation(project_name: str, creation_id: CreationId):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
     creation = await asyncio.to_thread(load_creation_metadata, project_path, creation_id)
-    if creation is None:
+    if creation is None or creation.get("deleted_at"):
         raise NotFoundError("free_creation_not_found", id=creation_id)
     status = creation.get("status")
     if status == "cancelled":
@@ -1778,7 +2043,7 @@ async def cancel_free_creation(project_name: str, creation_id: CreationId):
 async def retry_free_creation(project_name: str, creation_id: CreationId, user: CurrentUser):
     project, project_path = await asyncio.to_thread(_load_free_project, project_name)
     creation = await asyncio.to_thread(load_creation_metadata, project_path, creation_id)
-    if creation is None:
+    if creation is None or creation.get("deleted_at"):
         raise NotFoundError("free_creation_not_found", id=creation_id)
     if creation.get("status") not in {"failed", "cancelled"}:
         raise ConflictError("free_creation_retry_not_ready")
@@ -1982,7 +2247,12 @@ async def retry_free_creation(project_name: str, creation_id: CreationId, user: 
         task_id,
         {"references": task_references, "reference_claims": validation_claims or []},
     )
-    return {"success": True, "creation_id": creation_id, "task_id": task_id}
+    return {
+        "success": True,
+        "creation_id": creation_id,
+        "task_id": task_id,
+        "model": request_payload.get("model") or creation.get("model"),
+    }
 
 
 __all__ = ["entry_router", "router", "self_auth_router"]

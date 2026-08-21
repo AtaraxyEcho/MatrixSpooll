@@ -202,6 +202,7 @@ export interface ProjectSummary {
   style: string;
   style_template_id?: string | null;
   style_image?: string | null;
+  content_mode?: "drama" | "narration" | "ad" | "free" | null;
   thumbnail: string | null;
   status: ProjectStatus | Record<string, never>;
 }
@@ -248,6 +249,10 @@ export interface VideoCapabilities {
   provider_id: string;
   model: string;
   supported_durations: number[];
+  /** Backend-declared resolution values for the exact provider/model pair. */
+  supported_resolutions?: string[];
+  /** Backend-declared aspect ratio values when the model exposes them. */
+  supported_aspect_ratios?: string[];
   max_duration: number;
   max_reference_images: number;
   /** 生效值（系统判定 ⊕ 用户覆盖），与执行层注入 backend 的能力同源。 */

@@ -206,6 +206,49 @@ class TestReferenceVideoGating:
 
         assert exc.value.code == "video_reference_videos_unsupported"
 
+    def test_reference_videos_total_duration_beyond_limit_raise(self):
+        caps = VideoCapabilities(max_reference_videos=3, max_reference_video_total_seconds=30)
+        with pytest.raises(VideoCapabilityError) as exc:
+            _gate(
+                caps,
+                reference_videos=[Path("a.mp4"), Path("b.mp4")],
+                reference_video_total_seconds=30.1,
+            )
+
+        assert exc.value.code == "video_reference_videos_duration_exceeded"
+        assert exc.value.params == {
+            "provider": "acme",
+            "model": "acme-v1",
+            "limit": 30,
+            "total": 30.1,
+        }
+
+    def test_unknown_reference_video_duration_does_not_create_false_rejection(self):
+        caps = VideoCapabilities(max_reference_videos=3, max_reference_video_total_seconds=30)
+        _gate(
+            caps,
+            reference_videos=[Path("a.mp4")],
+            reference_video_total_seconds=None,
+        )
+
+    def test_reference_video_single_duration_is_bounded(self):
+        caps = VideoCapabilities(
+            max_reference_videos=10,
+            min_reference_video_seconds=2,
+            max_reference_video_seconds=30,
+            max_reference_video_total_seconds=30,
+        )
+        with pytest.raises(VideoCapabilityError) as exc:
+            _gate(
+                caps,
+                reference_videos=[Path("a.mp4")],
+                reference_video_durations=(1.9,),
+                reference_video_total_seconds=1.9,
+            )
+
+        assert exc.value.code == "video_reference_video_duration_unsupported"
+        assert exc.value.params["index"] == 1
+
     def test_combined_reference_media_limit_is_enforced(self):
         caps = VideoCapabilities(
             max_reference_images=5,

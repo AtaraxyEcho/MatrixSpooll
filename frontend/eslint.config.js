@@ -57,7 +57,7 @@ export default tseslint.config(
 
   // 源码 typed linting 语言选项
   {
-    files: ["src/**/*.{ts,tsx}"],
+    files: ["src/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"],
     languageOptions: {
       globals: { ...globals.browser },
       parserOptions: {
@@ -82,7 +82,7 @@ export default tseslint.config(
 
   // 测试文件放宽 any 与 unsafe-* —— 测试环境允许 mock 便利
   {
-    files: ["src/**/*.test.{ts,tsx}", "src/test/**/*.{ts,tsx}"],
+    files: ["src/**/*.test.{ts,tsx}", "src/test/**/*.{ts,tsx}", "test/**/*.test.{ts,tsx}"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-unsafe-assignment": "off",

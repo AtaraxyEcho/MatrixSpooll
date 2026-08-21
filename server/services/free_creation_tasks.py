@@ -17,6 +17,7 @@ from lib.json_io import atomic_write_json, load_json_or_none
 from lib.path_safety import safe_join
 from lib.project_manager import get_project_manager
 from lib.resource_paths import resource_relative_path
+from lib.thumbnail import extract_video_thumbnail
 from lib.version_manager import VersionManager
 from server.services.free_creation_planner import plan_video_references
 from server.services.free_creation_workspace import extract_reference_text
@@ -61,11 +62,40 @@ def list_creation_metadata(project_path: Path, limit: int | None = None) -> list
     result: list[dict[str, Any]] = []
     for path in sorted(root.glob("*.json"), key=lambda item: item.stat().st_mtime_ns, reverse=True):
         data = load_json_or_none(path)
-        if isinstance(data, dict) and isinstance(data.get("creation_id"), str):
+        if isinstance(data, dict) and isinstance(data.get("creation_id"), str) and not data.get("deleted_at"):
             result.append(data)
             if limit is not None and len(result) >= limit:
                 break
     return result
+
+
+def delete_creation_metadata(project_path: Path, creation_id: str) -> dict[str, Any]:
+    """Soft-delete a terminal creation so the workspace operation remains undoable."""
+
+    path = creation_metadata_path(project_path, creation_id)
+    with project_metadata_lock(project_path):
+        data = load_json_or_none(path)
+        if not isinstance(data, dict) or not isinstance(data.get("creation_id"), str):
+            raise FileNotFoundError(creation_id)
+        if data.get("status") in {"queued", "running", "cancelling"}:
+            raise RuntimeError("active free creation cannot be deleted")
+        if not data.get("deleted_at"):
+            data["deleted_at"] = _now()
+            atomic_write_json(path, data)
+    return data
+
+
+def restore_creation_metadata(project_path: Path, creation_id: str) -> dict[str, Any]:
+    """Restore a soft-deleted creation for an undo operation."""
+
+    path = creation_metadata_path(project_path, creation_id)
+    with project_metadata_lock(project_path):
+        data = load_json_or_none(path)
+        if not isinstance(data, dict) or not isinstance(data.get("creation_id"), str):
+            raise FileNotFoundError(creation_id)
+        if data.pop("deleted_at", None) is not None:
+            atomic_write_json(path, data)
+    return data
 
 
 def build_free_creation_basis(project_path: Path, metadata: dict[str, Any]) -> ArtifactBasis:
@@ -478,6 +508,8 @@ async def execute_free_video_task(
         source="free_creation",
         prompt_mode="original",
     )
+    cover_path = project_path / "free_creation" / "covers" / f"{resource_id}.jpg"
+    extracted_cover = await extract_video_thumbnail(output_path, cover_path)
     metadata = {
         "creation_id": resource_id,
         "request_id": payload.get("request_id"),
@@ -500,12 +532,18 @@ async def execute_free_video_task(
         "storyboard_shot_id": payload.get("storyboard_shot_id"),
         "sequence_index": payload.get("sequence_index"),
         "media_path": output_path.relative_to(project_path).as_posix(),
+        "cover_path": extracted_cover.relative_to(project_path).as_posix() if extracted_cover else None,
         "version": version,
         "task_id": task_id,
         "updated_at": _now(),
     }
     if commit_result:
-        await _commit_generated_free_creation(project_path, metadata, task_id)
+        try:
+            await _commit_generated_free_creation(project_path, metadata, task_id)
+        except BaseException:
+            if extracted_cover is not None:
+                extracted_cover.unlink(missing_ok=True)
+            raise
     return metadata
 
 
@@ -634,10 +672,12 @@ __all__ = [
     "creation_media_path",
     "creation_metadata_path",
     "commit_free_creation_state",
+    "delete_creation_metadata",
     "discard_free_creation_result",
     "execute_free_creation_task",
     "list_creation_metadata",
     "load_creation_metadata",
     "new_creation_id",
+    "restore_creation_metadata",
     "write_creation_metadata",
 ]

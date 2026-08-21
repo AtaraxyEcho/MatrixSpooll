@@ -196,7 +196,7 @@ def _scan_raised_codes() -> tuple[dict[str, str], list[tuple[str, str]]]:
     for root in _SCANNED_ROOTS:
         for path in sorted((_REPO_ROOT / root).rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
-            found, dynamic = _scan_tree(tree, str(path.relative_to(_REPO_ROOT)))
+            found, dynamic = _scan_tree(tree, path.relative_to(_REPO_ROOT).as_posix())
             for code, where in found.items():
                 codes.setdefault(code, where)
             dynamic_sites.extend(dynamic)
@@ -318,7 +318,7 @@ def _scan_param_contracts() -> list[tuple[str, str, set[str]]]:
     contracts: list[tuple[str, str, set[str]]] = []
     for root in _SCANNED_ROOTS:
         for path in sorted((_REPO_ROOT / root).rglob("*.py")):
-            rel = str(path.relative_to(_REPO_ROOT))
+            rel = path.relative_to(_REPO_ROOT).as_posix()
             tree = ast.parse(path.read_text(encoding="utf-8"))
             aliases = _import_aliases(tree)
             for node in ast.walk(tree):

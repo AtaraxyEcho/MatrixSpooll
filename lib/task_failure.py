@@ -33,6 +33,15 @@ CAPABILITY_FAILURE_CODES: frozenset[str] = frozenset(
         "image_reference_images_unreadable",
         "ref_payload_floor_exceeded",
         "video_capability_missing_t2v",
+        "video_model_unsupported",
+        "video_start_image_unsupported",
+        "video_end_image_unsupported",
+        "video_t2v_unsupported",
+        "video_aspect_ratio_unsupported",
+        "video_resolution_required",
+        "video_resolution_unsupported",
+        "video_duration_unsupported",
+        "video_prompt_required",
         "video_duration_invalid",
         "video_duration_not_supported",
         "video_end_image_requires_start_image",
@@ -47,11 +56,22 @@ CAPABILITY_FAILURE_CODES: frozenset[str] = frozenset(
         "video_reference_images_unsupported",
         "video_reference_videos_unsupported",
         "video_reference_videos_exceeded",
+        "video_reference_videos_duration_exceeded",
+        "video_reference_video_duration_unsupported",
         "video_reference_media_exceeded",
         "video_reference_media_required",
         "video_reference_videos_unreadable",
         "free_creation_aspect_ratio_not_supported",
         "free_creation_aspect_ratio_capabilities_missing",
+        "free_creation_t2v_unsupported",
+        "free_creation_first_frame_unsupported",
+        "free_creation_last_frame_unsupported",
+        "free_creation_reference_images_unsupported",
+        "free_creation_reference_videos_unsupported",
+        "free_creation_reference_audio_unsupported",
+        "free_creation_input_combination_unsupported",
+        "free_creation_video_edit_unsupported",
+        "video_supported_durations_missing",
         "video_reference_images_with_frames_unsupported",
         "video_reference_audio_duration_exceeded",
         "video_reference_audio_exceeded",
@@ -61,6 +81,20 @@ CAPABILITY_FAILURE_CODES: frozenset[str] = frozenset(
         "video_reference_audio_unsupported",
         "video_resolution_duration_unsupported",
         "video_start_image_unreadable",
+    }
+)
+
+# Runtime provider rejections are separate from local capability validation. These
+# codes are deliberately provider-neutral so every read surface can render the same
+# actionable reason without exposing raw upstream payloads or request identifiers.
+PROVIDER_FAILURE_CODES: frozenset[str] = frozenset(
+    {
+        "video_first_frame_content_rejected",
+        "video_input_image_content_rejected",
+        "video_input_text_content_rejected",
+        "video_last_frame_content_rejected",
+        "video_output_content_rejected",
+        "video_reference_image_content_rejected",
     }
 )
 
@@ -106,6 +140,7 @@ NARRATION_DELIVERY_FAILURE_CODES: frozenset[str] = frozenset(
 # in the DB; the key resolves to zh/en/vi templates rendered at read time.
 FAILURE_CODE_KEYS: dict[str, str] = {
     **{code: code for code in CAPABILITY_FAILURE_CODES},
+    **{code: code for code in PROVIDER_FAILURE_CODES},
     **{code: code for code in REFERENCE_PROJECTION_FAILURE_CODES},
     **{code: code for code in NARRATION_DELIVERY_FAILURE_CODES},
     "provider_unsupported_media": "task_fail_provider_unsupported_media",

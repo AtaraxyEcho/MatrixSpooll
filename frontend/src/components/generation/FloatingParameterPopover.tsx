@@ -95,6 +95,7 @@ export function FloatingParameterPopover({
       className={`home-param-popover home-param-popover--portal${className ? ` ${className}` : ""}`}
       role={role}
       aria-label={ariaLabel}
+      onWheel={(event) => event.stopPropagation()}
     >
       {children}
     </div>,

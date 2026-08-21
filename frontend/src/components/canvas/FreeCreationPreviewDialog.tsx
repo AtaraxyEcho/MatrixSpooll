@@ -123,11 +123,11 @@ export function FreeCreationPreviewDialog({ projectName, target, onClose }: Free
             </div>
           )
         ) : target?.kind === "upload" && mediaType === "image" ? (
-          <img src={API.getFileUrl(projectName, target.upload.path)} alt={target.upload.original_filename} className="mx-auto max-h-[72vh] max-w-full object-contain" />
+          <img src={target.upload.url ?? API.getFileUrl(projectName, target.upload.path)} alt={target.upload.original_filename} className="mx-auto max-h-[72vh] max-w-full object-contain" />
         ) : target?.kind === "upload" && mediaType === "video" ? (
-          <video src={API.getFileUrl(projectName, target.upload.path)} className="mx-auto max-h-[72vh] max-w-full" controls autoPlay={false} />
+          <video src={target.upload.url ?? API.getFileUrl(projectName, target.upload.path)} className="mx-auto max-h-[72vh] max-w-full" controls autoPlay={false} />
         ) : target?.kind === "upload" && mediaType === "audio" ? (
-          <div className="flex min-h-64 items-center justify-center"><audio src={API.getFileUrl(projectName, target.upload.path)} controls /></div>
+          <div className="flex min-h-64 items-center justify-center"><audio src={target.upload.url ?? API.getFileUrl(projectName, target.upload.path)} controls /></div>
         ) : target?.kind === "creation" && mediaType === "video" && downloadHref ? (
           <video src={downloadHref} className="mx-auto max-h-[72vh] max-w-full" controls autoPlay={false} />
         ) : target?.kind === "creation" && mediaType === "audio" && downloadHref ? (

@@ -105,6 +105,7 @@ _H3_MAX_REFERENCE_IMAGES = 9
 _H3_MAX_REFERENCE_AUDIO = 3
 _H3_MAX_REFERENCE_AUDIO_TOTAL_SECONDS = 15.0
 _H3_MAX_PROMPT_CHARS = 7000
+_H3_SUPPORTED_ASPECT_RATIOS = ("21:9", "16:9", "4:3", "1:1", "3:4", "9:16", "adaptive")
 
 # 参考音频的 data URI MIME：官方接受 wav / mp3，要求 `data:audio/<格式>;base64,<内容>` 且格式小写。
 # 与 ark 侧的同名表各存一份——各家对 mp3 的接受口径不同（此处按官方写法 audio/mp3），
@@ -216,6 +217,7 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
                 max_reference_audio_total_seconds=_H3_MAX_REFERENCE_AUDIO_TOTAL_SECONDS,
                 max_prompt_chars=_H3_MAX_PROMPT_CHARS,
                 first_frame_ratio_adaptive_only=True,
+                supported_aspect_ratios=_H3_SUPPORTED_ASPECT_RATIOS,
             )
         return VideoCapabilities(text_to_video=_supports_text_to_video(model), first_frame=True)
 

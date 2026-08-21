@@ -25,7 +25,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useCapabilitiesStore } from "@/stores/capabilities-store";
 import { useConfigStatusStore } from "@/stores/config-status-store";
 import { useEndpointCatalogStore } from "@/stores/endpoint-catalog-store";
-import { catalogDurations } from "@/hooks/useModelCapabilities";
+import { catalogDurations, useGenerationCapabilities } from "@/hooks/useModelCapabilities";
 import { useModelCandidates } from "@/hooks/useModelCandidates";
 import { errMsg } from "@/utils/async";
 import {
@@ -82,6 +82,14 @@ export function MediaModelSection() {
   const [customProviders, setCustomProviders] = useState<CustomProviderInfo[]>([]);
   const [draft, setDraft] = useState<SystemConfigPatch>({});
   const [saving, setSaving] = useState(false);
+
+  const selectedVideoModel = draft.default_video_backend ?? settings?.default_video_backend ?? "";
+  const { capabilities: selectedVideoCapabilities } = useGenerationCapabilities({
+    outputType: "video",
+    model: selectedVideoModel || null,
+    strictMode: false,
+    enabled: settings !== null,
+  });
 
   const isDirty = Object.keys(draft).length > 0;
   useWarnUnsaved(isDirty);
@@ -155,7 +163,7 @@ export function MediaModelSection() {
   const textBackends: string[] = options.text_backends ?? [];
   const audioBackends: string[] = options.audio_backends ?? [];
 
-  const currentVideo = draft.default_video_backend ?? settings.default_video_backend ?? "";
+  const currentVideo = selectedVideoModel;
   const currentVideoI2V = draft.default_video_backend_i2v ?? settings.default_video_backend_i2v ?? "";
   const currentVideoR2V = draft.default_video_backend_r2v ?? settings.default_video_backend_r2v ?? "";
   const currentImage = draft.default_image_backend ?? settings.default_image_backend ?? "";
@@ -231,9 +239,20 @@ export function MediaModelSection() {
   const audioLocked = audioLockedControl !== null;
   const audioConflict =
     !currentAudio && (i2vAudioControl === "always_on" || r2vAudioControl === "always_on");
-  const videoSpecDurations = currentVideo ? catalogDurations(providers, customProviders, currentVideo) : null;
+  const catalogVideoResolutions = currentVideo
+    ? lookupResolutions(providers, currentVideo, customProviders, endpointToMediaType)
+    : { options: [], isCustom: false };
+  const videoSpecDurations = currentVideo
+    ? selectedVideoCapabilities?.durations.length
+      ? selectedVideoCapabilities.durations
+      : catalogDurations(providers, customProviders, currentVideo)
+    : null;
   const videoSpecResolutions = currentVideo
-    ? lookupResolutions(providers, currentVideo, customProviders, endpointToMediaType).options
+    ? selectedVideoCapabilities?.resolutions.length
+      ? selectedVideoCapabilities.resolutions
+      : catalogVideoResolutions.isCustom
+        ? []
+        : catalogVideoResolutions.options
     : [];
 
   const renderVideoOptionMeta = videoOptionMetaRenderer({ t, providers, customProviders, endpointToMediaType });

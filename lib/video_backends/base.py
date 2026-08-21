@@ -543,6 +543,19 @@ class VideoCapabilityError(RuntimeError):
         super().__init__(code)
 
 
+class VideoProviderError(RuntimeError):
+    """视频供应商对本次生成内容的结构化拒绝。
+
+    与能力校验错误分开：此异常表示请求已经到达供应商，但被内容审核等运行时规则拒绝。
+    Worker 仍只持久化稳定 ``code + params``，由读侧按请求语言渲染用户提示。
+    """
+
+    def __init__(self, code: str, **params) -> None:
+        self.code = code
+        self.params = params
+        super().__init__(code)
+
+
 def reference_audio_to_data_uri(path: Path, *, model: str, mime_types: Mapping[str, str]) -> str:
     """参考音频 → base64 data URI；格式不受支持或文件不可读一律抛错。
 
@@ -638,8 +651,15 @@ class VideoCapabilities:
     last_frame: bool = False
     max_reference_images: int = 0
     max_reference_videos: int = 0
+    min_reference_video_seconds: float | None = None
+    max_reference_video_seconds: float | None = None
+    max_reference_video_total_seconds: float | None = None
     max_reference_media_count: int | None = None
     supported_aspect_ratios: tuple[str, ...] | None = None
+    # Provider-declared output resolution tiers exposed by capability APIs.
+    supported_resolutions: tuple[str, ...] | None = None
+    # Some custom endpoints derive duration tiers from the execution backend.
+    supported_durations: tuple[int, ...] | None = None
     supported_durations_with_reference_video: tuple[int, ...] | None = None
     reference_audio_mode: ReferenceAudioMode = ReferenceAudioMode.NONE
     max_reference_audio_count: int = 0

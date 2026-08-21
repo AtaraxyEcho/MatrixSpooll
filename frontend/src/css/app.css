@@ -478,6 +478,61 @@ body {
     transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
 }
 
+.home-model-tooltip {
+    position: fixed;
+    z-index: 90;
+    display: block;
+    width: max-content;
+    border: 1px solid var(--color-hairline-strong);
+    border-radius: 6px;
+    background: var(--color-surface-2);
+    box-shadow: 0 8px 18px -10px oklch(0 0 0 / 0.9);
+    color: var(--color-text);
+    padding: 6px 8px;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.3;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(4px);
+    transition: opacity 120ms ease, transform 120ms ease;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    animation: home-model-tooltip-in 120ms ease forwards;
+}
+
+.home-model-tooltip--below {
+    transform: none;
+}
+
+@keyframes home-model-tooltip-in {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(-100%);
+    }
+}
+
+.home-model-tooltip--below {
+    animation-name: home-model-tooltip-in-below;
+}
+
+@keyframes home-model-tooltip-in-below {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 .home-param-trigger:hover {
     border-color: var(--color-accent);
     background: oklch(0.21 0.015 265 / 0.9);
@@ -604,7 +659,7 @@ body {
     gap: 3px;
     border: 1px solid var(--color-hairline-strong);
     border-radius: 10px;
-    background: oklch(0.16 0.012 265 / 0.98);
+    background: var(--color-surface);
     padding: 6px;
     box-shadow: 0 8px 12px -8px oklch(0 0 0 / 0.82);
 }
@@ -620,6 +675,10 @@ body {
     overflow-y: auto;
     overscroll-behavior: contain;
     visibility: hidden;
+    opacity: 1;
+    isolation: isolate;
+    background-color: var(--color-surface);
+    background-image: none;
 }
 
 .home-param-search {
@@ -815,6 +874,7 @@ body {
 }
 
 .home-param-option {
+    position: relative;
     display: flex;
     width: 100%;
     min-width: 0;
@@ -846,6 +906,7 @@ body {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
     padding: 8px;
+    background: var(--color-surface);
 }
 
 .home-tool-option {
@@ -858,7 +919,7 @@ body {
     gap: 6px;
     border: 1px solid var(--color-hairline-soft);
     border-radius: 7px;
-    background: oklch(0.19 0.011 265 / 0.68);
+    background: var(--color-surface-2);
     color: var(--color-text-2);
     padding: 8px 6px;
     font-size: 11px;
@@ -917,6 +978,36 @@ body {
     height: 14px;
     flex: 0 0 auto;
     color: var(--color-accent-2);
+}
+
+.home-model-popover .home-param-option--model::after {
+    position: absolute;
+    right: 6px;
+    bottom: 4px;
+    left: 6px;
+    display: flex;
+    min-height: 24px;
+    align-items: center;
+    overflow-wrap: anywhere;
+    border: 1px solid var(--color-hairline-strong);
+    border-radius: 5px;
+    background: var(--color-surface-2);
+    box-shadow: 0 4px 10px -7px oklch(0 0 0 / 0.85);
+    color: var(--color-text);
+    content: attr(data-model-name);
+    padding: 4px 7px;
+    font-size: 11px;
+    line-height: 1.25;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(3px);
+    transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.home-model-popover .home-param-option--model:hover::after,
+.home-model-popover .home-param-option--model:focus-visible::after {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 .home-image-parameters__popover,

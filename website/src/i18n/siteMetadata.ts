@@ -3,7 +3,7 @@ import { translate } from "@docusaurus/Translate";
 export function getSiteTitle(): string {
   return translate({
     id: "site.title",
-    message: "ArcReel 文档中心",
+    message: "MatrixSpooll 文档中心",
     description: "The documentation site title used in browser tabs and social cards",
   });
 }

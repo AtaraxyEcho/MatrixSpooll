@@ -147,8 +147,8 @@ def _validate_seedance_request(body: dict[str, Any]) -> str | None:
     model = body.get("model")
     content = body.get("content")
     profiles: dict[str, tuple[int, set[str], int, int, int]] = {
-        "seedance-2.0": (15, {"480p", "720p", "1080p", "4k"}, 9, 3, 3),
-        "seedance-2.0-nsfw": (15, {"480p", "720p", "1080p", "4k"}, 9, 3, 3),
+        "seedance-2.0": (15, {"480p", "720p", "1080p"}, 9, 3, 3),
+        "seedance-2.0-nsfw": (15, {"480p", "720p", "1080p"}, 9, 3, 3),
         "seedance-2.5": (30, {"480p", "720p", "1080p"}, 30, 10, 10),
         "seedance-2.5-nsfw": (30, {"480p", "720p", "1080p"}, 30, 10, 10),
     }

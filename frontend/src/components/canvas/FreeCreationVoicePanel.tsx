@@ -23,14 +23,30 @@ export function FreeCreationVoicePanel({ projectName, open, onClose, onCreated }
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setLoading(true);
+    setError(null);
+    setVoices([]);
+    /* eslint-enable react-hooks/set-state-in-effect */
     void API.getAudioBackendVoices(projectName)
       .then((result) => {
+        if (cancelled) return;
         setConfigured(result.configured);
         setVoices(result.voices);
         setVoice((current) => current || result.voices[0]?.id || "");
       })
-      .catch((nextError) => setError(errMsg(nextError)))
-      .finally(() => setLoading(false));
+      .catch((nextError) => {
+        if (cancelled) return;
+        setConfigured(false);
+        setError(errMsg(nextError));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open, projectName]);
 
   if (!open) return null;
@@ -62,7 +78,7 @@ export function FreeCreationVoicePanel({ projectName, open, onClose, onCreated }
         </header>
         <div className="space-y-4 px-5 py-4">
           {error ? <p className="rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 px-3 py-2 text-xs text-[var(--color-danger)]" role="alert">{error}</p> : null}
-          {!loading && !configured ? <p className="text-sm text-[var(--color-text-muted)]">{t("free_creation_voice_unavailable")}</p> : null}
+          {!loading && !configured ? <p className="text-sm leading-5 text-[var(--color-text-muted)]">{t("free_creation_voice_unconfigured")}</p> : null}
           <label className="block text-xs font-medium text-[var(--color-text-2)]">
             {t("free_creation_voice_text")}
             <textarea value={text} onChange={(event) => setText(event.target.value)} rows={5} maxLength={12000} className="focus-ring mt-1.5 min-h-28 w-full resize-y rounded-md border border-[var(--color-hairline-strong)] bg-[var(--color-background)] px-3 py-2 text-sm leading-5" disabled={!configured || loading || submitting} />

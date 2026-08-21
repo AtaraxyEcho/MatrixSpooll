@@ -47,6 +47,25 @@ class TestInferEndpointSmoke:
 
 class TestDiscoverModelsOpenAI:
     @patch("lib.custom_provider.discovery.OpenAI")
+    async def test_anyfast_seedance_uses_anyfast_endpoint(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+
+        model = MagicMock()
+        model.id = "seedance-2.0"
+        mock_client.models.list.return_value = [model]
+
+        from lib.custom_provider.discovery import discover_models
+
+        result = await discover_models(
+            discovery_format="openai",
+            base_url="https://www.anyfast.ai/v1",
+            api_key="sk-test",
+        )
+
+        assert result[0]["endpoint"] == "anyfast-seedance"
+
+    @patch("lib.custom_provider.discovery.OpenAI")
     async def test_basic_discovery(self, mock_openai_cls):
         """基本模型发现流程，返回 endpoint 字段。"""
         mock_client = MagicMock()

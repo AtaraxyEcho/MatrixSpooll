@@ -250,7 +250,13 @@ export function ModelConfigSection({
     : undefined;
 
   // 能力统一经 useModelCapabilities 取得（见该模块的真相源规则），本组件不自行查表。
-  const { rawDurations, supportedDurations, durationConstraints, voiceConsistency } = useModelCapabilities({
+  const {
+    rawDurations,
+    supportedDurations,
+    durationConstraints,
+    supportedResolutions,
+    voiceConsistency,
+  } = useModelCapabilities({
     projectName,
     videoBackend: executingVideo,
     // 本组件是表单：backend 是编辑中的未保存候选，服务端按已落盘配置解析出的能力对它不作数。
@@ -286,12 +292,14 @@ export function ModelConfigSection({
   const audioConflict =
     audioControl === "always_on" && (videoGenerateAudio ?? globalVideoGenerateAudio) === false;
 
-  const videoResolutionOptions = lookupResolutions(
+  const catalogVideoResolutions = lookupResolutions(
     providers,
     executingVideo,
     customProviders,
     endpointToMediaType,
-  ).options;
+  );
+  const videoResolutionOptions = supportedResolutions
+    ?? (projectName && catalogVideoResolutions.isCustom ? [] : catalogVideoResolutions.options);
 
   const renderVideoOptionMeta = videoOptionMetaRenderer({ t, providers, customProviders, endpointToMediaType });
 
@@ -332,8 +340,9 @@ export function ModelConfigSection({
     backend: string,
     resolution: string | null,
     onResolutionChange: (v: string | null) => void,
+    resolved?: { options: string[]; isCustom: boolean },
   ) => {
-    const res = lookupResolutions(providers, backend, customProviders, endpointToMediaType);
+    const res = resolved ?? lookupResolutions(providers, backend, customProviders, endpointToMediaType);
     if (res.options.length === 0) return null;
     return (
       <div className="mt-3 flex items-center gap-2">
@@ -383,8 +392,11 @@ export function ModelConfigSection({
             />
           )}
 
-          {renderResolutionField(executingVideo, value.videoResolution, (v) =>
-            onChange({ ...value, videoResolution: v }),
+          {renderResolutionField(
+            executingVideo,
+            value.videoResolution,
+            (v) => onChange({ ...value, videoResolution: v }),
+            { options: videoResolutionOptions, isCustom: catalogVideoResolutions.isCustom },
           )}
 
           {showDuration && supportedDurations && supportedDurations.length > 0 && (

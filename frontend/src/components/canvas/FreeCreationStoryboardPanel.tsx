@@ -12,6 +12,8 @@ interface FreeCreationStoryboardPanelProps {
   sourceReferenceId?: string;
   aspectRatio: string;
   resolution?: string;
+  model?: string;
+  durationOptions?: readonly number[];
   onClose: () => void;
   onCreated: () => void;
 }
@@ -24,6 +26,14 @@ function reorder(shots: FreeStoryboardShot[], index: number, direction: -1 | 1):
   return next.map((shot, sequenceIndex) => ({ ...shot, sequence_index: sequenceIndex }));
 }
 
+function normalizeDuration(value: number, durationOptions?: readonly number[]): number {
+  if (!durationOptions?.length) return Math.max(1, Math.round(value));
+  return durationOptions.reduce(
+    (closest, candidate) => Math.abs(candidate - value) < Math.abs(closest - value) ? candidate : closest,
+    durationOptions[0],
+  );
+}
+
 export function FreeCreationStoryboardPanel({
   projectName,
   open,
@@ -31,6 +41,8 @@ export function FreeCreationStoryboardPanel({
   sourceReferenceId,
   aspectRatio,
   resolution,
+  model,
+  durationOptions,
   onClose,
   onCreated,
 }: FreeCreationStoryboardPanelProps) {
@@ -53,14 +65,20 @@ export function FreeCreationStoryboardPanel({
           reference_id: sourceReferenceId,
           title: prompt.trim().split(/\r?\n/)[0]?.slice(0, 80),
         });
-        setPlan(nextPlan);
+        setPlan({
+          ...nextPlan,
+          shots: nextPlan.shots.map((shot) => ({
+            ...shot,
+            duration_seconds: normalizeDuration(shot.duration_seconds, durationOptions),
+          })),
+        });
       } catch (nextError) {
         setError(errMsg(nextError));
       } finally {
         setLoading(false);
       }
     })();
-  }, [open, projectName, prompt, sourceReferenceId]);
+  }, [durationOptions, open, projectName, prompt, sourceReferenceId]);
 
   const sortedShots = useMemo(
     () => [...(plan?.shots ?? [])].sort((left, right) => left.sequence_index - right.sequence_index),
@@ -72,7 +90,15 @@ export function FreeCreationStoryboardPanel({
   const updateShot = (shotId: string, patch: Partial<FreeStoryboardShot>) => {
     setPlan((current) => current ? {
       ...current,
-      shots: current.shots.map((shot) => shot.shot_id === shotId ? { ...shot, ...patch } : shot),
+      shots: current.shots.map((shot) => shot.shot_id === shotId
+        ? {
+            ...shot,
+            ...patch,
+            ...(patch.duration_seconds !== undefined
+              ? { duration_seconds: normalizeDuration(patch.duration_seconds, durationOptions) }
+              : {}),
+          }
+        : shot),
     } : current);
   };
 
@@ -107,6 +133,7 @@ export function FreeCreationStoryboardPanel({
         output_type: "image",
         aspect_ratio: aspectRatio,
         resolution,
+        model,
         expected_revision: plan.revision + 1,
       });
       setPlan(result.plan);
@@ -123,12 +150,14 @@ export function FreeCreationStoryboardPanel({
     setGenerating(true);
     setError(null);
     try {
+      if (!await save()) return;
       const result = await API.generateFreeStoryboardBatch(projectName, plan.plan_id, {
         shot_ids: sortedShots.map((shot) => shot.shot_id),
         output_type: "video",
         aspect_ratio: aspectRatio,
         resolution,
-        expected_revision: plan.revision,
+        model,
+        expected_revision: plan.revision + 1,
       });
       setPlan(result.plan);
       onCreated();
