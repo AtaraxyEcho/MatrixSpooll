@@ -23,6 +23,12 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _project_temp_directory(project_path: Path, prefix: str) -> Path:
+    temporary_root = project_path / "tmp"
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=str(temporary_root)))
+
+
 def resolve_merge_video_paths(
     project_path: Path,
     creation_ids: list[str],
@@ -80,7 +86,7 @@ async def merge_video_creations(
     if not ffmpeg:
         raise RuntimeError("ffmpeg is not available")
 
-    temporary_directory = Path(tempfile.mkdtemp(prefix="arcreel-free-merge-"))
+    temporary_directory = _project_temp_directory(project_path, "arcreel-free-merge-")
     concat_file = temporary_directory / "inputs.txt"
     output_file = temporary_directory / "merged.mp4"
     concat_file.write_text("".join(f"file '{_concat_file_path(path)}'\n" for path in paths), encoding="utf-8")
@@ -190,7 +196,7 @@ async def composite_creation_audio(
     if not ffmpeg:
         raise RuntimeError("ffmpeg is not available")
 
-    temporary_directory = Path(tempfile.mkdtemp(prefix="arcreel-free-audio-composite-"))
+    temporary_directory = _project_temp_directory(project_path, "arcreel-free-audio-composite-")
     staged_file = temporary_directory / "composite.mp4"
     cover_path = project_path / "free_creation" / "covers" / f"{output_creation_id}.jpg"
     process: asyncio.subprocess.Process | None = None
@@ -335,7 +341,7 @@ async def render_creation_subtitles(
     if not ffmpeg:
         raise RuntimeError("ffmpeg is not available")
 
-    temporary_directory = Path(tempfile.mkdtemp(prefix="arcreel-free-subtitles-"))
+    temporary_directory = _project_temp_directory(project_path, "arcreel-free-subtitles-")
     subtitle_file = temporary_directory / "subtitles.vtt"
     subtitle_file.write_text(webvtt, encoding="utf-8")
     staged_file = temporary_directory / "subtitled.mp4"

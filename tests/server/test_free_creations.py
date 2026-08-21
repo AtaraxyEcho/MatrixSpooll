@@ -1462,3 +1462,7 @@ async def test_audio_composite_and_subtitle_render_create_derived_canvas_videos(
     assert ProjectArtifactManifestAdapter(tmp_path).get_entry(ArtifactKey.free_creation(composite_id)) is not None
     assert ProjectArtifactManifestAdapter(tmp_path).get_entry(ArtifactKey.free_creation(subtitle_id)) is not None
     assert any("subtitles=subtitles.vtt" in command for args in commands for command in map(str, args))
+    project_tmp = tmp_path / "tmp"
+    assert commands
+    assert all(project_tmp in Path(str(args[-1])).parents for args in commands)
+    assert not any(project_tmp.iterdir())
