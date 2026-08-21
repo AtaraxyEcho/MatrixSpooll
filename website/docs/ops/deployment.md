@@ -131,8 +131,8 @@ curl http://localhost:1241/health
 如需避免服务器安装 Python/Node 依赖，先在开发机或 CI 构建完整 Linux 镜像并推送：
 
 ```bash
-docker build -t ccr.ccs.tencentyun.com/mock_mine/image-warehouse:production .
-docker push ccr.ccs.tencentyun.com/mock_mine/image-warehouse:production
+docker build -t production:1.1.0 -t ccr.ccs.tencentyun.com/mock_mine/image-warehouse:production-1.1.0 .
+docker push ccr.ccs.tencentyun.com/mock_mine/image-warehouse:production-1.1.0
 ```
 
 服务器在 `deploy/production/` 中使用镜像版 Compose：

@@ -56,7 +56,7 @@ Verify it:
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 arcreel
+docker compose logs --tail=100 matrixspooll
 curl http://localhost:1241/health
 ```
 
