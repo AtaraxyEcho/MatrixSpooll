@@ -1398,8 +1398,10 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
 
   const showReferenceAdmissionIssue = (issue: Exclude<ReturnType<typeof referenceAdmissionIssue>, null>) => {
     const limit = referenceUploadLimit(capabilities, referenceMode, outputType);
-    const message = issue === "unsupported_type"
-      ? t("free_creation_reference_type_unsupported")
+    const message = issue === "frames_require_omni"
+      ? t("free_creation_frames_require_omni")
+      : issue === "unsupported_type"
+        ? t("free_creation_reference_type_unsupported")
       : t("free_creation_reference_limit_reached", { count: limit ?? 0 });
     useAppStore.getState().pushToast(message, "error");
   };

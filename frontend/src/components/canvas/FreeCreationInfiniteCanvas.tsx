@@ -199,6 +199,9 @@ function dependencyPath(source: CanvasNodeBox, target: CanvasNodeBox, lane: numb
   const targetX = forward ? target.x : target.x + target.width;
   const sourceY = source.y + source.height / 2;
   const targetY = target.y + target.height / 2;
+  if (lane === 0 && Math.abs(sourceY - targetY) < 10) {
+    return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+  }
   const laneOffset = lane * 16;
   const controlX = (sourceX + targetX) / 2 + laneOffset * direction;
   const controlY = (sourceY + targetY) / 2 + laneOffset;
@@ -208,6 +211,14 @@ function dependencyPath(source: CanvasNodeBox, target: CanvasNodeBox, lane: numb
 function relationLane(index: number): number {
   if (index === 0) return 0;
   return index % 2 === 0 ? index / 2 : -(index + 1) / 2;
+}
+
+export function createCanvasGroupId(): string {
+  const randomUuid = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+  const compact = randomUuid.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(20, "0");
+  return `g_${compact.slice(0, 20)}`;
 }
 
 export function arrangeCanvasNodes(
@@ -1178,10 +1189,13 @@ export function FreeCreationInfiniteCanvas({
 
   const groupSelection = () => {
     if (!canGroupSelection) return;
+    const availableIds = new Set(allNodes.map((node) => node.id));
+    const memberIds = [...new Set(contextSelectionIds.filter((id) => availableIds.has(id)))];
+    if (memberIds.length < 2) return;
     pushHistory();
     setGroups((current) => [...current, {
-      group_id: `g_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`,
-      member_ids: [...contextSelectionIds],
+      group_id: createCanvasGroupId(),
+      member_ids: memberIds,
     }]);
     setContextMenu(null);
   };
@@ -1343,14 +1357,6 @@ export function FreeCreationInfiniteCanvas({
 
       <div className="absolute left-0 top-0" style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${scale})`, transformOrigin: "0 0", transition: viewportAnimating ? "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)" : undefined }}>
         <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1" aria-hidden>
-          <defs>
-            <marker id="free-creation-edge-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
-              <path d="M 0 0 L 7 3.5 L 0 7 z" fill="var(--color-accent)" />
-            </marker>
-            <marker id="free-creation-subtitle-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
-              <path d="M 0 0 L 7 3.5 L 0 7 z" fill="var(--color-accent-2)" />
-            </marker>
-          </defs>
           {showRelations ? dependencyPaths.map((edge) => (
             <path
               key={`${edge.sourceId}-${edge.targetId}`}
@@ -1359,7 +1365,8 @@ export function FreeCreationInfiniteCanvas({
               stroke="var(--color-accent)"
               strokeOpacity="0.52"
               strokeWidth="2"
-              markerEnd="url(#free-creation-edge-arrow)"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             />
           )) : null}
           {showRelations ? subtitleTracks.map((track, index) => {
@@ -1368,7 +1375,7 @@ export function FreeCreationInfiniteCanvas({
             const siblingIndex = subtitleTracks.slice(0, index).filter((item) => item.creation_id === track.creation_id).length;
             const subtitle = subtitlePosition({ x: from.x, y: from.y }, siblingIndex);
             const to: CanvasNodeBox = { x: subtitle.x, y: subtitle.y, width: SUBTITLE_NODE_WIDTH, height: SUBTITLE_NODE_HEIGHT };
-            return <path key={`subtitle-${track.subtitle_id}`} d={dependencyPath(from, to, relationLane(siblingIndex))} fill="none" stroke="var(--color-accent-2)" markerEnd="url(#free-creation-subtitle-arrow)" strokeDasharray="6 5" strokeOpacity="0.48" strokeWidth="1.5" />;
+            return <path key={`subtitle-${track.subtitle_id}`} d={dependencyPath(from, to, relationLane(siblingIndex))} fill="none" stroke="var(--color-accent-2)" strokeDasharray="6 5" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.48" strokeWidth="1.5" />;
           }) : null}
         </svg>
 

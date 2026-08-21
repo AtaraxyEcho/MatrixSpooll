@@ -31,9 +31,19 @@ export interface SystemConfigOptions {
   provider_names?: Record<string, string>;
 }
 
+export interface RuntimeToolStatus {
+  available: boolean;
+  path: string | null;
+  version: string | null;
+}
+
 export interface GetSystemConfigResponse {
   settings: SystemConfigSettings;
   options: SystemConfigOptions;
+  runtime_tools?: {
+    ffmpeg: RuntimeToolStatus;
+    ffprobe: RuntimeToolStatus;
+  };
 }
 
 /** 能力桶键（docs/adr/0054）。代码内部术语，界面文案不直接呈现。 */

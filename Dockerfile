@@ -35,6 +35,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tzdata \
     && rm -rf /var/lib/apt/lists/*
 
+# Keep media post-production a build-time contract. Debian's ffmpeg package
+# ships both ffmpeg and ffprobe, which are required by merge, voice, and subtitle jobs.
+RUN ffmpeg -version >/dev/null 2>&1 && ffprobe -version >/dev/null 2>&1
+
 # 升级 pip（清除安全告警）
 RUN python -m pip install --no-cache-dir --upgrade pip
 
@@ -83,7 +87,9 @@ EXPOSE 1241
 
 # 健康检查（沿用 curl）
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:1241/health || exit 1
+    CMD curl -f http://localhost:1241/health \
+      && ffmpeg -version >/dev/null 2>&1 \
+      && ffprobe -version >/dev/null 2>&1 || exit 1
 
 # ---------- 直接使用虚拟环境中的 uvicorn，避免 uv run 的额外同步 ----------
 CMD ["/app/.venv/bin/uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "1241"]

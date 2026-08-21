@@ -134,6 +134,8 @@ class TestGetSystemConfig:
         body = res.json()
         assert "settings" in body
         assert "options" in body
+        assert set(body["runtime_tools"]) == {"ffmpeg", "ffprobe"}
+        assert set(body["runtime_tools"]["ffmpeg"]) == {"available", "path", "version"}
 
     @pytest.mark.unit
     def test_settings_keys(self):

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import math
+import shutil
+import subprocess
 import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -51,6 +53,30 @@ _latest_release_cache: dict[str, datetime | dict[str, str] | None] = {
     "payload": None,
     "fetched_at": None,
 }
+
+
+def _runtime_tool_status(command: str) -> dict[str, Any]:
+    """Return the local media-tool status without allowing shell execution."""
+
+    path = shutil.which(command)
+    if path is None:
+        return {"available": False, "path": None, "version": None}
+    version: str | None = None
+    try:
+        result = subprocess.run(
+            [path, "-version"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=2,
+        )
+        first_line = (result.stdout or result.stderr).splitlines()
+        version = first_line[0].strip() if first_line else None
+    except (OSError, subprocess.SubprocessError):
+        # The executable can disappear between which() and invocation.
+        version = None
+    return {"available": True, "path": path, "version": version}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -349,7 +375,14 @@ async def get_system_config(
 
     options = await _build_options(svc, session)
 
-    return {"settings": settings, "options": options}
+    return {
+        "settings": settings,
+        "options": options,
+        "runtime_tools": {
+            "ffmpeg": _runtime_tool_status("ffmpeg"),
+            "ffprobe": _runtime_tool_status("ffprobe"),
+        },
+    }
 
 
 @router.get("/system/config/model-candidates", response_model=ModelCandidatesResponse)
