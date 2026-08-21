@@ -294,6 +294,8 @@ export function CreateProjectModal() {
     setCreating(true);
     try {
       if (basics.contentMode === "free") {
+        const globals = step2Data?.globalDefaults ?? { video: "", videoI2V: "", videoR2V: "" };
+        const executingVideo = executingVideoModel(models, globals, false);
         const resp = await API.createProject({
           title: basics.title.trim(),
           content_mode: "free",
@@ -301,6 +303,9 @@ export function CreateProjectModal() {
           aspect_ratio: basics.aspectRatio,
           grid_storyboard: false,
           video_backend: models.videoBackend || null,
+          ...(executingVideo && models.videoResolution
+            ? { model_settings: { [executingVideo]: { resolution: models.videoResolution } } }
+            : {}),
         });
         setShowCreateModal(false);
         navigate(`/app/projects/${resp.name}`);

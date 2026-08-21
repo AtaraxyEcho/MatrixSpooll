@@ -28,6 +28,7 @@ import { useAssistantStore } from "@/stores/assistant-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useConfigStatusStore } from "@/stores/config-status-store";
 import { errMsg } from "@/utils/async";
+import { lookupProjectVideoResolution } from "@/utils/provider-models";
 import {
   ROUTE_APP,
   ROUTE_APP_ASSETS,
@@ -256,6 +257,10 @@ function StudioWorkspace() {
     const projectAspectRatio = typeof currentProjectData.aspect_ratio === "string"
       ? currentProjectData.aspect_ratio
       : currentProjectData.aspect_ratio?.video ?? currentProjectData.aspect_ratio?.storyboard;
+    const projectResolution = lookupProjectVideoResolution(
+      currentProjectData,
+      currentProjectData.video_backend ?? "",
+    );
     return (
       <FreeCreationLayout key={`free-${projectName}`}>
         <FreeCreationWorkspace
@@ -263,6 +268,7 @@ function StudioWorkspace() {
           readOnly={isDemoProject(projectName)}
           initialMode={handoffMode}
           initialAspectRatio={projectAspectRatio}
+          initialResolution={projectResolution ?? undefined}
         />
       </FreeCreationLayout>
     );
