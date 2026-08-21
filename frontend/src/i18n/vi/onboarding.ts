@@ -25,7 +25,7 @@ export default {
   'workbench_export_title': 'Xuất',
   'workbench_export_body': 'Sản xuất xong, xuất bản nháp Jianying từ thanh trên cùng để tiếp tục dựng, hoặc tải cả dự án về. Dự án minh hoạ chưa có thành phẩm nên nút xuất không khả dụng.',
   'finish_title': 'Bắt đầu dự án đầu tiên của bạn',
-  'finish_body': 'Tạo dự án và nhập tiểu thuyết hoặc kịch bản là có thể bắt đầu sản xuất. Có thể xem lại phần hướng dẫn này bất cứ lúc nào trong Cài đặt → Giới thiệu.',
+  'finish_body': 'Tạo dự án và nhập tiểu thuyết hoặc kịch bản, hoặc bắt đầu sáng tạo tự do ngay. Có thể xem lại hướng dẫn này bằng nút “Xem lại hướng dẫn” ở đầu trang Cài đặt.',
 
   // Điều khiển hướng dẫn
   'next': 'Tiếp theo',
@@ -136,7 +136,7 @@ export default {
   'demo_shot_6_video': 'Máy lùi ra khi cô bé co lại; váy đổ xuống, góc nhìn chuyển từ ngang mắt sang ngước lên cánh cửa thấp.',
   'demo_shot_6_audio': 'Một tiếng nuốt, vải trượt, chiếc lọ rỗng đặt xuống đất',
 
-  // Mục trong Cài đặt → Giới thiệu
+  // Mục ở đầu trang Cài đặt
   'replay_title': 'Hướng dẫn sử dụng',
   'replay_desc': 'Xem lại phần hướng dẫn lần đầu, tìm hiểu giao diện chính và quy trình cơ bản.',
   'replay_action': 'Xem lại hướng dẫn',

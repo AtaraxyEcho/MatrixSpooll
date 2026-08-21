@@ -77,12 +77,12 @@ MatrixSpooll 当前支持的预置供应商包括：
 - Agnes
 - 自定义 OpenAI 兼容或 Google 兼容供应商
 
-不同供应商支持的媒体类型不同。完整流程通常至少需要：
+不同供应商支持的媒体类型不同。所需能力取决于使用的路径：
 
-- 一个可用的文本生成能力；
-- 一个可用的图像生成能力；
-- 一个可用的视频生成能力；
-- 可选的 TTS 能力。
+- 固定工作流通常需要文本、图像和视频生成能力；
+- 自由创作的文生视频或参考生视频可以只配置视频生成能力；
+- 自由创作选择生图时需要图像生成能力，Agent 模式和固定工作流才需要文本/智能体模型；
+- TTS 能力为可选项。
 
 详细选择建议见 [供应商与模型配置](./providers.md)。
 
@@ -130,7 +130,7 @@ docker compose up -d
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 arcreel
+docker compose logs --tail=100 matrixspooll
 curl http://localhost:1241/health
 ```
 
@@ -162,13 +162,22 @@ AUTH_TOKEN_SECRET=请设置一个长期固定的随机密钥
 POSTGRES_PASSWORD=仅使用字母数字的数据库密码
 ```
 
-启动：
+源码构建版启动（使用仓库中的 Dockerfile）：
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml up -d --build
+```
+
+镜像版启动（拉取已构建镜像）：
+
+```bash
+docker compose -f docker-compose-img.yml pull
+docker compose -f docker-compose-img.yml up -d
 docker compose ps
 curl http://localhost:1241/health
 ```
+
+两种方式选择其一，不要同时启动，以免占用同一个端口。
 
 完整的生产部署、升级、备份和反向代理说明见 [部署与运维](../ops/deployment.md)。
 
@@ -187,11 +196,11 @@ curl http://localhost:1241/health
 - 主模型；
 - 按需要配置不同任务所使用的模型。
 
-保存后先发送一条简单消息验证连接，不要直接开始大批量任务。
+固定工作流或 Agent 模式需要配置智能体模型。自由创作直接生成图片或视频时不会强制调用文本模型；保存后可发送一条简单消息验证连接，不要直接开始大批量任务。
 
 ### 3.2 配置媒体供应商 {#configure-media-providers}
 
-至少配置一个图像和一个视频供应商。
+如果使用自由创作的视频生成，至少配置一个可用的视频供应商；选择生图时再配置图像供应商。固定工作流通常还需要文本/智能体模型。
 
 建议第一次使用以下策略：
 
@@ -213,7 +222,7 @@ curl http://localhost:1241/health
 
 ## 4. 创建第一个项目 {#create-first-project}
 
-在项目列表页点击 **新建项目**。
+在项目列表页点击 **新建项目**。如果只想直接生成内容，也可以从首页 Hero 输入框开始；系统会默认创建自由创作项目，并从提示词截取项目名称。
 
 ### 4.1 选择项目来源 {#choose-project-source}
 
@@ -256,7 +265,7 @@ MatrixSpooll 会按照作者提供的内容建立角色和镜头，不应把成�
 
 ## 5. 使用 AI 助手推进工作流 {#run-workflow-with-assistant}
 
-打开项目工作台右侧的 AI 助手面板。
+固定工作流打开项目工作台右侧的 AI 助手面板。
 
 自由创作项目不需要按下述固定工作流推进。打开项目根路径的自由画布，输入提示词并选择图片、视频或编辑即可；原文直连请求不会强制调用文本模型或中间图片模型。
 

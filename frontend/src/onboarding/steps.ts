@@ -23,7 +23,13 @@
  */
 
 import type { TFunction } from "i18next";
-import { ROUTE_APP_PROJECTS, ROUTE_APP_SETTINGS, WORKSPACE_ROUTE_CHARACTERS, WORKSPACE_ROUTE_EPISODES } from "@/app-routes";
+import {
+  ROUTE_APP,
+  ROUTE_APP_PROJECTS,
+  ROUTE_APP_SETTINGS,
+  WORKSPACE_ROUTE_CHARACTERS,
+  WORKSPACE_ROUTE_EPISODES,
+} from "@/app-routes";
 import { ONBOARDING_ANCHORS } from "./anchors";
 import { DEMO_PROJECT_NAME, DEMO_SCRIPTED_EPISODE } from "./demo-project";
 import type { TourStep } from "./tour";
@@ -69,7 +75,9 @@ export function buildTourSteps(t: TFunction<"onboarding">): TourStep[] {
       anchor: ONBOARDING_ANCHORS.lobbyDemoCard,
       title: t("lobby_demo_title"),
       body: t("lobby_demo_body"),
-      route: ROUTE_APP_PROJECTS,
+      // 演示卡由首页（/app）的 home 模式挂载；项目列表页（/app/projects）不会渲染它，
+      // 否则从设置页进入这一步时 driver 会等待不存在的锚点直到超时。
+      route: ROUTE_APP,
       // 全程只读的例外：这一步的落点动作是导航进演示工作台，不是写操作，因此开放
       // 交互（见 tour.ts 的 `interactive` 语义）；演示卡本身仅在引导运行期间挂载，
       // 退出后随即卸载，不留可写入口。

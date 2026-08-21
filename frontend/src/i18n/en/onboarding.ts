@@ -24,7 +24,7 @@ export default {
   'workbench_export_title': 'Export',
   'workbench_export_body': 'When production is done, export a Jianying draft from the top bar to continue editing, or download the whole project as an archive. The demo project has no finished footage, so the export button is unavailable.',
   'finish_title': 'Start your first project',
-  'finish_body': 'Create a project and import a novel or script to start production. This tour is available any time under Settings → About.',
+  'finish_body': 'Create a project and import a novel or script, or start a free creation directly. You can replay this tour from the “Replay tour” button in the Settings header.',
 
   // Tour controls
   'next': 'Next',
@@ -135,7 +135,7 @@ export default {
   'demo_shot_6_video': 'The camera pulls back as she shrinks; the dress collapses and the angle tilts from eye level up toward the little door.',
   'demo_shot_6_audio': 'A single swallow, cloth sliding, the empty bottle set down',
 
-  // Settings → About entry
+  // Settings header entry
   'replay_title': 'Product tour',
   'replay_desc': 'Replay the first-run tour covering the main interface and the basic workflow.',
   'replay_action': 'Replay tour',

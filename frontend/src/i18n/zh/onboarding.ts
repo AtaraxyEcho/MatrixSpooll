@@ -25,7 +25,7 @@ export default {
   'workbench_export_title': '导出',
   'workbench_export_body': '制作完成后，从顶栏导出剪映草稿继续剪辑，或打包下载整个项目。演示项目没有成片，导出按钮不可用。',
   'finish_title': '开始你的第一个项目',
-  'finish_body': '新建项目并导入小说或剧本，即可开始制作。本引导可随时在「设置 → 关于」中重新查看。',
+  'finish_body': '新建项目并导入小说或剧本，或直接开始自由创作。本引导可随时从设置页顶栏的「重看引导」按钮重新查看。',
 
   // 引导控件
   'next': '下一步',
@@ -137,7 +137,7 @@ export default {
   'demo_shot_6_video': '镜头随她缩小而拉远，裙子塌落，视角从平视转为仰看矮门。',
   'demo_shot_6_audio': '咽下的一声，衣料滑动，空瓶轻放在地',
 
-  // 设置 → 关于 的入口
+  // 设置页顶栏入口
   'replay_title': '使用引导',
   'replay_desc': '重看首次使用引导，了解主要界面和基本流程。',
   'replay_action': '重看引导',

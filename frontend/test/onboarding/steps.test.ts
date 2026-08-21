@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
-import { ROUTE_APP_PROJECTS, ROUTE_APP_SETTINGS } from "@/app-routes";
+import { ROUTE_APP, ROUTE_APP_PROJECTS, ROUTE_APP_SETTINGS } from "@/app-routes";
 import { ONBOARDING_ANCHORS } from "@/onboarding/anchors";
 import { DEMO_PROJECT_NAME, DEMO_SCRIPTED_EPISODE } from "@/onboarding/demo-project";
 import { buildTourSteps } from "@/onboarding/steps";
@@ -28,7 +28,7 @@ describe("buildTourSteps", () => {
       [ONBOARDING_ANCHORS.lobbySettings, "lobby_settings_title", ROUTE_APP_PROJECTS],
       [ONBOARDING_ANCHORS.settingsProviders, "settings_providers_title", ROUTE_APP_SETTINGS],
       [ONBOARDING_ANCHORS.settingsAgent, "settings_agent_title", ROUTE_APP_SETTINGS],
-      [ONBOARDING_ANCHORS.lobbyDemoCard, "lobby_demo_title", ROUTE_APP_PROJECTS],
+      [ONBOARDING_ANCHORS.lobbyDemoCard, "lobby_demo_title", ROUTE_APP],
       [ONBOARDING_ANCHORS.workbenchOverview, "workbench_overview_title", WORKBENCH],
       [ONBOARDING_ANCHORS.workbenchAgent, "workbench_agent_title", WORKBENCH],
       [ONBOARDING_ANCHORS.workbenchLorebook, "workbench_lorebook_title", `${WORKBENCH}/characters`],
