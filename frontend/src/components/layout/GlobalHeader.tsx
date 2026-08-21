@@ -15,6 +15,7 @@ import { UsageDrawer } from "./UsageDrawer";
 import { WorkspaceNotificationsDrawer } from "./WorkspaceNotificationsDrawer";
 import { ExportScopeDialog } from "./ExportScopeDialog";
 import { ProjectMenu } from "./ProjectMenu";
+import { UserMenu } from "./UserMenu";
 import { PhaseStepper } from "./PhaseStepper";
 import { FreeCreationExportMenu } from "./FreeCreationExportMenu";
 
@@ -204,7 +205,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
           <button
             type="button"
             onClick={onNavigateBack}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors focus-ring"
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs transition hover:scale-105 focus-ring"
             style={{ color: "var(--color-text-3)" }}
             onMouseEnter={(e) => (e.currentTarget.style.color = "var(--color-text)")}
             onMouseLeave={(e) => (e.currentTarget.style.color = "var(--color-text-3)")}
@@ -238,7 +239,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
             <button
               type="button"
               onClick={() => setNotificationDrawerOpen(!notificationDrawerOpen)}
-              className="relative grid h-[30px] w-[30px] place-items-center rounded-md transition-colors focus-ring"
+              className="relative grid h-[30px] w-[30px] place-items-center rounded-md transition hover:scale-105 focus-ring"
               style={{
                 color: notificationDrawerOpen
                   ? "var(--color-accent-2)"
@@ -257,7 +258,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
               title={t("dashboard:notification_tooltip", { count: workspaceNotifications.length })}
               aria-label={t("dashboard:open_notification_center")}
             >
-              <Bell className="h-3.5 w-3.5" />
+              <Bell className="h-4 w-4" />
               {unreadNotificationCount > 0 && (
                 <span
                   className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold"
@@ -283,7 +284,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
             <button
               type="button"
               onClick={() => setUsageDrawerOpen(!usageDrawerOpen)}
-              className="inline-flex items-center gap-2 rounded-md px-2.5 py-[5px] text-[11.5px] transition-colors focus-ring"
+              className="inline-flex h-[30px] items-center gap-2 rounded-md px-2.5 text-[11.5px] transition hover:scale-105 focus-ring"
               style={{
                 background: usageDrawerOpen
                   ? "var(--color-accent-dim)"
@@ -343,7 +344,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
             <button
               type="button"
               onClick={() => setTaskHudOpen(!taskHudOpen)}
-              className="relative grid h-[30px] w-[30px] place-items-center rounded-md transition-colors focus-ring"
+              className="relative grid h-[30px] w-[30px] place-items-center rounded-md transition hover:scale-105 focus-ring"
               style={{
                 color: taskHudOpen ? "var(--color-accent-2)" : "var(--color-text-3)",
                 background: taskHudOpen ? "var(--color-accent-dim)" : "transparent",
@@ -374,12 +375,6 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
             <TaskHud anchorRef={taskHudAnchorRef} />
           </div>
 
-          <div
-            aria-hidden="true"
-            className="mx-1 h-[18px] w-px"
-            style={{ background: "var(--color-hairline)" }}
-          />
-
           {/* Export — accent CTA */}
           {variant === "workflow" ? <div
             className="relative"
@@ -390,7 +385,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
               type="button"
               onClick={() => setExportDialogOpen(!exportDialogOpen)}
               disabled={!currentProjectName || exportingProject || demoMode}
-              className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors focus-ring disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-[30px] items-center gap-1.5 rounded-md px-3 text-xs font-semibold transition hover:scale-105 focus-ring disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
               style={{
                 background:
                   "linear-gradient(180deg, oklch(0.82 0.09 295), oklch(0.72 0.09 295))",
@@ -436,7 +431,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
               rememberAssetLibraryReturnTo(window.location.pathname);
               setLocation("~/app/assets");
             }}
-            className="app-workspace-topbar__asset grid h-[30px] w-[30px] place-items-center rounded-md transition-colors focus-ring"
+            className="app-workspace-topbar__asset grid h-[30px] w-[30px] place-items-center rounded-md transition hover:scale-105 focus-ring"
             style={{ color: "var(--color-text-3)" }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "oklch(0.28 0.012 265 / 0.6)";
@@ -463,7 +458,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
                   : "~/app/settings",
               )
             }
-            className="relative grid h-[30px] w-[30px] place-items-center rounded-md transition-colors focus-ring"
+            className="relative grid h-[30px] w-[30px] place-items-center rounded-md transition hover:scale-105 focus-ring"
             style={{ color: "var(--color-text-3)" }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "oklch(0.28 0.012 265 / 0.6)";
@@ -473,8 +468,8 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
               e.currentTarget.style.background = "transparent";
               e.currentTarget.style.color = "var(--color-text-3)";
             }}
-            title={t("settings")}
-            aria-label={t("settings")}
+            title={t("system_settings")}
+            aria-label={t("system_settings")}
           >
             <Settings className="h-4 w-4" />
             {!isConfigComplete && !currentProjectName && (
@@ -485,6 +480,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
               />
             )}
           </button>
+          <UserMenu />
         </div>
       </header>
 

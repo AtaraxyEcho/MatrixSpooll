@@ -22,6 +22,7 @@ class AssetRepository(BaseRepository):
         image_path: str | None = None,
         audio_path: str | None = None,
         source_project: str | None = None,
+        owner_user_id: str | None = None,
     ) -> Asset:
         asset = Asset(
             id=str(uuid.uuid4()),
@@ -32,6 +33,7 @@ class AssetRepository(BaseRepository):
             image_path=image_path,
             audio_path=audio_path,
             source_project=source_project,
+            owner_user_id=owner_user_id,
         )
         self.session.add(asset)
         await self.session.flush()

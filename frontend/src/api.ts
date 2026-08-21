@@ -153,6 +153,8 @@ export interface LoginResponse {
   token_type: string;
   username?: string | null;
   role?: "admin" | "member" | null;
+  nickname?: string | null;
+  avatar_path?: string | null;
 }
 
 /** Standard error response body from backend (mirrors FastAPI HTTPException detail). */
@@ -3304,6 +3306,15 @@ class API {
     const filename = parts.slice(2).join("/");
     const qs = fp ? `?fp=${encodeURIComponent(fp)}` : "";
     return `${API_BASE}/global-assets/${type}/${filename}${qs}`;
+  }
+
+  static getAvatarUrl(path: string | null, fp?: string | null): string | null {
+    if (!path) return null;
+    const parts = path.split("/");
+    if (parts.length < 2 || parts[0] !== "_avatars") return null;
+    const filename = parts[parts.length - 1];
+    const qs = fp ? `?fp=${encodeURIComponent(fp)}` : "";
+    return `${API_BASE}/avatars/${filename}${qs}`;
   }
 
   static async getGlobalAssetFile(asset: Asset): Promise<File> {

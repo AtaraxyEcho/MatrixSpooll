@@ -61,5 +61,6 @@ export default {
   "upload_sheet_short": "Upload",
   "edit": "Edit",
   "delete": "Delete",
+  "uploaded_by": "Uploaded by",
   "meta_updated_at": "Updated {{date}}",
 };

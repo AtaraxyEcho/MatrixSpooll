@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from lib.agent_profile import agent_profile_dir
 from lib.app_data_dir import app_data_dir
 from lib.artifact_manifest import ArtifactBasisDescriptor
+from lib.aspect_size import is_valid_aspect_ratio
 from lib.asset_rename import (
     AssetRenameConflictError,
     AssetRenameNotFoundError,
@@ -48,7 +49,6 @@ from lib.asset_types import (
     resolve_asset_key,
     validate_asset_name,
 )
-from lib.aspect_size import is_valid_aspect_ratio
 from lib.audio_utils import discard_stale_reference_audio, resolve_audio_ref_path, resolve_stale_reference_audio
 from lib.episode_ledger import SOURCE_TEXT_SUFFIXES
 from lib.episode_paths import (
@@ -354,6 +354,12 @@ class ProjectManager:
         root.mkdir(parents=True, exist_ok=True)
         for sub in ("character", "scene", "prop"):
             (root / sub).mkdir(exist_ok=True)
+        return root
+
+    def get_user_avatars_root(self) -> Path:
+        """返回用户头像根目录（`_avatars/`），目录不存在时自动创建。"""
+        root = self.projects_root / "_avatars"
+        root.mkdir(parents=True, exist_ok=True)
         return root
 
     def create_project(self, name: str, content_mode: ContentMode = "narration") -> Path:
@@ -2324,7 +2330,9 @@ class ProjectManager:
         else:
             generation_mode = project.setdefault("generation_mode", _DEFAULT_GENERATION_MODE)
             if not isinstance(generation_mode, str) or generation_mode not in VALID_GENERATION_MODES:
-                raise ValueError(f"generation_mode 值无效: {generation_mode!r}，必须是 {sorted(VALID_GENERATION_MODES)}")
+                raise ValueError(
+                    f"generation_mode 值无效: {generation_mode!r}，必须是 {sorted(VALID_GENERATION_MODES)}"
+                )
         grid_storyboard = project.setdefault("grid_storyboard", False)
         if not isinstance(grid_storyboard, bool):
             raise ValueError(f"grid_storyboard 必须是布尔值，当前为 {grid_storyboard!r}")

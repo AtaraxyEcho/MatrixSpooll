@@ -4,14 +4,20 @@
 提供 OAuth2 登录和 token 验证接口。
 """
 
+import asyncio
 import logging
+from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
+from lib.db import async_session_factory
+from lib.db.models.user import User
 from lib.i18n import Translator
+from lib.project_manager import get_project_manager
 from server.auth import (
     CurrentUser,
     authenticate_database_user,
@@ -30,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+ALLOWED_AVATAR_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
+
 # 公开端点：拿到 token 之前必须可达，注册时不挂 Bearer 依赖。
 public_router = APIRouter()
 
@@ -42,6 +51,8 @@ class TokenResponse(BaseModel):
     token_type: str
     username: str | None = None
     role: str | None = None
+    nickname: str | None = None
+    avatar_path: str | None = None
 
 
 class VerifyResponse(BaseModel):
@@ -54,11 +65,17 @@ class CurrentUserResponse(BaseModel):
     id: str
     username: str
     role: str
+    nickname: str | None = None
+    avatar_path: str | None = None
 
 
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=200)
     new_password: str = Field(min_length=8, max_length=200)
+
+
+class ProfileUpdateRequest(BaseModel):
+    nickname: str | None = Field(default=None, max_length=100)
 
 
 class AuthStatusResponse(BaseModel):
@@ -85,6 +102,7 @@ async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     _t: Translator,
     request: Request,
+    response: Response,
     device_id: Annotated[str | None, Form()] = None,
 ):
     """用户登录
@@ -103,11 +121,22 @@ async def login_for_access_token(
                 user_agent=request.headers.get("user-agent"),
             )
             token = create_token(user.username, user_id=user.id, session_id=session.id, role=user.role)
+            response.set_cookie(
+                "arcreel_auth_token",
+                token,
+                httponly=True,
+                secure=request.url.scheme == "https",
+                samesite="lax",
+                path="/api/v1",
+                max_age=7 * 24 * 3600,
+            )
             return TokenResponse(
                 access_token=token,
                 token_type="bearer",
                 username=user.username,
                 role=user.role,
+                nickname=user.nickname,
+                avatar_path=user.avatar_path,
             )
 
     if is_auth_enabled() and (
@@ -123,6 +152,15 @@ async def login_for_access_token(
 
     token = create_token(form_data.username)
     logger.info("用户登录成功: %s", form_data.username)
+    response.set_cookie(
+        "arcreel_auth_token",
+        token,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        path="/api/v1",
+        max_age=7 * 24 * 3600,
+    )
     return TokenResponse(access_token=token, token_type="bearer", username=form_data.username, role="admin")
 
 
@@ -137,15 +175,130 @@ async def verify(
     return VerifyResponse(valid=True, username=current_user.sub, role=current_user.role)
 
 
+async def _load_user_profile(user_id: str) -> tuple[str | None, str | None]:
+    """按 users.id 取 (nickname, avatar_path)；记录不存在时返回 (None, None)。"""
+    async with async_session_factory() as s:
+        user = (await s.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    return (user.nickname, user.avatar_path) if user else (None, None)
+
+
+def _delete_avatar_file(rel_path: str) -> None:
+    """删除头像文件（按文件名从 _avatars 根取，不拼接路径防越界）；缺失视为成功。"""
+    root = get_project_manager().get_user_avatars_root()
+    path = root / Path(rel_path).name
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError:
+        logger.warning("delete avatar file failed: %s", rel_path)
+
+
 @router.get("/auth/me", response_model=CurrentUserResponse)
 async def current_user(current_user: CurrentUser) -> CurrentUserResponse:
-    return CurrentUserResponse(id=current_user.id, username=current_user.sub, role=current_user.role)
+    nickname, avatar_path = await _load_user_profile(current_user.id)
+    return CurrentUserResponse(
+        id=current_user.id,
+        username=current_user.sub,
+        role=current_user.role,
+        nickname=nickname,
+        avatar_path=avatar_path,
+    )
+
+
+@router.put("/auth/me", response_model=CurrentUserResponse)
+async def update_profile(
+    req: ProfileUpdateRequest,
+    current_user: CurrentUser,
+    _t: Translator,
+) -> CurrentUserResponse:
+    """更新当前用户资料（当前仅昵称）；空串按清空处理，回退显示 username。"""
+    nickname = req.nickname.strip() if isinstance(req.nickname, str) else None
+    if nickname == "":
+        nickname = None
+    async with async_session_factory() as s:
+        user = (await s.execute(select(User).where(User.id == current_user.id))).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail=_t("admin_user_not_found"))
+        user.nickname = nickname
+        await s.commit()
+        avatar_path = user.avatar_path
+    return CurrentUserResponse(
+        id=current_user.id,
+        username=current_user.sub,
+        role=current_user.role,
+        nickname=nickname,
+        avatar_path=avatar_path,
+    )
+
+
+@router.put("/auth/me/avatar", response_model=CurrentUserResponse)
+async def update_avatar(
+    current_user: CurrentUser,
+    _t: Translator,
+    avatar: UploadFile = File(...),
+) -> CurrentUserResponse:
+    """上传/更换当前用户头像；旧文件（扩展名不同时）落库后清理。"""
+    ext = Path(avatar.filename or "").suffix.lower()
+    if ext not in ALLOWED_AVATAR_EXTS:
+        raise HTTPException(status_code=415, detail=_t("invalid_image_format"))
+    data = await avatar.read()
+    if len(data) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=413, detail=_t("avatar_too_large"))
+
+    rel = f"_avatars/{current_user.id}{ext}"
+    target = get_project_manager().get_user_avatars_root() / f"{current_user.id}{ext}"
+    await asyncio.to_thread(target.write_bytes, data)
+
+    async with async_session_factory() as s:
+        user = (await s.execute(select(User).where(User.id == current_user.id))).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail=_t("admin_user_not_found"))
+        old = user.avatar_path
+        user.avatar_path = rel
+        await s.commit()
+        nickname = user.nickname
+    if old and old != rel:
+        _delete_avatar_file(old)
+    return CurrentUserResponse(
+        id=current_user.id,
+        username=current_user.sub,
+        role=current_user.role,
+        nickname=nickname,
+        avatar_path=rel,
+    )
+
+
+@router.delete("/auth/me/avatar", response_model=CurrentUserResponse)
+async def remove_avatar(
+    current_user: CurrentUser,
+    _t: Translator,
+) -> CurrentUserResponse:
+    """移除当前用户头像，回退为首字母占位。"""
+    async with async_session_factory() as s:
+        user = (await s.execute(select(User).where(User.id == current_user.id))).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail=_t("admin_user_not_found"))
+        old = user.avatar_path
+        user.avatar_path = None
+        await s.commit()
+        nickname = user.nickname
+    if old:
+        _delete_avatar_file(old)
+    return CurrentUserResponse(
+        id=current_user.id,
+        username=current_user.sub,
+        role=current_user.role,
+        nickname=nickname,
+        avatar_path=None,
+    )
 
 
 @router.post("/auth/logout", status_code=204)
-async def logout(current_user: CurrentUser) -> None:
+async def logout(current_user: CurrentUser, response: Response) -> None:
     if current_user.session_id:
         await revoke_user_session(current_user.session_id, current_user.id)
+    response.delete_cookie("arcreel_auth_token", path="/api/v1")
 
 
 @router.post("/auth/password", status_code=204)

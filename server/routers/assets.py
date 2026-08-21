@@ -10,9 +10,11 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.api_errors import NotFoundError
 from lib.artifact_activation import register_artifact_entries_atomically, resolve_current_artifact_target
@@ -29,11 +31,14 @@ from lib.asset_types import (
     resolve_asset_key,
     validate_asset_name,
 )
-from lib.db import async_session_factory
+from lib.db import async_session_factory, get_async_session
+from lib.db.models.user import User
 from lib.db.repositories.asset_repo import AssetRepository
 from lib.i18n import Translator
 from lib.project_manager import ProjectManager, get_project_manager
+from server.auth import CurrentUser
 from server.routers._asset_router_factory import localize_project_asset_name_conflict
+from server.services.project_access import resolve_project_access
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +56,8 @@ def _validate_asset_name(name: str, _t: Translator) -> str:
         raise HTTPException(status_code=400, detail=_t("asset_invalid_name", name=name))
 
 
-def _serialize(asset) -> dict:
+def _serialize(asset, owner: User | None = None) -> dict:
+    """序列化资产；owner 为上传者 User 记录（可为 None，表示未登记或已删除）。"""
     return {
         "id": asset.id,
         "type": asset.type,
@@ -61,8 +67,31 @@ def _serialize(asset) -> dict:
         "image_path": asset.image_path,
         "audio_path": asset.audio_path,
         "source_project": asset.source_project,
+        "owner_user_id": asset.owner_user_id,
+        "owner": (
+            {"username": owner.username, "nickname": owner.nickname, "avatar_path": owner.avatar_path}
+            if owner is not None
+            else None
+        ),
         "updated_at": asset.updated_at.isoformat() if asset.updated_at else None,
     }
+
+
+async def _load_asset_owner(owner_user_id: str | None) -> User | None:
+    if not owner_user_id:
+        return None
+    async with async_session_factory() as s:
+        return (await s.execute(select(User).where(User.id == owner_user_id))).scalar_one_or_none()
+
+
+async def _load_asset_owners(owner_ids: list[str | None]) -> dict[str, User]:
+    """批量取上传者，避免列表接口 N+1 查询。"""
+    ids = [i for i in set(owner_ids) if i]
+    if not ids:
+        return {}
+    async with async_session_factory() as s:
+        users = (await s.execute(select(User).where(User.id.in_(ids)))).scalars().all()
+    return {u.id: u for u in users}
 
 
 async def _save_upload(file: UploadFile, asset_type: str, _t: Translator) -> str:
@@ -103,7 +132,8 @@ async def list_assets(
 ):
     async with async_session_factory() as s:
         items = await AssetRepository(s).list(type=type, q=q, limit=limit, offset=offset)
-        return {"items": [_serialize(a) for a in items]}
+    owners = await _load_asset_owners([a.owner_user_id for a in items])
+    return {"items": [_serialize(a, owners.get(a.owner_user_id or "")) for a in items]}
 
 
 @router.get("/{asset_id}")
@@ -112,11 +142,13 @@ async def get_asset(asset_id: str, _t: Translator):
         a = await AssetRepository(s).get_by_id(asset_id)
         if not a:
             raise HTTPException(status_code=404, detail=_t("asset_not_found", name=asset_id))
-        return {"asset": _serialize(a)}
+    owner = await _load_asset_owner(a.owner_user_id)
+    return {"asset": _serialize(a, owner)}
 
 
 @router.post("")
 async def create_asset(
+    user: CurrentUser,
     _t: Translator,
     type: str = Form(...),
     name: str = Form(...),
@@ -145,6 +177,7 @@ async def create_asset(
                     voice_style=voice_style,
                     image_path=image_path,
                     source_project=None,
+                    owner_user_id=user.id,
                 )
                 await s.commit()
                 await s.refresh(a)
@@ -162,7 +195,8 @@ async def create_asset(
             _delete_global_asset_file(image_path)
         raise
 
-    return {"asset": _serialize(a)}
+    owner = await _load_asset_owner(a.owner_user_id)
+    return {"asset": _serialize(a, owner)}
 
 
 class UpdateAssetRequest(BaseModel):
@@ -195,7 +229,8 @@ async def update_asset(
         except IntegrityError:
             await s.rollback()
             raise HTTPException(status_code=409, detail=_t("asset_already_exists", name=patch.get("name", "")))
-    return {"asset": _serialize(a)}
+    owner = await _load_asset_owner(a.owner_user_id)
+    return {"asset": _serialize(a, owner)}
 
 
 @router.delete("/{asset_id}", status_code=204)
@@ -246,7 +281,8 @@ async def replace_image(
     if old_path and old_path != new_path:
         _delete_global_asset_file(old_path)
 
-    return {"asset": _serialize(a)}
+    owner = await _load_asset_owner(a.owner_user_id)
+    return {"asset": _serialize(a, owner)}
 
 
 class FromProjectRequest(BaseModel):
@@ -261,7 +297,11 @@ class FromProjectRequest(BaseModel):
 async def from_project(
     req: FromProjectRequest,
     _t: Translator,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
 ):
+    await resolve_project_access(req.project_name, user, session, required_role="viewer")
+
     # 1) 类型合法性
     if req.resource_type not in GLOBAL_LIBRARY_ASSET_TYPES:
         raise HTTPException(status_code=400, detail=_t("asset_invalid_type"))
@@ -392,6 +432,7 @@ async def from_project(
                     image_path=new_image_path,
                     audio_path=new_audio_path,
                     source_project=req.project_name,
+                    owner_user_id=user.id,
                 )
                 await s.commit()
                 await s.refresh(a)
@@ -409,6 +450,7 @@ async def from_project(
                         image_path=new_image_path,
                         audio_path=new_audio_path,
                         source_project=req.project_name,
+                        owner_user_id=user.id,
                     )
                     await s.commit()
                     await s.refresh(a)
@@ -431,7 +473,8 @@ async def from_project(
             _delete_global_asset_file(new_audio_path)
         raise
 
-    return {"asset": _serialize(a)}
+    owner = await _load_asset_owner(a.owner_user_id)
+    return {"asset": _serialize(a, owner)}
 
 
 class ApplyToProjectRequest(BaseModel):

@@ -50,7 +50,7 @@ body {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, auto);
     align-items: center;
-    gap: 14px;
+    gap: 18px;
 }
 
 .app-workspace-topbar__left,
@@ -61,14 +61,14 @@ body {
 .app-workspace-topbar__actions {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 18px;
 }
 
 .app-lobby-topbar {
     display: grid;
     grid-template-columns: auto minmax(220px, 420px) minmax(0, 1fr);
     align-items: center;
-    gap: 16px;
+    gap: 18px;
     min-height: var(--app-topbar-height);
 }
 
@@ -88,7 +88,7 @@ body {
     min-width: 0;
     align-items: center;
     justify-content: flex-end;
-    gap: 6px;
+    gap: 18px;
 }
 
 .app-settings-topbar {
@@ -1272,6 +1272,13 @@ body {
 
 .home-project-rail {
     overscroll-behavior-inline: contain;
+    /* 横向滚动保留，但隐藏滚动条，保持顶栏下方视觉干净 */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.home-project-rail::-webkit-scrollbar {
+    display: none;
 }
 
 .home-project-rail > * {
@@ -1305,7 +1312,7 @@ body {
     }
 
     .app-workspace-topbar__actions {
-        gap: 0;
+        gap: 18px;
     }
 
     .app-lobby-topbar {
