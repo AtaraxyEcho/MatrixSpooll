@@ -16,8 +16,10 @@ services:
       retries: 5
 
   matrixspooll:
-    # 构建版：在部署机使用仓库根目录的 Dockerfile 构建。
-    build: ../../
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    # 构建版使用仓库根目录 Dockerfile，镜像内包含 ffmpeg 和 ffprobe。
     ports:
       - "1241:1241"
     env_file: .env
