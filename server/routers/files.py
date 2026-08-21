@@ -16,8 +16,9 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Body, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib import script_review
 from lib.api_errors import NotFoundError
@@ -30,6 +31,7 @@ from lib.audio_utils import (
     probe_audio_duration_seconds,
 )
 from lib.config.resolver import VisionCapabilityError
+from lib.db import get_async_session
 from lib.episode_paths import (
     REFERENCE_VIDEO_STEP1_FILENAME,
     REFERENCE_VIDEO_STEP1_LEGACY_FILENAME,
@@ -53,14 +55,28 @@ from lib.source_loader import (
     SourceLoader,
     UnsupportedFormatError,
 )
+from server.auth import CurrentUserInfo, database_auth_initialized, get_current_user_flexible
 from server.routers._script_review_errors import raise_review_error
+from server.services.project_access import resolve_project_access
 from server.services.script_review import ScriptReviewError, ScriptReviewService
 
 router = APIRouter()
 
-# 公开端点：前端经 <img src> / <video src> 加载，浏览器直发请求带不了 Authorization header。
-# 两者都有 safe_join 路径穿越防护，但内容本身对未认证请求可读。
+# 浏览器经 <img src> / <video src> 加载时不会携带 Authorization header，
+# 因此通过同源 HttpOnly Cookie 认证，再复用项目成员授权。
 public_router = APIRouter()
+
+
+async def _get_project_file_user(request: Request) -> CurrentUserInfo:
+    """Resolve browser-native media credentials, with a pre-lifespan test fallback."""
+
+    authorization = request.headers.get("authorization", "")
+    bearer = authorization[7:].strip() if authorization.lower().startswith("bearer ") else None
+    query_token = request.query_params.get("token")
+    cookie_token = request.cookies.get("arcreel_auth_token")
+    if not bearer and not query_token and not cookie_token and not database_auth_initialized():
+        return CurrentUserInfo(id="default", sub="testuser", role="admin")
+    return await get_current_user_flexible(token=bearer, query_token=query_token, cookie_token=cookie_token)
 
 
 def _require_filename(file: UploadFile, _t: Callable[..., str]) -> str:
@@ -197,9 +213,17 @@ ALLOWED_EXTENSIONS = {upload_type: list(spec.allowed_exts) for upload_type, spec
 
 
 @public_router.get("/files/{project_name}/{path:path}")
-async def serve_project_file(project_name: str, path: str, request: Request, _t: Translator):
+async def serve_project_file(
+    project_name: str,
+    path: str,
+    request: Request,
+    _t: Translator,
+    user: CurrentUserInfo = Depends(_get_project_file_user),
+    session: AsyncSession = Depends(get_async_session),
+):
     """服务项目内的静态文件（图片/视频）"""
     try:
+        await resolve_project_access(project_name, user, session, required_role="viewer")
 
         def _sync():
             project_dir = get_project_manager().get_project_path(project_name)
@@ -247,6 +271,21 @@ async def serve_global_asset(asset_type: str, filename: str, _t: Translator):
     if not path.is_file():
         raise HTTPException(status_code=404, detail=_t("file_not_found", path=filename))
 
+    return FileResponse(str(path))
+
+
+@public_router.get("/avatars/{filename}")
+async def serve_user_avatar(filename: str, _t: Translator):
+    """服务 _avatars 下的用户头像图片（文件名即 ``{user_id}.{ext}``）。"""
+    if "/" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail=_t("invalid_asset_filename"))
+    root = get_project_manager().get_user_avatars_root()
+    try:
+        path = safe_join(root, filename)
+    except PathTraversalError:
+        raise HTTPException(status_code=403, detail=_t("forbidden_access"))
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=_t("file_not_found", path=filename))
     return FileResponse(str(path))
 
 

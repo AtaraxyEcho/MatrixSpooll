@@ -51,7 +51,7 @@ export function ProjectMenu() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex min-w-0 items-center gap-2 rounded-md py-[3px] pl-1 pr-2 transition-colors focus-ring"
+        className="flex min-w-0 items-center gap-2 rounded-md py-[3px] pl-1 pr-2 transition hover:scale-105 focus-ring"
         style={{ background: open ? "oklch(0.26 0.012 265 / 0.5)" : "transparent" }}
         onMouseEnter={(e) => {
           if (!open) e.currentTarget.style.background = "oklch(0.26 0.012 265 / 0.5)";

@@ -63,5 +63,6 @@ export default {
   "upload_sheet_short": "上传",
   "edit": "编辑",
   "delete": "删除",
+  "uploaded_by": "上传者",
   "meta_updated_at": "{{date}} 更新",
 } satisfies Record<keyof typeof enAssets, string>;

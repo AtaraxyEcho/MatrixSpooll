@@ -73,6 +73,35 @@ function AssetCardImpl({ asset, onEdit, onDelete }: Props) {
             </button>
           </div>
         </div>
+        {asset.owner ? (
+          <div
+            className="mt-2.5 flex items-center justify-end gap-1.5"
+            title={t("uploaded_by")}
+          >
+            {asset.owner.avatar_path ? (
+              <img
+                src={API.getAvatarUrl(asset.owner.avatar_path, asset.owner.avatar_path) ?? undefined}
+                alt=""
+                className="h-[18px] w-[18px] shrink-0 rounded-full object-cover"
+              />
+            ) : (
+              <span
+                aria-hidden
+                className="grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full text-[9px] font-bold"
+                style={{
+                  background:
+                    "linear-gradient(135deg, var(--color-accent) 0%, oklch(0.55 0.12 260) 100%)",
+                  color: "oklch(0.12 0 0)",
+                }}
+              >
+                {((asset.owner.nickname ?? asset.owner.username) || "?").slice(0, 1).toUpperCase()}
+              </span>
+            )}
+            <span className="max-w-[110px] truncate text-[10.5px] text-text-4">
+              {asset.owner.nickname ?? asset.owner.username}
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );

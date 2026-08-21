@@ -67,7 +67,13 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
         logout();
         throw new Error(t("admin:admin_required"));
       }
-      login(data.access_token, data.username ?? username, role);
+      login(
+        data.access_token,
+        data.username ?? username,
+        role,
+        data.nickname ?? null,
+        data.avatar_path ?? null,
+      );
       const returnTo = safeReturnPath(new URLSearchParams(search).get("from"));
       setLocation(returnTo ?? (adminOnly ? ROUTE_ADMIN_MANAGER : ROUTE_APP));
     } catch (err) {

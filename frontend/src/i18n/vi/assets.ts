@@ -63,5 +63,6 @@ export default {
   "upload_sheet_short": "Tải lên",
   "edit": "Chỉnh sửa",
   "delete": "Xóa",
+  "uploaded_by": "Người đăng",
   "meta_updated_at": "Cập nhật {{date}}",
 } satisfies Record<keyof typeof enAssets, string>;

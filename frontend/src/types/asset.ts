@@ -9,6 +9,8 @@ export interface Asset {
   image_path: string | null;
   audio_path: string | null;
   source_project: string | null;
+  owner_user_id: string | null;
+  owner: { username: string; nickname: string | null; avatar_path: string | null } | null;
   updated_at: string | null;
 }
 

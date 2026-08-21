@@ -24,7 +24,7 @@ from typing import Annotated
 from uuid import uuid4
 
 import jwt
-from fastapi import Depends, HTTPException, Query
+from fastapi import Cookie, Depends, HTTPException, Query
 from fastapi.security import OAuth2PasswordBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel, ConfigDict
@@ -687,6 +687,7 @@ async def get_current_user(
 async def get_current_user_flexible(
     token: Annotated[str | None, Depends(oauth2_scheme_optional)] = None,
     query_token: str | None = Query(None, alias="token"),
+    cookie_token: str | None = Cookie(None, alias="arcreel_auth_token"),
 ) -> CurrentUserInfo:
     """SSE 认证依赖 — 同时支持 Authorization header 和 ?token= query param。
 
@@ -694,7 +695,7 @@ async def get_current_user_flexible(
     """
     if not is_auth_enabled():
         return _anonymous_user()
-    raw = token or query_token
+    raw = token or query_token or cookie_token
     if not raw:
         raise HTTPException(
             status_code=401,
