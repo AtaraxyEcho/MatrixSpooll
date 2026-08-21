@@ -88,6 +88,7 @@ export interface FreeCreationWorkspaceProps {
   readOnly?: boolean;
   initialMode?: ComposerMode;
   initialAspectRatio?: string;
+  initialResolution?: string;
 }
 
 interface ComposerReference {
@@ -148,12 +149,14 @@ export function FreeCreationWorkspace({
   readOnly = false,
   initialMode = "video",
   initialAspectRatio,
+  initialResolution,
 }: FreeCreationWorkspaceProps) {
   const { t } = useTranslation("dashboard");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingFrameRoleRef = useRef<"first_frame" | "last_frame" | null>(null);
   const loadSequenceRef = useRef(0);
   const initialProjectAspectRatio = initialAspectRatio?.trim() || "16:9";
+  const initialProjectVideoResolution = initialResolution?.trim() || "1080p";
   const initialMediaType: FreeCreationMediaType = initialMode === "image" ? "image" : "video";
   const [storedComposerPreferences] = useState<FreeCreationComposerPreferences | null>(() => (
     readFreeCreationComposerPreferences(projectName)
@@ -172,7 +175,8 @@ export function FreeCreationWorkspace({
   const [uploads, setUploads] = useState<FreeCreationUpload[]>([]);
   const [aspectRatio, setAspectRatio] = useState(storedComposerPreferences?.aspectRatio ?? initialProjectAspectRatio);
   const [resolution, setResolution] = useState(
-    storedComposerPreferences?.resolution ?? (restoredMediaType === "image" ? "1.5k" : "1080p"),
+    storedComposerPreferences?.resolution
+      ?? (restoredMediaType === "image" ? "1.5k" : initialProjectVideoResolution),
   );
   const initialDimensions = dimensionsFor("1.5k", initialProjectAspectRatio);
   const [imageWidth, setImageWidth] = useState(storedComposerPreferences?.imageWidth ?? initialDimensions.width);

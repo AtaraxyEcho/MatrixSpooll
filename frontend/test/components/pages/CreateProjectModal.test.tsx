@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Stub URL object APIs not available in jsdom
 globalThis.URL.createObjectURL ??= vi.fn(() => "blob:mock");
 globalThis.URL.revokeObjectURL ??= vi.fn();
-import "@/i18n";
+import i18n from "@/i18n";
 import { CreateProjectModal } from "@/components/pages/CreateProjectModal";
 import { API } from "@/api";
 import { useProjectsStore } from "@/stores/projects-store";
@@ -61,6 +61,7 @@ const mockProviders = {
           default: false,
           supported_durations: [4, 6, 8],
           duration_resolution_constraints: {},
+          resolutions: ["720p", "1080p"],
         },
       },
     },
@@ -147,6 +148,31 @@ describe("CreateProjectModal", () => {
     expect(payload).not.toHaveProperty("default_text_backend");
     expect(payload).not.toHaveProperty("style_template_id");
     expect(navigateMock).toHaveBeenCalledWith("/app/projects/demo-proj");
+  });
+
+  it("persists the selected free creation video resolution for the chosen model", async () => {
+    render(<CreateProjectModal />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "free resolution" } });
+    fireEvent.click(screen.getByRole("radio", { name: /自由创作/ }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("templates:next_step") }));
+
+    const modelSelect = await screen.findByRole("combobox", {
+      name: i18n.t("templates:model_video_default"),
+    });
+    fireEvent.click(modelSelect);
+    fireEvent.click(await screen.findByRole("option", { name: /veo-3/ }));
+    fireEvent.change(screen.getByRole("combobox", { name: i18n.t("templates:resolution_label") }), {
+      target: { value: "720p" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("templates:next_step") }));
+
+    await waitFor(() => expect(API.createProject).toHaveBeenCalledWith(expect.objectContaining({
+      content_mode: "free",
+      video_backend: "gemini-aistudio/veo-3",
+      model_settings: {
+        "gemini-aistudio/veo-3": { resolution: "720p" },
+      },
+    })));
   });
 
   it("submits createProject with default template when Create clicked on step 3", async () => {

@@ -177,6 +177,13 @@ describe("FreeCreationWorkspace", () => {
     expect(screen.getByRole("button", { name: `${t("free_creation_duration")} control` })).toHaveTextContent("12s");
   });
 
+  it("uses the project video resolution before project-scoped composer parameters exist", async () => {
+    render(<FreeCreationWorkspace projectName="resolution-project" initialResolution="720p" />);
+
+    const videoSettings = await screen.findByRole("button", { name: t("home_video_settings") });
+    await waitFor(() => expect(videoSettings).toHaveTextContent("720P"));
+  });
+
   it("uses the declared duration bounds and snaps to a supported duration", async () => {
     const create = vi.spyOn(API, "createFreeCreation").mockResolvedValue({
       success: true,

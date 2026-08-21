@@ -21,8 +21,20 @@ vi.mock("@/components/layout", () => ({
 }));
 
 vi.mock("@/components/canvas/FreeCreationWorkspace", () => ({
-  FreeCreationWorkspace: ({ initialAspectRatio }: { initialAspectRatio?: string }) => (
-    <div data-testid="free-creation-canvas" data-initial-aspect-ratio={initialAspectRatio}>Free Creation Canvas</div>
+  FreeCreationWorkspace: ({
+    initialAspectRatio,
+    initialResolution,
+  }: {
+    initialAspectRatio?: string;
+    initialResolution?: string;
+  }) => (
+    <div
+      data-testid="free-creation-canvas"
+      data-initial-aspect-ratio={initialAspectRatio}
+      data-initial-resolution={initialResolution}
+    >
+      Free Creation Canvas
+    </div>
   ),
 }));
 
@@ -161,6 +173,10 @@ describe("AppRoutes", () => {
         content_mode: "free",
         style: "",
         aspect_ratio: "21:9",
+        video_backend: "anyfast/seedance-2.0-ultra",
+        model_settings: {
+          "anyfast/seedance-2.0-ultra": { resolution: "2k" },
+        },
         episodes: [],
         characters: {},
         scenes: {},
@@ -173,6 +189,7 @@ describe("AppRoutes", () => {
 
     expect(await screen.findByTestId("free-creation-layout")).toBeInTheDocument();
     expect(screen.getByTestId("free-creation-canvas")).toHaveAttribute("data-initial-aspect-ratio", "21:9");
+    expect(screen.getByTestId("free-creation-canvas")).toHaveAttribute("data-initial-resolution", "2k");
     expect(screen.queryByTestId("studio-layout")).not.toBeInTheDocument();
     expect(screen.queryByTestId("studio-canvas-router")).not.toBeInTheDocument();
   });
