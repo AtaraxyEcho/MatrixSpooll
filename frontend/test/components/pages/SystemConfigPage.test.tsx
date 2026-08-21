@@ -4,9 +4,10 @@ import { Router } from "wouter";
 import { memoryLocation } from "wouter/memory-location";
 import { API } from "@/api";
 import { useConfigStatusStore } from "@/stores/config-status-store";
+import { useOnboardingStore } from "@/stores/onboarding-store";
 import { SystemConfigPage } from "@/components/pages/SystemConfigPage";
 import { BRAND } from "@/branding";
-import type { GetSystemConfigResponse, GetSystemVersionResponse, ProviderInfo } from "@/types";
+import type { GetSystemConfigResponse, ProviderInfo } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,24 +62,6 @@ function makeProviders(overrides?: Partial<ProviderInfo>): { providers: Provider
   };
 }
 
-function makeVersionResponse(overrides?: Partial<GetSystemVersionResponse>): GetSystemVersionResponse {
-  return {
-    current: { version: "0.9.0" },
-    latest: {
-      version: "0.9.1",
-      tag_name: "v0.9.1",
-      name: "0.9.1",
-      body: "## What's Changed\n- add about tab",
-      html_url: "https://github.com/example/ArcReel/releases/tag/v0.9.1",
-      published_at: "2026-04-21T08:00:00Z",
-    },
-    has_update: true,
-    checked_at: "2026-04-21T09:00:00Z",
-    update_check_error: null,
-    ...overrides,
-  };
-}
-
 function renderPage(path = "/app/settings") {
   const location = memoryLocation({ path, record: true });
   return render(
@@ -95,13 +78,13 @@ function renderPage(path = "/app/settings") {
 describe("SystemConfigPage", () => {
   beforeEach(() => {
     useConfigStatusStore.setState(useConfigStatusStore.getInitialState(), true);
+    useOnboardingStore.setState(useOnboardingStore.getInitialState(), true);
     vi.restoreAllMocks();
 
     // Default: silence child section network calls so tests don't hang
     vi.spyOn(API, "getSystemConfig").mockResolvedValue(makeConfigResponse());
     vi.spyOn(API, "getProviders").mockResolvedValue(makeProviders());
     vi.spyOn(API, "listCustomProviders").mockResolvedValue({ providers: [] });
-    vi.spyOn(API, "getSystemVersion").mockResolvedValue(makeVersionResponse());
     vi.spyOn(API, "getProviderConfig").mockResolvedValue({
       id: "gemini",
       display_name: "Google Gemini",
@@ -202,28 +185,19 @@ describe("SystemConfigPage", () => {
     expect(link).toHaveAttribute("href", "/app/projects");
   });
 
-  it("loads version info when entering the about section", async () => {
+  it("renders the attribution-only About section", async () => {
     renderPage("/app/settings?section=about");
 
-    expect(await screen.findByText("0.9.0")).toBeInTheDocument();
-    expect(await screen.findByText(/最新版本：0.9.1/)).toBeInTheDocument();
-    expect(await screen.findByText("发现新版本")).toBeInTheDocument();
-    expect(await screen.findByText("Release Notes")).toBeInTheDocument();
-    expect(await screen.findByText(/add about tab/)).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "https://github.com/ArcReel/ArcReel" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /检查更新/ })).not.toBeInTheDocument();
   });
 
-  it("rechecks updates when clicking the refresh button", async () => {
-    const getSystemVersion = vi.spyOn(API, "getSystemVersion").mockResolvedValue(
-      makeVersionResponse({ latest: null, has_update: false, update_check_error: "boom" }),
-    );
-
+  it("offers a replay action outside the attribution-only About section", () => {
     renderPage("/app/settings?section=about");
 
-    const button = await screen.findByRole("button", { name: /检查更新/ });
-    fireEvent.click(button);
+    fireEvent.click(screen.getByRole("button", { name: "重看引导" }));
 
-    await waitFor(() => {
-      expect(getSystemVersion).toHaveBeenCalledTimes(2);
-    });
+    expect(useOnboardingStore.getState().active).toBe(true);
+    expect(screen.getByRole("link", { name: "https://github.com/ArcReel/ArcReel" })).toBeInTheDocument();
   });
 });

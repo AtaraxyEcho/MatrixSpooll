@@ -332,7 +332,7 @@ describe("OnboardingTour", () => {
     // 演示卡步却找不到锚点，会降级成与设置页内容不符的居中气泡。
     act(() => navigate("/app/settings"));
 
-    await waitFor(() => expect(history.at(-1)).toBe("/app/projects"));
+    await waitFor(() => expect(history.at(-1)).toBe("/app"));
     expect(popoverTitle()).toBe("演示项目");
 
     anchors.forEach((el) => el.remove());
@@ -357,7 +357,7 @@ describe("OnboardingTour", () => {
     // 不在 `tourRoutes` 里，这一步的豁免只认它自己声明的 `interactiveTarget`。
     act(() => navigate(ROUTE_APP_ASSETS));
 
-    await waitFor(() => expect(history.at(-1)).toBe("/app/projects"));
+    await waitFor(() => expect(history.at(-1)).toBe("/app"));
     expect(popoverTitle()).toBe("演示项目");
     expect(API.markOnboardingSeen).not.toHaveBeenCalled();
 
@@ -484,7 +484,7 @@ describe("OnboardingTour", () => {
       ["设置", "/app/projects"],
       ["配置供应商", "/app/settings?section=providers"],
       ["配置智能体", "/app/settings?section=agent"],
-      ["演示项目", "/app/projects"],
+      ["演示项目", "/app"],
       ["项目概览", DEMO_WORKBENCH],
       ["智能体", DEMO_WORKBENCH],
       ["角色、场景与道具", `${DEMO_WORKBENCH}/characters`],

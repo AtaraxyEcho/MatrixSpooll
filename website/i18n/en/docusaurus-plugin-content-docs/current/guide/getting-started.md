@@ -76,12 +76,12 @@ MatrixSpooll currently includes presets for these providers:
 - Agnes
 - Custom OpenAI-compatible or Google-compatible providers
 
-Providers support different media types. A complete workflow usually requires at least:
+Providers support different media types. The required capabilities depend on the path you use:
 
-- A working text generation capability;
-- A working image generation capability;
-- A working video generation capability;
-- Optional TTS capability.
+- Fixed workflows usually need text, image, and video generation capabilities;
+- Free-creation text-to-video or reference-to-video can work with only a video capability;
+- Free-creation image generation needs an image capability, while Agent mode and fixed workflows need a text/agent model;
+- TTS is optional.
 
 For detailed recommendations, see [Provider and Model Configuration](./providers.md).
 
@@ -129,7 +129,7 @@ Check its status:
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 arcreel
+docker compose logs --tail=100 matrixspooll
 curl http://localhost:1241/health
 ```
 
@@ -161,13 +161,22 @@ AUTH_TOKEN_SECRET=set a long-lived random secret
 POSTGRES_PASSWORD=alphanumeric-only database password
 ```
 
-Start the service:
+Start the source-build deployment (using the repository Dockerfile):
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml up -d --build
+```
+
+Start the image deployment (pulling a pre-built image):
+
+```bash
+docker compose -f docker-compose-img.yml pull
+docker compose -f docker-compose-img.yml up -d
 docker compose ps
 curl http://localhost:1241/health
 ```
+
+Choose one deployment method; do not run both on the same port.
 
 For complete production deployment, upgrade, backup, and reverse proxy instructions, see [Deployment and Operations](../ops/deployment.md).
 
@@ -186,11 +195,11 @@ Enter:
 - The primary model;
 - Models for different tasks as needed.
 
-After saving, send a simple message to verify the connection before starting any large batch of tasks.
+Fixed workflows and Agent mode require an agent model. Direct image or video generation in free creation does not force a text-model call; after saving, send a simple message to verify the connection before starting any large batch of tasks.
 
 ### 3.2 Configure Media Providers {#configure-media-providers}
 
-Configure at least one image provider and one video provider.
+For free-creation video generation, configure at least one working video provider; add an image provider when you want free-creation image generation. Fixed workflows generally also require a text/agent model.
 
 For your first project, consider this approach:
 
@@ -212,7 +221,7 @@ Settings that are too high may trigger provider rate limits, while settings that
 
 ## 4. Create Your First Project {#create-first-project}
 
-On the project list page, click **New Project**.
+On the project list page, click **New Project**. To start generating directly, you can also use the Home hero composer; it creates a free-creation project by default and derives its name from the prompt.
 
 ### 4.1 Choose a Project Source {#choose-project-source}
 
@@ -255,7 +264,7 @@ For a detailed comparison, see [Workflows and Modes](./workflows.md).
 
 ## 5. Run the Workflow with the AI Assistant {#run-workflow-with-assistant}
 
-Open the AI assistant panel on the right side of the project workbench.
+For fixed workflows, open the AI assistant panel on the right side of the project workbench.
 
 Free creation projects do not need the fixed workflow below. Open the project-root free canvas, enter a prompt, and choose image, video, or edit; direct original-prompt requests do not force an extra text-model call or an intermediate image model.
 

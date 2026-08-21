@@ -6,6 +6,7 @@ import {
   BarChart3,
   Bot,
   ChevronLeft,
+  CircleHelp,
   Film,
   Info,
   KeyRound,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConfigStatusStore } from "@/stores/config-status-store";
+import { useOnboardingStore } from "@/stores/onboarding-store";
 import { ONBOARDING_ANCHORS } from "@/onboarding/anchors";
 import { AgentConfigTab } from "./AgentConfigTab";
 import { ApiKeysTab } from "./ApiKeysTab";
@@ -84,7 +86,7 @@ const SECTION_GROUPS: SectionGroup[] = [
 // ---------------------------------------------------------------------------
 
 export function SystemConfigPage() {
-  const { t, i18n } = useTranslation(["common", "dashboard"]);
+  const { t, i18n } = useTranslation(["common", "dashboard", "onboarding"]);
   const [location, navigate] = useLocation();
   const search = useSearch();
 
@@ -106,6 +108,7 @@ export function SystemConfigPage() {
 
   const configIssues = useConfigStatusStore((s) => s.issues);
   const fetchConfigStatus = useConfigStatusStore((s) => s.fetch);
+  const startOnboarding = useOnboardingStore((s) => s.start);
 
   useEffect(() => {
     void fetchConfigStatus();
@@ -159,18 +162,30 @@ export function SystemConfigPage() {
               </h1>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={cycleLang}
-            className="inline-flex shrink-0 items-center gap-2 rounded-md border border-hairline-soft bg-bg-grad-a/45 px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            title={langDisplay}
-            aria-label={t("dashboard:language_setting")}
-          >
-            <Languages className="h-3.5 w-3.5" />
-            <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.14em]">
-              {currentLang}
-            </span>
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={startOnboarding}
+              className="inline-flex shrink-0 items-center gap-2 rounded-md border border-hairline-soft bg-bg-grad-a/45 px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              title={t("onboarding:replay_action")}
+              aria-label={t("onboarding:replay_action")}
+            >
+              <CircleHelp className="h-3.5 w-3.5" aria-hidden />
+              <span className="hidden sm:inline">{t("onboarding:replay_action")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={cycleLang}
+              className="inline-flex shrink-0 items-center gap-2 rounded-md border border-hairline-soft bg-bg-grad-a/45 px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              title={langDisplay}
+              aria-label={t("dashboard:language_setting")}
+            >
+              <Languages className="h-3.5 w-3.5" aria-hidden />
+              <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.14em]">
+                {currentLang}
+              </span>
+            </button>
+          </div>
         </div>
       </header>
 
