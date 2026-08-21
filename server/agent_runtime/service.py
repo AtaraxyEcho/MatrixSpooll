@@ -32,6 +32,7 @@ from fastapi.sse import ServerSentEvent
 
 from lib.agent_profile import agent_profile_dir
 from lib.app_data_dir import app_data_dir
+from lib.db.base import DEFAULT_USER_ID
 from lib.i18n import DEFAULT_LOCALE, get_locale
 from lib.profile_frontmatter import FrontmatterError, parse_profile_metadata
 from lib.profile_manifest import VALID_CONTENT_MODES
@@ -270,6 +271,7 @@ class AssistantService:
         images: list["ImageAttachment"] | None = None,
         locale: str = DEFAULT_LOCALE,
         client_key: str | None = None,
+        actor_user_id: str = DEFAULT_USER_ID,
     ) -> dict[str, Any]:
         """Unified send: create new session or send to existing one.
 
@@ -300,12 +302,20 @@ class AssistantService:
                 locale=locale,
                 user_entry=user_entry,
                 client_key=client_key,
+                actor_user_id=actor_user_id,
             )
             return {"status": "accepted", "session_id": session_id, "entry": entry}
         else:
             # New session
             if not client_key:
-                return await self._create_new_session(project_name, content, images, locale, client_key)
+                return await self._create_new_session(
+                    project_name,
+                    content,
+                    images,
+                    locale,
+                    client_key,
+                    actor_user_id,
+                )
 
             existing = await self._find_accepted_new_session(client_key, project_name)
             if existing is not None:
@@ -319,7 +329,14 @@ class AssistantService:
                 existing = await self._find_accepted_new_session(client_key, project_name)
                 if existing is not None:
                     return existing
-                result = await self._create_new_session(project_name, content, images, locale, client_key)
+                result = await self._create_new_session(
+                    project_name,
+                    content,
+                    images,
+                    locale,
+                    client_key,
+                    actor_user_id,
+                )
                 self._record_new_session_client_key(client_key, result["session_id"])
                 return result
 
@@ -392,6 +409,7 @@ class AssistantService:
         images: list["ImageAttachment"] | None,
         locale: str,
         client_key: str | None,
+        actor_user_id: str,
     ) -> dict[str, Any]:
         """实际创建新会话并投递首条消息，不涉及 client_key 幂等映射记账。"""
         text, sdk_prompt, echo_blocks = self._prepare_prompt(content, images)
@@ -405,6 +423,7 @@ class AssistantService:
             locale=locale,
             user_entry=user_entry,
             client_key=client_key,
+            actor_user_id=actor_user_id,
         )
         managed = self.session_manager.sessions.get(new_sdk_session_id)
         entry = managed.initial_user_log_entry if managed is not None else None
@@ -427,6 +446,7 @@ class AssistantService:
         images: list["ImageAttachment"] | None = None,
         locale: str = DEFAULT_LOCALE,
         client_key: str | None = None,
+        actor_user_id: str = DEFAULT_USER_ID,
     ) -> dict[str, Any]:
         """改写 ``session_id`` 中锚点处的那条用户消息，返回承接改写的新会话。
 
@@ -448,6 +468,7 @@ class AssistantService:
                 images=images,
                 locale=locale,
                 client_key=None,
+                actor_user_id=actor_user_id,
             )
         async with self._rewrite_locks.lock_for(f"{session_id}:{client_key}"):
             return await self._rewrite_message_once(
@@ -458,6 +479,7 @@ class AssistantService:
                 images=images,
                 locale=locale,
                 client_key=client_key,
+                actor_user_id=actor_user_id,
             )
 
     async def _rewrite_message_once(
@@ -470,6 +492,7 @@ class AssistantService:
         images: list["ImageAttachment"] | None,
         locale: str,
         client_key: str | None,
+        actor_user_id: str,
     ) -> dict[str, Any]:
         meta = await self.meta_store.get(session_id)
         if meta is None or meta.project_name != project_name:
@@ -504,7 +527,11 @@ class AssistantService:
 
         await self._settle_running_session(session_id)
 
-        branched = await self._branch_or_reject(session_id, anchor_entry_uuid)
+        branched = await self._branch_or_reject(
+            session_id,
+            anchor_entry_uuid,
+            actor_user_id=actor_user_id,
+        )
         new_session_id = branched.session_id
         # 分支一旦发布（superseded 指针已指向新会话），其后每一步都在补偿范围内：
         # 中途失败若不撤回，原会话被隐藏、新会话又没收到改写后的消息，重试还会
@@ -526,6 +553,7 @@ class AssistantService:
                 user_entry=user_entry,
                 client_key=client_key,
                 resumable=branched.resumable,
+                actor_user_id=actor_user_id,
             )
         except BaseException:
             await self._discard_branch(session_id, new_session_id)
@@ -570,10 +598,20 @@ class AssistantService:
             await asyncio.sleep(self._INTERRUPT_SETTLE_POLL)
             status = await self.session_manager.get_status(session_id) or "idle"
 
-    async def _branch_or_reject(self, session_id: str, anchor_entry_uuid: str) -> BranchedSession:
+    async def _branch_or_reject(
+        self,
+        session_id: str,
+        anchor_entry_uuid: str,
+        *,
+        actor_user_id: str = DEFAULT_USER_ID,
+    ) -> BranchedSession:
         """分叉，并把分支服务的异常翻译回编排层能分辨的拒绝理由。"""
         try:
-            return await self.session_branch.branch(session_id, anchor_entry_uuid)
+            return await self.session_branch.branch(
+                session_id,
+                anchor_entry_uuid,
+                actor_user_id=actor_user_id,
+            )
         except BranchAnchorError as exc:
             # 编排层的预检放行了、切片却拒绝：解析出的 uuid 在 transcript 里查无
             # 此条（锚点是运行中轮次刚发出、SDK 尚未回放的那条），或该条目载有

@@ -148,7 +148,7 @@ export function CreateProjectModal() {
 
   const [basics, setBasics] = useState<WizardStep1Value>({
     title: "",
-    contentMode: "narration",
+    contentMode: "free",
     sourceKind: "novel",
     aspectRatio: "9:16",
     generationRoute: null,

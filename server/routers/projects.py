@@ -25,17 +25,21 @@ from fastapi import Path as FastAPIPath
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
 logger = logging.getLogger(__name__)
 
-from lib.api_errors import ApiError, BadRequestError, NotFoundError
+from lib.api_errors import ApiError, BadRequestError, ConflictError, NotFoundError
 from lib.aspect_size import is_valid_aspect_ratio
 from lib.asset_fingerprints import compute_asset_fingerprints
 from lib.asset_types import asset_name_comparison_key
 from lib.config.registry import default_model_for_provider
 from lib.config.resolver import ConfigResolver, VideoBucketCapabilityError
-from lib.db import async_session_factory
+from lib.db import async_session_factory, get_async_session
+from lib.db.models.project import ProjectMember, ProjectRegistry
+from lib.db.models.user import User
 from lib.i18n import Translator
 from lib.json_io import domain_error_on_value_error
 from lib.profile_manifest import ContentMode
@@ -46,7 +50,13 @@ from lib.speech_rate import MAX_SPEECH_RATE_UPS, MIN_SPEECH_RATE_UPS, SPEECH_RAT
 from lib.style_templates import is_known_template, resolve_template_prompt
 from lib.workflow_plan import WorkflowPlan, WorkflowPlanRequest
 from lib.workflow_state import ProjectSummary, WorkflowRequestError, WorkflowStateService, WorkflowStatus
-from server.auth import CurrentUser, create_download_token, verify_download_token
+from server.auth import (
+    CurrentUser,
+    create_download_token,
+    database_auth_initialized,
+    is_auth_enabled,
+    verify_download_token,
+)
 from server.dependencies import require_project_migration_ok
 from server.routers._reorder import full_permutation_error
 from server.routers._script_edits import (
@@ -56,6 +66,12 @@ from server.routers._script_edits import (
 )
 from server.routers._validators import validate_backend_value
 from server.services import workflow_planner as workflow_plan_service
+from server.services.project_access import (
+    list_accessible_projects,
+    register_project,
+    remove_project_registration,
+    resolve_project_access,
+)
 from server.services.project_archive import (
     ProjectArchiveService,
     ProjectArchiveValidationError,
@@ -220,6 +236,19 @@ class CreateProjectRequest(BaseModel):
         return self
 
 
+class ProjectMemberRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=128)
+    role: Literal["editor", "viewer"] = "editor"
+
+
+class ProjectMemberRoleRequest(BaseModel):
+    role: Literal["editor", "viewer"]
+
+
+class ProjectOwnerTransferRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=128)
+
+
 class EpisodePatch(BaseModel):
     """PATCH body entry for a single episode.
 
@@ -294,6 +323,8 @@ def _cleanup_temp_dir(dir_path: str) -> None:
 @router.post("/projects/import")
 async def import_project_archive(
     _t: Translator,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
     file: UploadFile = File(...),
     conflict_policy: str = Form("prompt"),
 ):
@@ -317,15 +348,33 @@ async def import_project_archive(
 
         await asyncio.to_thread(_write_upload)
 
-        def _sync():
+        def _import(policy: str):
             return get_archive_service().import_project_archive(
                 Path(upload_path),
                 uploaded_filename=file.filename,
-                conflict_policy=conflict_policy,
+                conflict_policy=policy,
                 translate=_t,
             )
 
-        result = await asyncio.to_thread(_sync)
+        if conflict_policy == "overwrite" and database_auth_initialized():
+            try:
+                result = await asyncio.to_thread(_import, "prompt")
+            except ProjectArchiveValidationError as exc:
+                conflict_name = exc.extra.get("conflict_project_name")
+                if not isinstance(conflict_name, str):
+                    raise
+                await resolve_project_access(conflict_name, user, session, required_role="owner")
+                result = await asyncio.to_thread(_import, "overwrite")
+        else:
+            result = await asyncio.to_thread(_import, conflict_policy)
+
+        if database_auth_initialized() and result.conflict_resolution != "overwritten":
+            try:
+                async with session.begin():
+                    await register_project(session, result.project_name, user.id)
+            except Exception:
+                await asyncio.to_thread(get_project_manager().delete_project_directory, result.project_name)
+                raise
         return {
             "success": True,
             "project_name": result.project_name,
@@ -345,6 +394,8 @@ async def import_project_archive(
                 **exc.extra,
             },
         )
+    except ApiError:
+        raise
     except Exception:
         logger.exception("请求处理失败")
         return JSONResponse(
@@ -520,14 +571,23 @@ async def export_jianying_draft(
 
 
 @router.get("/projects")
-async def list_projects():
+async def list_projects(
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
     """列出所有项目"""
+
+    if is_auth_enabled() and database_auth_initialized():
+        accessible = await list_accessible_projects(user.id, session)
+        project_names = [row.name for row in accessible]
+    else:
+        project_names = get_project_manager().list_projects()
 
     def _sync():
         manager = get_project_manager()
         summaries = get_workflow_state_service()
         projects = []
-        for name in manager.list_projects():
+        for name in project_names:
             try:
                 # 尝试加载项目元数据
                 if manager.project_exists(name):
@@ -607,6 +667,8 @@ async def list_projects():
 async def create_project(
     req: CreateProjectRequest,
     _t: Translator,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
 ):
     """创建新项目"""
     try:
@@ -690,7 +752,15 @@ async def create_project(
                 )
             return {"success": True, "name": project_name, "project": project}
 
-        return await asyncio.to_thread(_sync)
+        result = await asyncio.to_thread(_sync)
+        if database_auth_initialized():
+            try:
+                async with session.begin():
+                    await register_project(session, result["name"], user.id)
+            except Exception:
+                await asyncio.to_thread(get_project_manager().delete_project_directory, result["name"])
+                raise
+        return result
     except ValueError as e:
         # 项目名 / source_kind / duration / brief 等配置校验失败，str(e) 只进日志
         logger.warning("创建项目参数错误: name=%s (%s)", req.name or req.title, e)
@@ -1048,8 +1118,149 @@ async def update_project(name: str, req: UpdateProjectRequest, _t: Translator):
         raise HTTPException(status_code=500, detail=_t("internal_server_error"))
 
 
+@router.get("/projects/{name}/members")
+async def list_project_members(
+    name: str,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """List members of a project visible to its collaborators."""
+
+    access = await resolve_project_access(name, user, session, required_role="viewer")
+    rows = await session.execute(
+        select(ProjectMember, User)
+        .join(User, User.id == ProjectMember.user_id)
+        .where(ProjectMember.project_id == access.project_id)
+        .order_by(ProjectMember.role.asc(), User.username.asc())
+    )
+    return {
+        "members": [
+            {
+                "user_id": member.user_id,
+                "username": account.username,
+                "role": member.role,
+                "is_owner": member.user_id == access.owner_id,
+            }
+            for member, account in rows.all()
+        ]
+    }
+
+
+@router.post("/projects/{name}/members", status_code=201)
+async def add_project_member(
+    name: str,
+    req: ProjectMemberRequest,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Add an existing account to a project as viewer or editor."""
+
+    access = await resolve_project_access(name, user, session, required_role="owner")
+    account = await session.scalar(select(User).where(User.username == req.username.strip()))
+    if account is None or not account.is_active:
+        raise NotFoundError("project_member_user_not_found")
+    existing = await session.scalar(
+        select(ProjectMember).where(
+            ProjectMember.project_id == access.project_id,
+            ProjectMember.user_id == account.id,
+        )
+    )
+    if existing is not None:
+        raise ConflictError("project_member_exists")
+    session.add(ProjectMember(project_id=access.project_id, user_id=account.id, role=req.role))
+    await session.commit()
+    return {"user_id": account.id, "username": account.username, "role": req.role}
+
+
+@router.patch("/projects/{name}/members/{user_id}")
+async def update_project_member(
+    name: str,
+    user_id: str,
+    req: ProjectMemberRoleRequest,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Change a collaborator role without allowing owner demotion here."""
+
+    access = await resolve_project_access(name, user, session, required_role="owner")
+    member = await session.scalar(
+        select(ProjectMember).where(
+            ProjectMember.project_id == access.project_id,
+            ProjectMember.user_id == user_id,
+        )
+    )
+    if member is None:
+        raise NotFoundError("project_member_not_found")
+    if user_id == access.owner_id:
+        raise BadRequestError("project_owner_change_requires_transfer")
+    member.role = req.role
+    await session.commit()
+    return {"user_id": user_id, "role": member.role}
+
+
+@router.delete("/projects/{name}/members/{user_id}")
+async def remove_project_member(
+    name: str,
+    user_id: str,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Remove a collaborator while preserving the single project owner."""
+
+    access = await resolve_project_access(name, user, session, required_role="owner")
+    if user_id == access.owner_id:
+        raise BadRequestError("project_owner_cannot_be_removed")
+    member = await session.scalar(
+        select(ProjectMember).where(
+            ProjectMember.project_id == access.project_id,
+            ProjectMember.user_id == user_id,
+        )
+    )
+    if member is None:
+        raise NotFoundError("project_member_not_found")
+    await session.delete(member)
+    await session.commit()
+    return {"success": True}
+
+
+@router.post("/projects/{name}/owner-transfer")
+async def transfer_project_owner(
+    name: str,
+    req: ProjectOwnerTransferRequest,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Transfer ownership to an active account while preserving one owner."""
+
+    access = await resolve_project_access(name, user, session, required_role="owner")
+    account = await session.scalar(select(User).where(User.username == req.username.strip()))
+    if account is None or not account.is_active:
+        raise NotFoundError("project_member_user_not_found")
+    if account.id == access.owner_id:
+        return {"user_id": account.id, "username": account.username, "role": "owner"}
+
+    registry = await session.get(ProjectRegistry, access.project_id)
+    current_owner = await session.get(ProjectMember, (access.project_id, access.owner_id))
+    next_owner = await session.get(ProjectMember, (access.project_id, account.id))
+    if registry is None or current_owner is None:
+        raise NotFoundError("project_not_found", name=name)
+    if next_owner is None:
+        next_owner = ProjectMember(project_id=access.project_id, user_id=account.id, role="owner")
+        session.add(next_owner)
+    else:
+        next_owner.role = "owner"
+    current_owner.role = "editor"
+    registry.owner_id = account.id
+    await session.commit()
+    return {"user_id": account.id, "username": account.username, "role": "owner"}
+
+
 @router.delete("/projects/{name}")
-async def delete_project(name: str, _t: Translator):
+async def delete_project(
+    name: str,
+    _t: Translator,
+    session: AsyncSession = Depends(get_async_session),
+):
     """删除项目"""
     try:
 
@@ -1057,7 +1268,11 @@ async def delete_project(name: str, _t: Translator):
             get_project_manager().delete_project_directory(name)
             return {"success": True, "message": _t("project_deleted", name=name)}
 
-        return await asyncio.to_thread(_sync)
+        result = await asyncio.to_thread(_sync)
+        if database_auth_initialized():
+            async with session.begin():
+                await remove_project_registration(session, name)
+        return result
     except FileNotFoundError as exc:
         raise NotFoundError("project_not_found", name=name) from exc
     except HTTPException:

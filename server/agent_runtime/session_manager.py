@@ -207,6 +207,7 @@ class ManagedSession:
     actor: "SessionActor"  # per-session actor owning the SDK client
     status: SessionStatus = "idle"
     project_name: str = ""  # 用于 _register_new_session
+    actor_user_id: str = DEFAULT_USER_ID
     sdk_id_event: asyncio.Event = field(default_factory=asyncio.Event)
     resolved_sdk_id: str | None = None  # consumer 设置，send_new_session 读取
     channel: SseChannel = field(default_factory=_make_session_channel)
@@ -491,6 +492,7 @@ class SessionManager:
             self.event_log_store,
             session_id_provider=lambda: managed.resolved_sdk_id,
             project_name_provider=lambda: managed.project_name,
+            actor_user_id_provider=lambda: managed.actor_user_id,
             broadcast=managed.channel.broadcast,
         )
 
@@ -570,6 +572,7 @@ class SessionManager:
         locale: str = DEFAULT_LOCALE,
         user_entry: dict[str, Any] | None = None,
         client_key: str | None = None,
+        actor_user_id: str = DEFAULT_USER_ID,
     ) -> str:
         """Create a new session via send-first: start actor, send query, wait for sdk_session_id.
 
@@ -618,6 +621,7 @@ class SessionManager:
             actor=actor,
             status="running",
             project_name=project_name,
+            actor_user_id=actor_user_id,
             assistant_model=assistant_model,
         )
         if user_entry is not None:
@@ -1002,6 +1006,7 @@ class SessionManager:
         user_entry: dict[str, Any] | None = None,
         client_key: str | None = None,
         resumable: bool = True,
+        actor_user_id: str = DEFAULT_USER_ID,
     ) -> dict[str, Any] | None:
         """Send a message via the session actor.
 
@@ -1016,6 +1021,7 @@ class SessionManager:
         ``resumable`` 透传给 ``get_or_connect``，见其文档。
         """
         managed = await self.get_or_connect(session_id, meta=meta, locale=locale, resumable=resumable)
+        managed.actor_user_id = actor_user_id
         managed.last_activity = time.monotonic()
 
         # 幂等预检先于 running 拦截：受理已成功（响应在网络层丢失）的重试
@@ -1039,6 +1045,7 @@ class SessionManager:
                 session_id,
                 user_entry,
                 client_key=client_key,
+                actor_user_id=managed.actor_user_id,
             )
             if not created:
                 # 幂等重试：条目存在即上一次受理已（或正在）送入 SDK——投递
@@ -1206,7 +1213,7 @@ class SessionManager:
             model=resolve_assistant_model(result_msg, managed.assistant_model),
             prompt=managed.last_user_prompt[:500] if managed.last_user_prompt else None,
             provider=PROVIDER_ANTHROPIC,
-            user_id=getattr(self, "_user_id", DEFAULT_USER_ID),
+            user_id=managed.actor_user_id,
             status="success" if final_status == "completed" else "failed",
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -1582,7 +1589,11 @@ class SessionManager:
 
                 tag_coro = _tag()
             await asyncio.gather(
-                self.meta_store.create(managed.project_name, sdk_id),
+                self.meta_store.create(
+                    managed.project_name,
+                    sdk_id,
+                    actor_user_id=managed.actor_user_id,
+                ),
                 *([] if tag_coro is None else [tag_coro]),
             )
             await self.meta_store.update_status(sdk_id, "running")
@@ -1597,6 +1608,7 @@ class SessionManager:
                         sdk_id,
                         pending_user["entry"],
                         client_key=pending_user.get("client_key"),
+                        actor_user_id=managed.actor_user_id,
                     )
                     managed.initial_user_log_entry = authoritative
                     managed.channel.broadcast({"type": "log_entry", "session_id": sdk_id, "entry": authoritative})

@@ -101,6 +101,8 @@ describe("CreateProjectModal", () => {
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });
     // 路线无预选、必选：不选则 Next 恒禁用
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     // Step 2 shows loading or Back button
@@ -113,6 +115,8 @@ describe("CreateProjectModal", () => {
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });
     // 路线无预选、必选：不选则 Next 恒禁用
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ })); // to step 2
     await waitFor(() =>
@@ -179,6 +183,8 @@ describe("CreateProjectModal", () => {
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });
     // 路线无预选、必选：不选则 Next 恒禁用
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     await waitFor(() =>
@@ -209,6 +215,8 @@ describe("CreateProjectModal", () => {
   it("submits grid_storyboard when the assembly toggle is switched on at creation", async () => {
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByRole("switch", { name: /分镜板（宫格）生视频/ }));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
@@ -225,6 +233,8 @@ describe("CreateProjectModal", () => {
   it("omits the speech rate when left empty and submits it when filled", async () => {
     const { unmount } = render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: /下一步/ })).toBeEnabled());
@@ -240,6 +250,8 @@ describe("CreateProjectModal", () => {
     vi.mocked(API.createProject).mockClear();
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.change(screen.getByLabelText(/^语速（可选）$/), { target: { value: "6" } });
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
@@ -257,6 +269,8 @@ describe("CreateProjectModal", () => {
     render(<CreateProjectModal />);
     const titleInput = screen.getByRole("textbox");
     fireEvent.change(titleInput, { target: { value: "demo" } });
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     await waitFor(() =>
@@ -308,6 +322,8 @@ describe("CreateProjectModal", () => {
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });
     // 路线无预选、必选：不选则 Next 恒禁用
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     // 第二步按 i2v 执行模型（veo-3）列时长与分辨率
@@ -334,6 +350,8 @@ describe("CreateProjectModal", () => {
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });
     // 路线无预选、必选：不选则 Next 恒禁用
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: /下一步/ })).toBeEnabled());
@@ -351,6 +369,8 @@ describe("CreateProjectModal", () => {
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });
     // 路线无预选、必选：不选则 Next 恒禁用
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: /下一步/ })).toBeEnabled());
@@ -379,6 +399,8 @@ describe("CreateProjectModal", () => {
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });
     // 路线无预选、必选：不选则 Next 恒禁用
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: /下一步/ })).toBeEnabled());
@@ -420,6 +442,8 @@ describe("CreateProjectModal ad mode", () => {
   it("submits ad project with target_duration and without default_duration", async () => {
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "ad demo" } });
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByText(/广告\/短片/));
     // 改选 30 秒档
@@ -452,6 +476,8 @@ describe("CreateProjectModal ad mode", () => {
     render(<CreateProjectModal />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "demo" } });
     // 路线无预选、必选：不选则 Next 恒禁用
+    // 默认内容模式已是自由创作：固定工作流测试需先显式切回旁白模式
+    fireEvent.click(screen.getByRole("radio", { name: /旁白模式/ }));
     fireEvent.click(screen.getByRole("radio", { name: /分镜图生视频/ }));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     await waitFor(() =>

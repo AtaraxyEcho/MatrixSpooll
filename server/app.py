@@ -76,6 +76,11 @@ from server.routers import (
     versions,
 )
 from server.routers import auth as auth_router
+from server.services.project_access import (
+    backfill_project_registry,
+    require_project_flexible_access,
+    require_project_request_access,
+)
 from server.services.project_events import ProjectEventService
 
 
@@ -346,6 +351,10 @@ async def lifespan(app: FastAPI):
     await init_db()
     await ensure_database_users()
 
+    # Register file-backed projects before project authorization is enabled.
+    # The backfill is idempotent and keeps project.json as the content source.
+    await backfill_project_registry()
+
     projects_root = app_data_dir()
 
     # 源文件编码迁移（幂等；失败不阻塞启动）。先于 schema 迁移跑：源文一律先归到 UTF-8，
@@ -569,13 +578,48 @@ async def request_logging_middleware(request: Request, call_next):
 # 认证要求的唯一真相源就是这个区块：带 dependencies 的 router 要求 Bearer token，
 # 端点签名里的 CurrentUser 只表示「处理函数要用用户对象」，不承担授权职责。
 # 不挂依赖的两组另有说明，见下方分组注释。
-app.include_router(projects.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["项目管理"])
-app.include_router(characters.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["角色管理"])
-app.include_router(scenes.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["场景管理"])
-app.include_router(props.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["道具管理"])
-app.include_router(products.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["产品管理"])
-app.include_router(presentations.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["成片演示"])
-app.include_router(files.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["文件管理"])
+app.include_router(
+    projects.router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user), Depends(require_project_request_access)],
+    tags=["项目管理"],
+)
+app.include_router(
+    characters.router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user), Depends(require_project_request_access)],
+    tags=["角色管理"],
+)
+app.include_router(
+    scenes.router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user), Depends(require_project_request_access)],
+    tags=["场景管理"],
+)
+app.include_router(
+    props.router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user), Depends(require_project_request_access)],
+    tags=["道具管理"],
+)
+app.include_router(
+    products.router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user), Depends(require_project_request_access)],
+    tags=["产品管理"],
+)
+app.include_router(
+    presentations.router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user), Depends(require_project_request_access)],
+    tags=["成片演示"],
+)
+app.include_router(
+    files.router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user), Depends(require_project_request_access)],
+    tags=["文件管理"],
+)
 app.include_router(
     free_creations.entry_router,
     prefix="/api/v1",
@@ -585,44 +629,74 @@ app.include_router(
 app.include_router(
     free_creations.router,
     prefix="/api/v1",
-    dependencies=[Depends(get_current_user), Depends(require_project_migration_ok)],
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_project_migration_ok),
+        Depends(require_project_request_access),
+    ],
     tags=["自由创作"],
 )
 app.include_router(
     generate.router,
     prefix="/api/v1",
-    dependencies=[Depends(get_current_user), Depends(require_project_migration_ok)],
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_project_migration_ok),
+        Depends(require_project_request_access),
+    ],
     tags=["生成"],
 )
 app.include_router(
     script_review.router,
     prefix="/api/v1",
-    dependencies=[Depends(get_current_user), Depends(require_project_migration_ok)],
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_project_migration_ok),
+        Depends(require_project_request_access),
+    ],
     tags=["剧本审核 gate"],
 )
 app.include_router(
     shot_uploads.router,
     prefix="/api/v1",
-    dependencies=[Depends(get_current_user), Depends(require_project_migration_ok)],
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_project_migration_ok),
+        Depends(require_project_request_access),
+    ],
     tags=["镜头上传"],
 )
 app.include_router(
     end_frames.router,
     prefix="/api/v1",
-    dependencies=[Depends(get_current_user), Depends(require_project_migration_ok)],
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_project_migration_ok),
+        Depends(require_project_request_access),
+    ],
     tags=["镜头尾帧"],
 )
-app.include_router(versions.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["版本管理"])
+app.include_router(
+    versions.router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user), Depends(require_project_request_access)],
+    tags=["版本管理"],
+)
 app.include_router(usage.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["费用统计"])
 app.include_router(admin.router, prefix="/api/v1", tags=["管理员"])
 app.include_router(auth_router.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["认证"])
 app.include_router(
     assistant.router,
     prefix="/api/v1/projects/{project_name}/assistant",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_user), Depends(require_project_request_access)],
     tags=["助手会话"],
 )
-app.include_router(tasks.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["任务队列"])
+app.include_router(
+    tasks.router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user), Depends(require_project_request_access)],
+    tags=["任务队列"],
+)
 app.include_router(providers.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["供应商管理"])
 app.include_router(system_config.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["系统配置"])
 app.include_router(system.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["系统"])
@@ -633,18 +707,29 @@ app.include_router(
     custom_providers.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["自定义供应商"]
 )
 app.include_router(
-    cost_estimation.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["费用估算"]
+    cost_estimation.router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user), Depends(require_project_request_access)],
+    tags=["费用估算"],
 )
 app.include_router(
     grids.router,
     prefix="/api/v1",
-    dependencies=[Depends(get_current_user), Depends(require_project_migration_ok)],
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_project_migration_ok),
+        Depends(require_project_request_access),
+    ],
     tags=["宫格图"],
 )
 app.include_router(
     reference_videos.router,
     prefix="/api/v1",
-    dependencies=[Depends(get_current_user), Depends(require_project_migration_ok)],
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_project_migration_ok),
+        Depends(require_project_request_access),
+    ],
     tags=["参考生视频"],
 )
 app.include_router(assets.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["全局资产库"])
@@ -659,13 +744,25 @@ app.include_router(files.public_router, prefix="/api/v1", tags=["文件管理"])
 app.include_router(
     assistant.self_auth_router,
     prefix="/api/v1/projects/{project_name}/assistant",
+    dependencies=[Depends(require_project_flexible_access)],
     tags=["助手会话"],
 )
-app.include_router(project_events.self_auth_router, prefix="/api/v1", tags=["项目变更流"])
-app.include_router(projects.self_auth_router, prefix="/api/v1", tags=["项目管理"])
+app.include_router(
+    project_events.self_auth_router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_project_flexible_access)],
+    tags=["项目变更流"],
+)
+app.include_router(
+    projects.self_auth_router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_project_flexible_access)],
+    tags=["项目管理"],
+)
 app.include_router(
     free_creations.self_auth_router,
     prefix="/api/v1",
+    dependencies=[Depends(require_project_flexible_access)],
     tags=["自由创作"],
 )
 

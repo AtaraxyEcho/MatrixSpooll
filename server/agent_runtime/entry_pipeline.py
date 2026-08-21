@@ -234,10 +234,12 @@ class SessionEntryPipeline:
         session_id_provider: Callable[[], str | None],
         broadcast: Callable[[dict[str, Any]], None],
         project_name_provider: Callable[[], str | None] | None = None,
+        actor_user_id_provider: Callable[[], str | None] | None = None,
     ) -> None:
         self._store = store
         self._session_id_provider = session_id_provider
         self._project_name_provider = project_name_provider or (lambda: None)
+        self._actor_user_id_provider = actor_user_id_provider or (lambda: None)
         self._broadcast = broadcast
         # 每会话一个定型器：跨消息关联（Skill tool_use → 注入消息；
         # AskUserQuestion 提问登记 → 答复定型）随会话存续
@@ -322,7 +324,12 @@ class SessionEntryPipeline:
         if not entry_uuid or not sdk_entry_uuid:
             return
         try:
-            await self._store.record_user_message_link(session_id, str(entry_uuid), str(sdk_entry_uuid))
+            await self._store.record_user_message_link(
+                session_id,
+                str(entry_uuid),
+                str(sdk_entry_uuid),
+                actor_user_id=self._actor_user_id_provider(),
+            )
         except Exception:
             logger.exception(
                 "用户消息身份映射落库失败 session_id=%s user_entry_uuid=%s",
@@ -372,7 +379,11 @@ class SessionEntryPipeline:
         """有界重试落库：瞬时 DB 错误不至于在 append-only 日志上留下永久空洞。"""
         for attempt in range(_APPEND_ATTEMPTS):
             try:
-                return await self._store.append(session_id, entries)
+                return await self._store.append(
+                    session_id,
+                    entries,
+                    actor_user_id=self._actor_user_id_provider(),
+                )
             except Exception:
                 if attempt == _APPEND_ATTEMPTS - 1:
                     raise

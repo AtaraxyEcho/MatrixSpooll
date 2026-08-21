@@ -7,6 +7,7 @@ from lib.db.models.asset import Asset
 from lib.db.models.config import ProviderConfig, SystemSetting
 from lib.db.models.credential import ProviderCredential
 from lib.db.models.custom_provider import CustomProvider, CustomProviderModel
+from lib.db.models.project import ProjectMember, ProjectRegistry
 from lib.db.models.session import AgentSession
 from lib.db.models.session_event import AgentSessionEventLogEntry
 from lib.db.models.session_message_link import AgentSessionUserMessageLink
@@ -29,6 +30,8 @@ __all__ = [
     "ProviderCredential",
     "CustomProvider",
     "CustomProviderModel",
+    "ProjectRegistry",
+    "ProjectMember",
     "Asset",
     "AgentAnthropicCredential",
 ]

@@ -27,6 +27,13 @@ class BadRequestError(ApiError):
         super().__init__(key, status_code=400, **params)
 
 
+class ForbiddenError(ApiError):
+    """Authorization failed for an otherwise valid request (HTTP 403)."""
+
+    def __init__(self, key: str, **params: object) -> None:
+        super().__init__(key, status_code=403, **params)
+
+
 class NotFoundError(ApiError):
     """请求的资源不存在（HTTP 404）。"""
 

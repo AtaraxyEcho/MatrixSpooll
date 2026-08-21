@@ -9,17 +9,18 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
 from lib.api_errors import BadRequestError, ConflictError, NotFoundError
 from lib.aspect_size import is_valid_aspect_ratio
 from lib.config.registry import model_info_for
 from lib.config.resolver import VideoBucketCapabilityError
-from lib.db import async_session_factory
+from lib.db import async_session_factory, get_async_session
 from lib.generation_queue import free_video_capability, get_generation_queue
 from lib.generation_queue_client import TaskSpec
 from lib.i18n import Translator
@@ -29,7 +30,7 @@ from lib.project_change_hints import project_change_source
 from lib.project_manager import get_project_manager
 from lib.task_failure import parse_failure, render_failure
 from lib.video_backends.base import VideoCapabilityError
-from server.auth import CurrentUser, CurrentUserFlexible
+from server.auth import CurrentUser, CurrentUserFlexible, database_auth_initialized
 from server.services.free_creation_deletion import FreeCreationDeletionNotReadyError, delete_free_creation_items
 from server.services.free_creation_merge import (
     composite_creation_audio,
@@ -60,6 +61,7 @@ from server.services.free_creation_workspace import (
     list_storyboard_plans,
     list_subtitle_tracks,
     load_canvas_state,
+    load_canvas_viewport,
     load_storyboard_plan,
     load_subtitle_track,
     new_request_id,
@@ -67,6 +69,7 @@ from server.services.free_creation_workspace import (
     resolve_reference_claims,
     restore_reference_upload,
     save_canvas_state,
+    save_canvas_viewport,
     save_reference_upload,
     save_storyboard_plan,
     save_subtitle_track,
@@ -78,6 +81,7 @@ from server.services.generation_context import (
     VideoLaneRequest,
     resolve_generation_context,
 )
+from server.services.project_access import register_project, remove_project_registration
 
 router = APIRouter()
 entry_router = APIRouter()
@@ -1265,7 +1269,11 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
 
 
 @entry_router.post("/free-projects")
-async def create_free_project(req: CreateFreeProjectRequest, user: CurrentUser):
+async def create_free_project(
+    req: CreateFreeProjectRequest,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
     """Create a free project and enqueue its first creation as one application operation."""
 
     manager = get_project_manager()
@@ -1294,9 +1302,19 @@ async def create_free_project(req: CreateFreeProjectRequest, user: CurrentUser):
                 raise
 
         project = await asyncio.to_thread(_create)
+        if database_auth_initialized():
+            try:
+                async with session.begin():
+                    await register_project(session, project_name, user.id)
+            except BaseException:
+                await asyncio.to_thread(manager.delete_project_directory, project_name)
+                raise
         try:
             result = await create_free_creation(project_name, req.creation, user)
         except BaseException:
+            if database_auth_initialized():
+                async with session.begin():
+                    await remove_project_registration(session, project_name)
             await asyncio.to_thread(manager.delete_project_directory, project_name)
             raise
     except FileExistsError as exc:
@@ -1749,13 +1767,15 @@ async def delete_free_creation_subtitle(project_name: str, subtitle_id: str):
 
 
 @router.get("/projects/{project_name}/free-creation-canvas")
-async def get_free_creation_canvas(project_name: str):
+async def get_free_creation_canvas(project_name: str, user: CurrentUser):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
-    return {"canvas": await asyncio.to_thread(load_canvas_state, project_path)}
+    canvas = await asyncio.to_thread(load_canvas_state, project_path)
+    canvas["viewport"] = await asyncio.to_thread(load_canvas_viewport, project_path, user.id, canvas["viewport"])
+    return {"canvas": canvas}
 
 
 @router.put("/projects/{project_name}/free-creation-canvas")
-async def update_free_creation_canvas(project_name: str, req: CanvasStateUpdate):
+async def update_free_creation_canvas(project_name: str, req: CanvasStateUpdate, user: CurrentUser):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
     try:
         canvas = await asyncio.to_thread(
@@ -1768,9 +1788,13 @@ async def update_free_creation_canvas(project_name: str, req: CanvasStateUpdate)
             groups=[group.model_dump() for group in req.groups],
             show_relations=req.show_relations,
             expected_revision=req.expected_revision,
+            persist_viewport=False,
         )
     except RuntimeError as exc:
         raise ConflictError("free_creation_canvas_conflict") from exc
+    viewport = req.viewport.model_dump()
+    await asyncio.to_thread(save_canvas_viewport, project_path, user.id, viewport)
+    canvas["viewport"] = viewport
     return {"success": True, "canvas": canvas}
 
 

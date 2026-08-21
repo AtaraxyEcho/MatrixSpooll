@@ -35,8 +35,8 @@ import { Typewriter, type TypewriterSegment } from "@/components/ui/Typewriter";
 import { WARM_TONE } from "@/utils/severity-tone";
 import { getProjectDisplayName } from "@/utils/project-display";
 import { CreateProjectModal } from "./CreateProjectModal";
+import { UserMenu } from "@/components/layout/UserMenu";
 import { rememberAssetLibraryReturnTo } from "./AssetLibraryPage";
-import { ICON_BTN_FILLED_CLS } from "@/components/ui/darkroom-tokens";
 import {
   Poster,
   ProjectCard,
@@ -70,6 +70,8 @@ import {
 // 数据：仅消费 ProjectSummary 真实字段；hue 由 project.name 哈希派生
 
 type PhaseFilter = Phase | "all";
+type ContentModeFilter = "all" | "free" | "narration" | "drama" | "ad";
+const CONTENT_MODE_FILTER_KEY = "arcreel.lobby.contentModeFilter";
 type GreetingKey =
   | "lobby_hero_greeting_morning"
   | "lobby_hero_greeting_afternoon"
@@ -472,25 +474,24 @@ function TopBar({
           <button
             type="button"
             onClick={onAssets}
-            className="inline-flex items-center gap-1.5 rounded-[7px] border border-accent/25 bg-accent-dim px-3 py-1.5 text-[12px] text-text-2 transition-colors hover:border-accent/50 hover:bg-accent-soft hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-accent/25 bg-accent-dim px-2.5 text-[11.5px] text-text-2 transition hover:scale-105 hover:border-accent/50 hover:bg-accent-soft hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             title={t("assets:library_title")}
             aria-label={t("assets:library_title")}
           >
-            <Library className="h-3.5 w-3.5" />
+            <Library className="h-4 w-4 shrink-0" aria-hidden />
             <span className="hidden md:inline">{t("assets:library_title")}</span>
           </button>
-          <span aria-hidden className="mx-1 h-5 w-px bg-hairline-soft" />
           <button
             type="button"
             onClick={onImport}
             disabled={importing}
-            className="inline-flex items-center gap-1.5 rounded-[7px] border border-hairline bg-bg-grad-a/50 px-3 py-1.5 text-[12px] text-text-2 transition-colors hover:border-hairline-strong hover:bg-bg-grad-a focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-hairline bg-bg-grad-a/60 px-2.5 text-[11.5px] text-text-2 transition hover:scale-105 hover:border-accent/40 hover:bg-accent-dim hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100"
             aria-label={importing ? t("dashboard:importing") : t("dashboard:import_zip")}
           >
             {importing ? (
-              <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" />
+              <Loader2 className="h-4 w-4 shrink-0 motion-safe:animate-spin text-accent-2" />
             ) : (
-              <Upload className="h-3.5 w-3.5" />
+              <Upload className="h-4 w-4 shrink-0 text-accent-2" aria-hidden />
             )}
             <span className="hidden lg:inline">
               {importing ? t("dashboard:importing") : t("dashboard:import_zip")}
@@ -500,22 +501,23 @@ function TopBar({
             type="button"
             onClick={onCreate}
             data-onboarding={ONBOARDING_ANCHORS.lobbyCreateProject}
-            className="inline-flex items-center gap-1.5 rounded-[7px] px-3.5 py-1.5 text-[12px] font-semibold transition-transform motion-safe:hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="inline-flex h-[30px] items-center gap-1.5 rounded-md px-2.5 text-[11.5px] font-semibold transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             style={ACCENT_BUTTON_STYLE}
             aria-label={t("dashboard:create_project")}
           >
-            <Plus className="h-3.5 w-3.5" />
+            <Plus className="h-4 w-4 shrink-0" aria-hidden />
             <span className="hidden sm:inline">{t("dashboard:create_project")}</span>
           </button>
           <button
             type="button"
             onClick={onSettings}
             data-onboarding={ONBOARDING_ANCHORS.lobbySettings}
-            className={`relative ${ICON_BTN_FILLED_CLS}`}
-            title={t("settings")}
-            aria-label={t("settings")}
+            className="relative inline-flex h-[30px] items-center gap-1.5 rounded-md border border-hairline bg-bg-grad-a/60 px-2.5 text-[11.5px] text-text-2 transition hover:scale-105 hover:border-accent/40 hover:bg-accent-dim hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            title={t("system_settings")}
+            aria-label={t("system_settings")}
           >
-            <Settings className="h-4 w-4" aria-hidden />
+            <Settings className="h-4 w-4 shrink-0 text-accent-2" aria-hidden />
+            <span className="hidden sm:inline">{t("system_settings")}</span>
             {configIncomplete ? (
               <span
                 aria-label={t("config_incomplete")}
@@ -523,6 +525,7 @@ function TopBar({
               />
             ) : null}
           </button>
+          <UserMenu />
         </div>
       </div>
     </header>
@@ -687,10 +690,12 @@ interface FilterPillsProps {
   onChange: (next: PhaseFilter) => void;
   counts: Record<Phase, number> & { all: number };
   phaseLabels: Record<Phase, string>;
+  contentActive: ContentModeFilter;
+  onContentChange: (next: ContentModeFilter) => void;
   t: TFunction;
 }
 
-function FilterPills({ active, onChange, counts, phaseLabels, t }: FilterPillsProps) {
+function FilterPills({ active, onChange, counts, phaseLabels, contentActive, onContentChange, t }: FilterPillsProps) {
   const pills: Array<{ key: PhaseFilter; label: string; n: number }> = [
     { key: "all", label: t("dashboard:lobby_filter_all"), n: counts.all },
     // 顺序即流程：胶囊按阶段推进排，不按使用频率排
@@ -712,7 +717,7 @@ function FilterPills({ active, onChange, counts, phaseLabels, t }: FilterPillsPr
         borderTopColor: "var(--color-hairline-soft)",
       }}
     >
-      <div className="app-topbar-content flex items-center gap-1.5 px-[var(--app-topbar-inline-padding)] py-2.5">
+      <div className="app-topbar-content flex flex-wrap items-center gap-1.5 px-[var(--app-topbar-inline-padding)] py-2.5">
         {pills.map((c) => {
           const isActive = active === c.key;
           return (
@@ -741,10 +746,59 @@ function FilterPills({ active, onChange, counts, phaseLabels, t }: FilterPillsPr
           );
         })}
         <div className="flex-1" />
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.06em] text-text-3">
+        <ContentModePills active={contentActive} onChange={onContentChange} t={t} />
+        <span className="hidden font-mono text-[10.5px] uppercase tracking-[0.06em] text-text-3 sm:inline">
           {t("dashboard:lobby_sort_recent")}
         </span>
       </div>
+    </div>
+  );
+}
+
+// -- ContentModePills ---------------------------------------------------------
+
+const CONTENT_MODE_OPTIONS: Array<{ key: ContentModeFilter; labelKey: string }> = [
+  { key: "all", labelKey: "dashboard:lobby_filter_all" },
+  { key: "free", labelKey: "dashboard:free_creation" },
+  { key: "narration", labelKey: "dashboard:narration_visuals" },
+  { key: "drama", labelKey: "dashboard:drama_animation" },
+  { key: "ad", labelKey: "dashboard:ad_short_video" },
+];
+
+function ContentModePills({
+  active,
+  onChange,
+  t,
+}: {
+  active: ContentModeFilter;
+  onChange: (next: ContentModeFilter) => void;
+  t: TFunction;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={t("dashboard:content_mode")}
+      className="flex flex-wrap items-center gap-1.5"
+    >
+      {CONTENT_MODE_OPTIONS.map((opt) => {
+        const isActive = active === opt.key;
+        return (
+          <button
+            key={opt.key}
+            type="button"
+            onClick={() => onChange(opt.key)}
+            aria-pressed={isActive}
+            className={
+              "inline-flex items-center rounded-full px-3 py-1 text-[11.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
+              (isActive
+                ? "border border-accent/40 bg-accent/45 text-text"
+                : "border border-hairline-soft bg-[oklch(0.22_0.012_265_/_0.7)] text-text-3 hover:border-hairline hover:bg-[oklch(0.24_0.012_265_/_0.78)] hover:text-text-2")
+            }
+          >
+            {t(opt.labelKey)}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -755,10 +809,11 @@ interface ProjectListViewProps {
   styleLabels: Record<string, string>;
   onDelete: (project: ProjectSummary) => void;
   onCreate: () => void;
+  onClearFilter: () => void;
   t: TFunction;
 }
 
-function ProjectListView({ projects, hasProjects, styleLabels, onDelete, onCreate, t }: ProjectListViewProps) {
+function ProjectListView({ projects, hasProjects, styleLabels, onDelete, onCreate, onClearFilter, t }: ProjectListViewProps) {
   return (
     <section
       className="app-project-list"
@@ -786,6 +841,13 @@ function ProjectListView({ projects, hasProjects, styleLabels, onDelete, onCreat
         <div className="app-project-list__empty">
           <h2>{t("dashboard:lobby_no_filter_match")}</h2>
           <p>{t("dashboard:lobby_no_filter_match_hint")}</p>
+          <button
+            type="button"
+            onClick={onClearFilter}
+            className="mt-4 inline-flex min-h-9 items-center rounded-md border border-hairline-strong px-3 text-[12px] font-semibold text-text-2 transition-colors hover:border-accent/60 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            {t("dashboard:lobby_clear_filters")}
+          </button>
         </div>
       ) : projects.length === 0 ? (
         <div className="app-project-list__empty">
@@ -846,6 +908,12 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
   const [deletingProject, setDeletingProject] = useState<ProjectSummary | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [phaseFilter, setPhaseFilter] = useState<PhaseFilter>("all");
+  const [contentModeFilter, setContentModeFilter] = useState<ContentModeFilter>(() => {
+    const saved = localStorage.getItem(CONTENT_MODE_FILTER_KEY);
+    return saved === "free" || saved === "narration" || saved === "drama" || saved === "ad"
+      ? saved
+      : "all";
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1009,11 +1077,17 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
       if (phaseFilter !== "all") {
         if (!s || s.phase !== phaseFilter) return false;
       }
+      if (contentModeFilter !== "all" && p.content_mode !== contentModeFilter) return false;
       if (!q) return true;
       const phaseLabel = s ? phaseLabels[s.phase] : "";
       return `${p.title || ""} ${p.name} ${phaseLabel}`.toLowerCase().includes(q);
     });
-  }, [projects, phaseFilter, searchQuery, phaseLabels]);
+  }, [projects, phaseFilter, contentModeFilter, searchQuery, phaseLabels]);
+
+  const handleContentModeChange = (next: ContentModeFilter) => {
+    setContentModeFilter(next);
+    localStorage.setItem(CONTENT_MODE_FILTER_KEY, next);
+  };
 
   return (
     <div
@@ -1063,6 +1137,8 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
           onChange={setPhaseFilter}
           counts={phaseCounts}
           phaseLabels={phaseLabels}
+          contentActive={contentModeFilter}
+          onContentChange={handleContentModeChange}
           t={t}
         />
       ) : null}
@@ -1085,6 +1161,11 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
                 styleLabels={styleLabels}
                 onDelete={setDeletingProject}
                 onCreate={() => setShowCreateModal(true)}
+                onClearFilter={() => {
+                  setPhaseFilter("all");
+                  handleContentModeChange("all");
+                  setSearchQuery("");
+                }}
                 t={t}
               />
             ) : filteredProjects.length === 0 && projects.length > 0 ? (
@@ -1095,6 +1176,7 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
                   type="button"
                   onClick={() => {
                     setPhaseFilter("all");
+                    handleContentModeChange("all");
                     setSearchQuery("");
                   }}
                   className="mt-4 rounded-md border border-hairline px-3 py-1.5 text-[12px] text-text-2 hover:border-accent/40 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"

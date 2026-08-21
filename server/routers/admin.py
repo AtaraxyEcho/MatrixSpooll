@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.db import get_async_session
 from lib.db.base import DEFAULT_USER_ID
+from lib.db.models.project import ProjectRegistry
 from lib.db.models.user import User
 from lib.i18n import Translator
 from server.auth import AdminUser, generate_password, hash_password, revoke_all_user_sessions
@@ -166,6 +167,15 @@ async def update_user(
         raise HTTPException(status_code=400, detail=_t("admin_last_admin"))
     if is_last_admin and await _active_admin_count(session) <= 1:
         raise HTTPException(status_code=400, detail=_t("admin_last_admin"))
+    if user.is_active and not next_active:
+        owned_project = await session.scalar(
+            select(ProjectRegistry.name).where(ProjectRegistry.owner_id == user.id).limit(1)
+        )
+        if owned_project is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=_t("admin_project_owner_deactivate_forbidden", project=owned_project),
+            )
 
     user.role = next_role
     user.is_active = next_active

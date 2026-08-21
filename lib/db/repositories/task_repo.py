@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import ColumnElement, func, select, text, update
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.db.base import DEFAULT_USER_ID, dt_to_iso, utc_now
 from lib.db.models.task import Task, WorkerLease
+from lib.db.project_identity import resolve_project_id
 from lib.db.repositories.base import BaseRepository, rowcount
 from lib.task_failure import bound_reason, collapse_cascade_reason, encode_failure
 from lib.task_terminal_events import TERMINAL_TASK_STATUSES
@@ -92,6 +94,7 @@ def _json_loads(value: str | None, default: Any) -> Any:
 def _task_to_dict(row: Task) -> dict[str, Any]:
     return {
         "task_id": row.task_id,
+        "project_id": row.project_id,
         "project_name": row.project_name,
         "task_type": row.task_type,
         "media_type": row.media_type,
@@ -117,6 +120,7 @@ def _task_to_dict(row: Task) -> dict[str, Any]:
         "finished_at": dt_to_iso(row.finished_at),
         "updated_at": dt_to_iso(row.updated_at),
         "user_id": row.user_id,
+        "actor_user_id": row.user_id,
     }
 
 
@@ -165,10 +169,12 @@ class TaskRepository(BaseRepository):
         provider_id: str | None = None,
     ) -> dict[str, Any]:
         now = utc_now()
+        project_id = await resolve_project_id(self.session, project_name)
 
         task_id = uuid.uuid4().hex
         task = Task(
             task_id=task_id,
+            project_id=project_id,
             project_name=project_name,
             task_type=task_type,
             media_type=media_type,
@@ -958,6 +964,7 @@ class TaskRepository(BaseRepository):
         self,
         *,
         project_name: str | None = None,
+        project_names: Sequence[str] | None = None,
         status: str | None = None,
         task_type: str | None = None,
         source: str | None = None,
@@ -971,6 +978,8 @@ class TaskRepository(BaseRepository):
         filters = []
         if project_name:
             filters.append(Task.project_name == project_name)
+        elif project_names is not None:
+            filters.append(Task.project_name.in_(list(project_names)))
         if status:
             filters.append(Task.status == status)
         if task_type:
@@ -1000,10 +1009,17 @@ class TaskRepository(BaseRepository):
             "page_size": page_size,
         }
 
-    async def get_stats(self, *, project_name: str | None = None) -> dict[str, int]:
+    async def get_stats(
+        self,
+        *,
+        project_name: str | None = None,
+        project_names: Sequence[str] | None = None,
+    ) -> dict[str, int]:
         filters = []
         if project_name:
             filters.append(Task.project_name == project_name)
+        elif project_names is not None:
+            filters.append(Task.project_name.in_(list(project_names)))
 
         # Group by status
         stmt = select(Task.status, func.count().label("cnt")).where(*filters).group_by(Task.status)
