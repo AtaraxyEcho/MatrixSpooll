@@ -192,20 +192,37 @@ export function buildCanvasDependencyEdges(creations: FreeCreation[]): CanvasDep
   ));
 }
 
-function dependencyPath(source: CanvasNodeBox, target: CanvasNodeBox, lane: number): string {
-  const forward = source.x + source.width / 2 <= target.x + target.width / 2;
-  const direction = forward ? 1 : -1;
-  const sourceX = forward ? source.x + source.width : source.x;
-  const targetX = forward ? target.x : target.x + target.width;
-  const sourceY = source.y + source.height / 2;
-  const targetY = target.y + target.height / 2;
-  if (lane === 0 && Math.abs(sourceY - targetY) < 10) {
-    return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+export function dependencyPath(source: CanvasNodeBox, target: CanvasNodeBox, lane: number): string {
+  const laneOffset = lane * 18;
+  const sourceRight = source.x + source.width;
+  const targetRight = target.x + target.width;
+  const sourceCenterX = source.x + source.width / 2;
+  const targetCenterX = target.x + target.width / 2;
+  const sourceCenterY = source.y + source.height / 2;
+  const targetCenterY = target.y + target.height / 2;
+  const horizontallySeparated = sourceRight <= target.x || targetRight <= source.x;
+
+  if (horizontallySeparated) {
+    const forward = sourceCenterX <= targetCenterX;
+    const sourceX = forward ? sourceRight : source.x;
+    const targetX = forward ? target.x : targetRight;
+    if (lane === 0 && Math.abs(sourceCenterY - targetCenterY) < 10) {
+      return `M ${sourceX} ${sourceCenterY} L ${targetX} ${targetCenterY}`;
+    }
+    const direction = forward ? 1 : -1;
+    const elbowX = (sourceX + targetX) / 2 + laneOffset * direction;
+    return `M ${sourceX} ${sourceCenterY} L ${elbowX} ${sourceCenterY} L ${elbowX} ${targetCenterY} L ${targetX} ${targetCenterY}`;
   }
-  const laneOffset = lane * 16;
-  const controlX = (sourceX + targetX) / 2 + laneOffset * direction;
-  const controlY = (sourceY + targetY) / 2 + laneOffset;
-  return `M ${sourceX} ${sourceY} C ${sourceX + direction * 48} ${sourceY + laneOffset}, ${controlX - direction * 48} ${controlY}, ${controlX} ${controlY} S ${targetX - direction * 48} ${targetY - laneOffset}, ${targetX} ${targetY}`;
+
+  const forward = sourceCenterY <= targetCenterY;
+  const sourceY = forward ? source.y + source.height : source.y;
+  const targetY = forward ? target.y : target.y + target.height;
+  if (lane === 0 && Math.abs(sourceCenterX - targetCenterX) < 10) {
+    return `M ${sourceCenterX} ${sourceY} L ${targetCenterX} ${targetY}`;
+  }
+  const direction = forward ? 1 : -1;
+  const elbowY = (sourceY + targetY) / 2 + laneOffset * direction;
+  return `M ${sourceCenterX} ${sourceY} L ${sourceCenterX} ${elbowY} L ${targetCenterX} ${elbowY} L ${targetCenterX} ${targetY}`;
 }
 
 function relationLane(index: number): number {
