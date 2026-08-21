@@ -26,7 +26,7 @@ export interface FreeCreationReferenceItem {
   previewUrl?: string;
 }
 
-export type ReferenceAdmissionIssue = "unsupported_type" | "slot_limit" | "total_limit" | null;
+export type ReferenceAdmissionIssue = "unsupported_type" | "frames_require_omni" | "slot_limit" | "total_limit" | null;
 
 const OMNI_ROLE_BY_MEDIA_TYPE: Record<FreeCreationUploadMediaType, FreeCreationReferenceRole> = {
   image: "reference_image",
@@ -84,7 +84,7 @@ export function referenceAdmissionIssue({
   outputType: FreeCreationOutputType;
   mode: FreeCreationReferenceMode;
 }): ReferenceAdmissionIssue {
-  if (mode === "frames" && mediaType !== "image") return "unsupported_type";
+  if (mode === "frames" && mediaType !== "image") return "frames_require_omni";
   const slot = capabilities?.input_slots?.find(
     (candidate) => candidate.role === role && candidate.accepted_types.includes(mediaType),
   );

@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { useWarnUnsaved } from "@/hooks/useWarnUnsaved";
 import { API } from "@/api";
 import type {
+  RuntimeToolStatus,
   SystemConfigSettings,
   SystemConfigOptions,
   SystemConfigPatch,
@@ -72,6 +73,7 @@ export function MediaModelSection() {
 
   const [settings, setSettings] = useState<SystemConfigSettings | null>(null);
   const [options, setOptions] = useState<SystemConfigOptions | null>(null);
+  const [runtimeTools, setRuntimeTools] = useState<{ ffmpeg: RuntimeToolStatus; ffprobe: RuntimeToolStatus } | null>(null);
   const {
     candidates,
     error: candidatesError,
@@ -118,6 +120,7 @@ export function MediaModelSection() {
     ]);
     setSettings(res.settings);
     setOptions(res.options);
+    setRuntimeTools(res.runtime_tools ?? null);
     setProviders(catalog);
     setCustomProviders(custom);
     setDraft({});
@@ -302,6 +305,30 @@ export function MediaModelSection() {
           {t("model_selection_desc")}
         </p>
       </div>
+
+      <SectionCard
+        kicker={t("media_tools_kicker")}
+        title={t("media_tools_title")}
+        description={t("media_tools_description")}
+      >
+        <div className="space-y-2">
+          {(["ffmpeg", "ffprobe"] as const).map((tool) => {
+            const status = runtimeTools?.[tool];
+            const available = status?.available ?? false;
+            return (
+              <div key={tool} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[8px] border border-hairline-soft bg-bg-grad-a/35 px-3 py-2.5">
+                <span className="min-w-20 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-text-2">{t(`media_tool_${tool}`)}</span>
+                <span className={available ? "text-[11px] text-accent-2" : "text-[11px] text-warm-bright"}>
+                  {available ? t("media_tool_available") : t("media_tool_missing")}
+                </span>
+                {available && status?.version ? <span className="min-w-0 truncate text-[10px] text-text-4" title={status.version}>{status.version}</span> : null}
+                {available && status?.path ? <span className="ml-auto max-w-full truncate font-mono text-[10px] text-text-4" title={status.path}>{status.path}</span> : null}
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-3 text-[11px] leading-5 text-text-4">{t("media_tools_install_hint")}</p>
+      </SectionCard>
 
       {/* Video */}
       <SectionCard kicker="Video Channel" title={t("default_video_model")}>

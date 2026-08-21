@@ -4,6 +4,7 @@ import { API } from "@/api";
 import {
   arrangeCanvasNodes,
   buildCanvasDependencyEdges,
+  createCanvasGroupId,
   FreeCreationInfiniteCanvas,
 } from "@/components/canvas/FreeCreationInfiniteCanvas";
 import i18n from "@/i18n";
@@ -473,6 +474,7 @@ describe("FreeCreationInfiniteCanvas", () => {
     fireEvent.contextMenu(secondCard!, { clientX: 120, clientY: 120 });
     fireEvent.click(await screen.findByRole("menuitem", { name: t("free_creation_group_selected") }));
     expect(document.querySelector("[data-canvas-group]")).toBeInTheDocument();
+    expect(screen.getByTestId("free-creation-canvas")).toBeInTheDocument();
 
     const firstHeader = firstCard!.firstElementChild as HTMLElement;
     const surface = screen.getByTestId("free-creation-canvas");
@@ -482,6 +484,16 @@ describe("FreeCreationInfiniteCanvas", () => {
 
     await waitFor(() => expect(firstCard).toHaveStyle({ left: "136px", top: "118px" }));
     expect(secondCard).toHaveStyle({ left: "480px", top: "118px" });
+  });
+
+  it("creates a valid group id without crypto.randomUUID", () => {
+    const originalRandomUuid = crypto.randomUUID;
+    Object.defineProperty(crypto, "randomUUID", { configurable: true, value: undefined });
+    try {
+      expect(createCanvasGroupId()).toMatch(/^g_[a-f0-9]{20}$/);
+    } finally {
+      Object.defineProperty(crypto, "randomUUID", { configurable: true, value: originalRandomUuid });
+    }
   });
 
   it("deduplicates dependency edges and arranges connected nodes from inputs to outputs", () => {
