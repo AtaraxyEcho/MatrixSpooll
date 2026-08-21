@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -59,6 +60,11 @@ def _workspace_root(project_path: Path) -> Path:
 
 def _canvas_state_path(project_path: Path) -> Path:
     return safe_join(_workspace_root(project_path), "canvas.json")
+
+
+def _canvas_viewport_path(project_path: Path, user_id: str) -> Path:
+    identity = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
+    return safe_join(_workspace_root(project_path), "user_state", f"{identity}.json")
 
 
 def _request_path(project_path: Path, request_id: str) -> Path:
@@ -374,6 +380,35 @@ def load_canvas_state(project_path: Path) -> dict[str, Any]:
     return {**default_canvas_state(), **payload}
 
 
+def load_canvas_viewport(project_path: Path, user_id: str, fallback: dict[str, float]) -> dict[str, float]:
+    """Load viewport state that belongs to one collaborator, not the project."""
+
+    payload = load_json_or_none(_canvas_viewport_path(project_path, user_id))
+    if not isinstance(payload, dict):
+        return fallback
+    viewport = payload.get("viewport")
+    if not isinstance(viewport, dict):
+        return fallback
+    try:
+        return {
+            "x": float(viewport["x"]),
+            "y": float(viewport["y"]),
+            "scale": float(viewport["scale"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return fallback
+
+
+def save_canvas_viewport(project_path: Path, user_id: str, viewport: dict[str, float]) -> dict[str, float]:
+    """Persist one collaborator's camera without changing shared canvas revision."""
+
+    path = _canvas_viewport_path(project_path, user_id)
+    with project_metadata_lock(project_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, {"viewport": viewport, "updated_at": _now()})
+    return viewport
+
+
 def save_canvas_state(
     project_path: Path,
     *,
@@ -384,20 +419,27 @@ def save_canvas_state(
     groups: list[dict[str, Any]] | None = None,
     show_relations: bool = True,
     expected_revision: int | None,
+    persist_viewport: bool = True,
 ) -> dict[str, Any]:
     with project_metadata_lock(project_path):
         current = load_canvas_state(project_path)
         revision = int(current.get("revision") or 0)
         if expected_revision is not None and expected_revision != revision:
             raise RuntimeError("free creation canvas revision conflict")
-        payload = {
-            "revision": revision + 1,
-            "viewport": viewport,
+        shared_viewport = viewport if persist_viewport else current.get("viewport", default_canvas_state()["viewport"])
+        shared_values = {
+            "viewport": shared_viewport,
             "positions": positions,
             "hidden_creation_ids": sorted(set(hidden_creation_ids)),
             "hidden_reference_ids": sorted(set(hidden_reference_ids or [])),
             "groups": groups or [],
             "show_relations": show_relations,
+        }
+        if all(current.get(key) == value for key, value in shared_values.items()):
+            return current
+        payload = {
+            "revision": revision + 1,
+            **shared_values,
             "updated_at": _now(),
         }
         path = _canvas_state_path(project_path)
@@ -796,6 +838,7 @@ __all__ = [
     "list_storyboard_plans",
     "list_subtitle_tracks",
     "load_canvas_state",
+    "load_canvas_viewport",
     "load_storyboard_plan",
     "load_subtitle_track",
     "new_request_id",
@@ -803,6 +846,7 @@ __all__ = [
     "resolve_reference_claims",
     "read_reference_preview",
     "save_canvas_state",
+    "save_canvas_viewport",
     "save_reference_upload",
     "save_storyboard_plan",
     "save_subtitle_track",

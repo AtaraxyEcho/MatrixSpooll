@@ -28,7 +28,7 @@ from server.agent_runtime.service import (
 )
 from server.agent_runtime.session_branch import SessionBranchError
 from server.agent_runtime.session_manager import AgentStartupError, SessionBusyError, SessionCapacityError
-from server.auth import CurrentUserFlexible
+from server.auth import CurrentUser, CurrentUserFlexible
 
 router = APIRouter()
 
@@ -147,6 +147,7 @@ async def send_message(
     req: SendRequest,
     request: Request,
     _t: Translator,
+    user: CurrentUser,
 ):
     try:
         service = get_assistant_service()
@@ -157,6 +158,7 @@ async def send_message(
             images=req.images,
             locale=get_locale(request),
             client_key=req.client_key,
+            actor_user_id=user.id,
         )
         return result
     except SessionCapacityError as exc:
@@ -194,6 +196,7 @@ async def rewrite_message(
     req: RewriteRequest,
     request: Request,
     _t: Translator,
+    user: CurrentUser,
 ):
     """改写会话中某条历史用户消息：分叉出新会话并在其上重跑。
 
@@ -210,6 +213,7 @@ async def rewrite_message(
             images=req.images,
             locale=get_locale(request),
             client_key=req.client_key,
+            actor_user_id=user.id,
         )
     except RewriteAnchorError as exc:
         raise BadRequestError("rewrite_anchor_invalid") from exc

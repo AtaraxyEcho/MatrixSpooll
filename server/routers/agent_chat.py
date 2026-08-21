@@ -7,16 +7,20 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.api_errors import BadRequestError, ConflictError, NotFoundError, ServiceUnavailableError
+from lib.db import get_async_session
 from lib.i18n import Translator, get_locale
 from server.agent_runtime.models import Heartbeat, LiveMessage
 from server.agent_runtime.result_status import resolve_result_status
 from server.agent_runtime.service import AssistantService
 from server.agent_runtime.session_manager import AgentStartupError, SessionBusyError, SessionCapacityError
+from server.auth import CurrentUser
 from server.routers.assistant import agent_startup_failure_detail, get_assistant_service
+from server.services.project_access import resolve_project_access
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +156,8 @@ async def agent_chat(
     body: AgentChatRequest,
     request: Request,
     _t: Translator,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
 ) -> AgentChatResponse:
     """同步 Agent 对话端点。
 
@@ -161,6 +167,7 @@ async def agent_chat(
     - 超过 120 秒返回已收集的部分响应，status 为 "timeout"
     - 流异常收尾时从事件日志补齐回复；无法确认完整的非空回复以 truncated=true 标记
     """
+    await resolve_project_access(body.project_name, user, session, required_role="editor")
     service = get_assistant_service()
 
     # 验证项目是否存在
@@ -171,16 +178,16 @@ async def agent_chat(
 
     # 若传入 session_id，先校验会话归属
     if body.session_id:
-        session = await service.get_session(body.session_id)
-        if session is None:
+        session_meta = await service.get_session(body.session_id)
+        if session_meta is None:
             raise HTTPException(status_code=404, detail=_t("session_not_found", session_id=body.session_id))
-        if session.project_name != body.project_name:
+        if session_meta.project_name != body.project_name:
             raise HTTPException(
                 status_code=400,
                 detail=_t(
                     "session_project_mismatch",
                     session_id=body.session_id,
-                    session_project=session.project_name,
+                    session_project=session_meta.project_name,
                     request_project=body.project_name,
                 ),
             )
@@ -192,6 +199,7 @@ async def agent_chat(
             body.message,
             session_id=body.session_id,
             locale=get_locale(request),
+            actor_user_id=user.id,
         )
         session_id = result["session_id"]
     except SessionCapacityError as exc:

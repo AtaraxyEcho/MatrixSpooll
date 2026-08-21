@@ -577,6 +577,7 @@ class EventLogStore:
         entries: list[dict[str, Any]],
         *,
         client_key: str | None = None,
+        actor_user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """追加条目并返回带 seq 的权威条目列表。
 
@@ -587,7 +588,9 @@ class EventLogStore:
             return []
         for attempt in range(_MAX_APPEND_RETRY):
             try:
-                return await self._append_once(session_id, entries, client_key)
+                if actor_user_id is None:
+                    return await self._append_once(session_id, entries, client_key)
+                return await self._append_once(session_id, entries, client_key, actor_user_id)
             except IntegrityError as exc:
                 unique_violation = _is_unique_violation(exc)
                 # client_key 为 None 时本次写入根本没有 client_key 值，不可能
@@ -616,6 +619,7 @@ class EventLogStore:
         session_id: str,
         entries: list[dict[str, Any]],
         client_key: str | None,
+        actor_user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         now_dt = utc_now()
         async with self._session_factory() as session:
@@ -635,7 +639,7 @@ class EventLogStore:
                         entry_type=str(entry.get("type") or ""),
                         payload=entry,
                         client_key=client_key if len(entries) == 1 else None,
-                        user_id=self._user_id,
+                        user_id=actor_user_id or self._user_id,
                         created_at=now_dt,
                         updated_at=now_dt,
                     )
@@ -650,6 +654,7 @@ class EventLogStore:
         entry: dict[str, Any],
         *,
         client_key: str | None = None,
+        actor_user_id: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
         """幂等追加用户条目：同一幂等键重试返回既有条目，不产生重复。
 
@@ -660,7 +665,12 @@ class EventLogStore:
             existing = await self.find_by_client_key(session_id, client_key)
             if existing is not None:
                 return existing, False
-        appended = await self.append(session_id, [entry], client_key=client_key)
+        appended = await self.append(
+            session_id,
+            [entry],
+            client_key=client_key,
+            actor_user_id=actor_user_id,
+        )
         authoritative = appended[0]
         # append 在幂等键冲突时返回既有条目；用 uuid 区分是否为本次写入。
         created = authoritative.get("uuid") == entry.get("uuid")
@@ -736,6 +746,8 @@ class EventLogStore:
         session_id: str,
         user_entry_uuid: str,
         sdk_entry_uuid: str,
+        *,
+        actor_user_id: str | None = None,
     ) -> None:
         """记录用户消息条目 ↔ SDK transcript entry 的身份映射（幂等）。
 
@@ -750,7 +762,7 @@ class EventLogStore:
                         session_id=session_id,
                         user_entry_uuid=user_entry_uuid,
                         sdk_entry_uuid=sdk_entry_uuid,
-                        user_id=self._user_id,
+                        user_id=actor_user_id or self._user_id,
                         created_at=now_dt,
                         updated_at=now_dt,
                     )

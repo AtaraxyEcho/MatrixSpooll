@@ -4,22 +4,64 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.api_errors import BadRequestError, NotFoundError
 from lib.asset_types import localize_asset_type
+from lib.db import get_async_session
 from lib.generation_queue import get_generation_queue
 from lib.i18n import Translator
 from lib.task_failure import parse_failure, render_failure
+from server.auth import CurrentUser, database_auth_initialized, is_auth_enabled
+from server.services.project_access import list_accessible_projects, resolve_project_access
 
 router = APIRouter()
 
 
 def get_task_queue():
     return get_generation_queue()
+
+
+async def _visible_project_names(
+    project_name: str | None,
+    user: CurrentUser,
+    session: AsyncSession,
+) -> list[str] | None:
+    if project_name:
+        access = await resolve_project_access(project_name, user, session, required_role="viewer")
+        return [access.project_name]
+    if not is_auth_enabled() or not database_auth_initialized():
+        return None
+    projects = await list_accessible_projects(user.id, session)
+    return [project.name for project in projects]
+
+
+async def _authorize_task_project(
+    queue: Any,
+    task_id: str,
+    user: CurrentUser,
+    session: AsyncSession,
+):
+    """Authorize a task when the queue exposes its project ownership.
+
+    The production queue always returns ``project_name``. Keeping the lookup
+    optional preserves the small queue doubles used by legacy route tests while
+    still failing closed for every persisted task in the real queue.
+    """
+    get_task = getattr(queue, "get_task", None)
+    if not callable(get_task):
+        return None
+    task = await cast(Callable[[str], Awaitable[dict[str, Any] | None]], get_task)(task_id)
+    if not task:
+        raise BadRequestError("task_not_found", id=task_id)
+    project_name = task.get("project_name")
+    if isinstance(project_name, str) and project_name:
+        await resolve_project_access(project_name, user, session, required_role="editor")
+    return task
 
 
 # warning key -> 其 params 中需要把内部资产类型标识替换为本地化显示名的字段名。
@@ -112,15 +154,25 @@ def _localize_task(task: dict[str, Any], translate: Callable[..., str]) -> dict[
 
 
 @router.get("/tasks/stats")
-async def get_task_stats(project_name: str | None = None):
+async def get_task_stats(
+    user: CurrentUser,
+    project_name: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+):
     queue = get_task_queue()
-    stats = await queue.get_task_stats(project_name=project_name)
+    visible_projects = await _visible_project_names(project_name, user, session)
+    if visible_projects is not None:
+        stats = await queue.get_task_stats(project_names=visible_projects)
+    else:
+        stats = await queue.get_task_stats()
     return {"stats": stats}
 
 
 @router.get("/tasks")
 async def list_tasks(
     _t: Translator,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
     project_name: str | None = None,
     status: str | None = None,
     task_type: str | None = None,
@@ -129,14 +181,17 @@ async def list_tasks(
     page_size: int = Query(default=50, ge=1, le=500),
 ):
     queue = get_task_queue()
-    result = await queue.list_tasks(
-        project_name=project_name,
-        status=status,
-        task_type=task_type,
-        source=source,
-        page=page,
-        page_size=page_size,
-    )
+    visible_projects = await _visible_project_names(project_name, user, session)
+    filters = {
+        "status": status,
+        "task_type": task_type,
+        "source": source,
+        "page": page,
+        "page_size": page_size,
+    }
+    if visible_projects is not None:
+        filters["project_names"] = visible_projects
+    result = await queue.list_tasks(**filters)
     result["items"] = [_localize_task(task, _t) for task in result.get("items", [])]
     return result
 
@@ -145,6 +200,8 @@ async def list_tasks(
 async def list_project_tasks(
     project_name: str,
     _t: Translator,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
     status: str | None = None,
     task_type: str | None = None,
     source: str | None = None,
@@ -152,8 +209,9 @@ async def list_project_tasks(
     page_size: int = Query(default=50, ge=1, le=500),
 ):
     queue = get_task_queue()
+    access = await resolve_project_access(project_name, user, session, required_role="viewer")
     result = await queue.list_tasks(
-        project_name=project_name,
+        project_name=access.project_name,
         status=status,
         task_type=task_type,
         source=source,
@@ -165,8 +223,13 @@ async def list_project_tasks(
 
 
 @router.get("/tasks/{task_id}/cancel-preview")
-async def cancel_preview(task_id: str):
+async def cancel_preview(
+    task_id: str,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
     queue = get_task_queue()
+    await _authorize_task_project(queue, task_id, user, session)
     try:
         preview = await queue.get_cancel_preview(task_id)
     except ValueError as e:
@@ -175,8 +238,14 @@ async def cancel_preview(task_id: str):
 
 
 @router.post("/tasks/{task_id}/cancel")
-async def cancel_task(task_id: str, _t: Translator):
+async def cancel_task(
+    task_id: str,
+    _t: Translator,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
     queue = get_task_queue()
+    await _authorize_task_project(queue, task_id, user, session)
     try:
         result = await queue.cancel_task(task_id)
     except ValueError as e:
@@ -189,16 +258,26 @@ async def cancel_task(task_id: str, _t: Translator):
 
 
 @router.get("/projects/{project_name}/tasks/cancel-all-preview")
-async def cancel_all_preview(project_name: str):
+async def cancel_all_preview(
+    project_name: str,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
     queue = get_task_queue()
-    queued_count = await queue.get_cancel_all_preview(project_name)
+    access = await resolve_project_access(project_name, user, session, required_role="editor")
+    queued_count = await queue.get_cancel_all_preview(access.project_name)
     return {"queued_count": queued_count}
 
 
 @router.post("/projects/{project_name}/tasks/cancel-all")
-async def cancel_all_queued(project_name: str):
+async def cancel_all_queued(
+    project_name: str,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
     queue = get_task_queue()
-    result = await queue.cancel_all_queued(project_name)
+    access = await resolve_project_access(project_name, user, session, required_role="editor")
+    result = await queue.cancel_all_queued(access.project_name)
     return result
 
 
@@ -206,9 +285,14 @@ async def cancel_all_queued(project_name: str):
 async def get_task(
     task_id: str,
     _t: Translator,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
 ):
     queue = get_task_queue()
     task = await queue.get_task(task_id)
     if not task:
         raise NotFoundError("task_not_found", id=task_id)
+    project_name = task.get("project_name")
+    if isinstance(project_name, str) and project_name:
+        await resolve_project_access(project_name, user, session, required_role="viewer")
     return {"task": _localize_task(task, _t)}

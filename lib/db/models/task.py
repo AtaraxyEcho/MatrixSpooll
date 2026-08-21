@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, Integer, String, Text, text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lib.db.base import Base, UserOwnedMixin
@@ -14,6 +14,11 @@ class Task(UserOwnedMixin, Base):
     __tablename__ = "tasks"
 
     task_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("project_registry.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     project_name: Mapped[str] = mapped_column(String, nullable=False)
     task_type: Mapped[str] = mapped_column(String, nullable=False)
     media_type: Mapped[str] = mapped_column(String, nullable=False)
@@ -50,6 +55,7 @@ class Task(UserOwnedMixin, Base):
 
     __table_args__ = (
         Index("idx_tasks_status_queued_at", "status", "queued_at"),
+        Index("idx_tasks_project_id", "project_id"),
         Index("idx_tasks_project_updated_at", "project_name", "updated_at"),
         Index("idx_tasks_dependency_task_id", "dependency_task_id"),
         Index("idx_tasks_status_provider_queued", "status", "provider_id", "queued_at"),

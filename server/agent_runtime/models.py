@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from lib.db.base import DEFAULT_USER_ID
+
 SessionStatus = Literal["idle", "running", "completed", "error", "interrupted", "closed"]
 
 
@@ -49,6 +51,7 @@ class SessionMeta(BaseModel):
     project_name: str
     title: str = ""
     status: SessionStatus = "idle"
+    actor_user_id: str = DEFAULT_USER_ID
     superseded_by: str | None = None
     """非空表示本会话已被分支会话取代，值为新会话的 sdk_session_id。"""
     fork_parent_session_id: str | None = None

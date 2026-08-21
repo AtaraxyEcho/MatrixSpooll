@@ -102,6 +102,17 @@ export function WizardStep1Basics({
       <div>
         <FieldLabel>{t("dashboard:content_mode")}</FieldLabel>
         <div className="flex gap-2.5" role="radiogroup" aria-label={t("dashboard:content_mode")}>
+          <label className={radioCardClass(value.contentMode === "free")}>
+            <input
+              type="radio"
+              name="contentMode"
+              value="free"
+              checked={value.contentMode === "free"}
+              onChange={() => onChange({ ...value, contentMode: "free", generationRoute: null, gridStoryboard: false })}
+              className="sr-only"
+            />
+            {t("dashboard:free_creation")}
+          </label>
           <label className={radioCardClass(value.contentMode === "narration")}>
             <input
               type="radio"
@@ -137,17 +148,6 @@ export function WizardStep1Basics({
               className="sr-only"
             />
             {t("dashboard:ad_short_video")}
-          </label>
-          <label className={radioCardClass(value.contentMode === "free")}>
-            <input
-              type="radio"
-              name="contentMode"
-              value="free"
-              checked={value.contentMode === "free"}
-              onChange={() => onChange({ ...value, contentMode: "free", generationRoute: null, gridStoryboard: false })}
-              className="sr-only"
-            />
-            {t("dashboard:free_creation")}
           </label>
         </div>
         <p className="mt-2 text-[11.5px] leading-[1.55] text-text-3">

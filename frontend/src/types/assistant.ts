@@ -15,6 +15,7 @@ export interface SessionMeta {
   project_name: string;
   title: string;
   status: SessionStatus;
+  actor_user_id?: string;
   created_at: string;
   updated_at: string;
 }

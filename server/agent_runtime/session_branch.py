@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from lib.agent_session_store import make_project_key
 from lib.agent_session_store.prefix_fork import InvalidAnchorError, SessionStoreLike, copy_session_prefix
+from lib.db.base import DEFAULT_USER_ID
 from server.agent_runtime.event_log import EventLogService
 from server.agent_runtime.session_store import SessionMetaStore
 
@@ -62,7 +63,13 @@ class SessionBranchService:
         self._event_log = event_log
         self._resolve_project_cwd = resolve_project_cwd
 
-    async def branch(self, session_id: str, anchor_user_entry_uuid: str) -> BranchedSession:
+    async def branch(
+        self,
+        session_id: str,
+        anchor_user_entry_uuid: str,
+        *,
+        actor_user_id: str = DEFAULT_USER_ID,
+    ) -> BranchedSession:
         """从 ``anchor_user_entry_uuid`` 处分叉 ``session_id``，返回新会话。
 
         ``anchor_user_entry_uuid`` 是事件日志里那条用户条目的 uuid，由事件日志
@@ -110,6 +117,7 @@ class SessionBranchService:
                 new_session_id,
                 fork_parent_session_id=session_id,
                 fork_anchor_uuid=anchor_uuid,
+                actor_user_id=actor_user_id,
             )
             if not await self._meta_store.mark_superseded(session_id, new_session_id):
                 raise SessionBranchError(f"session {session_id} has already been superseded by another branch")

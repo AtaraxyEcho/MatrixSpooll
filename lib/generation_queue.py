@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -613,6 +613,7 @@ class GenerationQueue:
         self,
         *,
         project_name: str | None = None,
+        project_names: Sequence[str] | None = None,
         status: str | None = None,
         task_type: str | None = None,
         source: str | None = None,
@@ -623,6 +624,7 @@ class GenerationQueue:
         async with self._task_repo() as repo:
             return await repo.list_tasks(
                 project_name=project_name,
+                project_names=project_names,
                 status=status,
                 task_type=task_type,
                 source=source,
@@ -630,10 +632,14 @@ class GenerationQueue:
                 page_size=page_size,
             )
 
-    async def get_task_stats(self, project_name: str | None = None) -> dict[str, int]:
+    async def get_task_stats(
+        self,
+        project_name: str | None = None,
+        project_names: Sequence[str] | None = None,
+    ) -> dict[str, int]:
 
         async with self._task_repo() as repo:
-            return await repo.get_stats(project_name=project_name)
+            return await repo.get_stats(project_name=project_name, project_names=project_names)
 
     async def acquire_or_renew_worker_lease(
         self,

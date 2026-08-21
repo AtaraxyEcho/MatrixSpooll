@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import sqlalchemy as sa
-from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lib.db.base import Base, TimestampMixin, UserOwnedMixin
@@ -15,6 +15,11 @@ class ApiCall(TimestampMixin, UserOwnedMixin, Base):
     __tablename__ = "api_calls"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("project_registry.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     project_name: Mapped[str] = mapped_column(String, nullable=False)
     call_type: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[str] = mapped_column(String, nullable=False)
@@ -42,6 +47,7 @@ class ApiCall(TimestampMixin, UserOwnedMixin, Base):
     text_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     text_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     __table_args__ = (
+        Index("idx_api_calls_project_id", "project_id"),
         Index("idx_api_calls_project_name", "project_name"),
         Index("idx_api_calls_call_type", "call_type"),
         Index("idx_api_calls_status", "status"),

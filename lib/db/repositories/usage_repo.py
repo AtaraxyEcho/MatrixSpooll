@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -12,6 +13,7 @@ from lib.cost_calculator import cost_calculator
 from lib.custom_provider import is_custom_provider, parse_provider_id
 from lib.db.base import DEFAULT_USER_ID, dt_to_iso, utc_now
 from lib.db.models.api_call import ApiCall
+from lib.db.project_identity import resolve_project_id
 from lib.db.repositories.base import BaseRepository, rowcount
 from lib.db.repositories.custom_provider_repo import CustomProviderRepository
 from lib.pricing.strategies import PricingParams
@@ -93,6 +95,7 @@ def _classify_asset_output_path(output_path: str | None) -> str:
 def _row_to_dict(row: ApiCall) -> dict[str, Any]:
     return {
         "id": row.id,
+        "project_id": row.project_id,
         "project_name": row.project_name,
         "call_type": row.call_type,
         "model": row.model,
@@ -120,6 +123,7 @@ def _row_to_dict(row: ApiCall) -> dict[str, Any]:
         "text_input_tokens": row.text_input_tokens,
         "text_output_tokens": row.text_output_tokens,
         "created_at": dt_to_iso(row.created_at),
+        "actor_user_id": row.user_id,
     }
 
 
@@ -141,8 +145,10 @@ class UsageRepository(BaseRepository):
     ) -> int:
         now = utc_now()
         prompt_truncated = prompt[:500] if prompt else None
+        project_id = await resolve_project_id(self.session, project_name)
 
         row = ApiCall(
+            project_id=project_id,
             project_name=project_name,
             call_type=call_type,
             model=model,
@@ -378,6 +384,7 @@ class UsageRepository(BaseRepository):
     def _build_filters(
         *,
         project_name: str | None = None,
+        project_names: Sequence[str] | None = None,
         provider: str | None = None,
         call_type: CallType | None = None,
         status: str | None = None,
@@ -387,6 +394,8 @@ class UsageRepository(BaseRepository):
         filters: list = []
         if project_name:
             filters.append(ApiCall.project_name == project_name)
+        elif project_names is not None:
+            filters.append(ApiCall.project_name.in_(list(project_names)))
         if provider:
             filters.append(ApiCall.provider == provider)
         if call_type:
@@ -405,12 +414,14 @@ class UsageRepository(BaseRepository):
         self,
         *,
         project_name: str | None = None,
+        project_names: Sequence[str] | None = None,
         provider: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> dict[str, Any]:
         filters = self._build_filters(
             project_name=project_name,
+            project_names=project_names,
             provider=provider,
             start_date=start_date,
             end_date=end_date,
@@ -479,12 +490,14 @@ class UsageRepository(BaseRepository):
         self,
         *,
         project_name: str | None = None,
+        project_names: Sequence[str] | None = None,
         provider: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> dict[str, Any]:
         filters = self._build_filters(
             project_name=project_name,
+            project_names=project_names,
             provider=provider,
             start_date=start_date,
             end_date=end_date,
@@ -603,6 +616,7 @@ class UsageRepository(BaseRepository):
         self,
         *,
         project_name: str | None = None,
+        project_names: Sequence[str] | None = None,
         call_type: CallType | None = None,
         status: str | None = None,
         start_date: datetime | None = None,
@@ -612,6 +626,7 @@ class UsageRepository(BaseRepository):
     ) -> dict[str, Any]:
         filters = self._build_filters(
             project_name=project_name,
+            project_names=project_names,
             call_type=call_type,
             status=status,
             start_date=start_date,
@@ -704,8 +719,11 @@ class UsageRepository(BaseRepository):
             bucket[currency] = round(bucket.get(currency, 0) + total, 6)
         return result
 
-    async def get_projects_list(self) -> list[str]:
-        stmt = select(ApiCall.project_name).distinct().order_by(ApiCall.project_name)
+    async def get_projects_list(self, *, project_names: Sequence[str] | None = None) -> list[str]:
+        stmt = select(ApiCall.project_name).distinct()
+        if project_names is not None:
+            stmt = stmt.where(ApiCall.project_name.in_(list(project_names)))
+        stmt = stmt.order_by(ApiCall.project_name)
         stmt = self._scope_query(stmt, ApiCall)
         result = await self.session.execute(stmt)
         return [row[0] for row in result.all()]

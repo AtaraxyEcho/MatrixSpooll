@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 
 from lib.db.base import DEFAULT_USER_ID, dt_to_iso, utc_now
 from lib.db.models.session import AgentSession
+from lib.db.project_identity import resolve_project_id
 from lib.db.repositories.base import BaseRepository, rowcount
 
 
@@ -17,6 +18,7 @@ def _row_to_dict(row: AgentSession) -> dict[str, Any]:
     return {
         "id": row.id,
         "sdk_session_id": row.sdk_session_id,
+        "project_id": row.project_id,
         "project_name": row.project_name,
         "title": row.title or "",
         "status": row.status,
@@ -25,6 +27,7 @@ def _row_to_dict(row: AgentSession) -> dict[str, Any]:
         "fork_anchor_uuid": row.fork_anchor_uuid,
         "created_at": dt_to_iso(row.created_at),
         "updated_at": dt_to_iso(row.updated_at),
+        "actor_user_id": row.user_id,
     }
 
 
@@ -40,9 +43,11 @@ class SessionRepository(BaseRepository):
         fork_anchor_uuid: str | None = None,
     ) -> dict[str, Any]:
         now = utc_now()
+        project_id = await resolve_project_id(self.session, project_name)
         row = AgentSession(
             id=uuid.uuid4().hex,
             sdk_session_id=sdk_session_id,
+            project_id=project_id,
             project_name=project_name,
             title=title,
             status="idle",
