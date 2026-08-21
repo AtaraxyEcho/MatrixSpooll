@@ -1011,6 +1011,18 @@ class API {
     return this.request(`/free-creation-capabilities?${params.toString()}`, { signal: options.signal });
   }
 
+  static async getModelCapabilities(options: {
+    outputType: "image" | "video";
+    model?: string;
+    projectName?: string;
+    signal?: AbortSignal;
+  }): Promise<FreeCreationCapabilities> {
+    const params = new URLSearchParams({ output_type: options.outputType });
+    if (options.model) params.set("model", options.model);
+    if (options.projectName) params.set("project_name", options.projectName);
+    return this.request(`/model-capabilities?${params.toString()}`, { signal: options.signal });
+  }
+
   static async createFreeStoryboardPlan(
     projectName: string,
     payload: { prompt?: string; reference_id?: string; title?: string; max_shots?: number },
@@ -1064,6 +1076,16 @@ class API {
     return this.request(
       `/projects/${encodeURIComponent(projectName)}/free-creation-subtitles/${encodeURIComponent(subtitleId)}`,
       { method: "DELETE" },
+    );
+  }
+
+  static async renderFreeSubtitleTrack(
+    projectName: string,
+    subtitleId: string,
+  ): Promise<{ success: boolean; creation: FreeCreation }> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/free-creation-subtitles/${encodeURIComponent(subtitleId)}/render`,
+      { method: "POST" },
     );
   }
 
@@ -1180,15 +1202,6 @@ class API {
     });
   }
 
-  static async detachFreeCreationReference(
-    projectName: string,
-    referenceId: string,
-  ): Promise<{ success: boolean }> {
-    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-references/${encodeURIComponent(referenceId)}/detach`, {
-      method: "POST",
-    });
-  }
-
   static async exportFreeCreations(
     projectName: string,
     payload: { scope: "selected" | "request" | "all"; creation_ids?: string[]; request_id?: string },
@@ -1217,6 +1230,20 @@ class API {
     return response.blob();
   }
 
+  static async compositeFreeCreationAudio(
+    projectName: string,
+    videoCreationId: string,
+    audioCreationId: string,
+  ): Promise<{ success: boolean; creation: FreeCreation }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-audio-composite`, {
+      method: "POST",
+      body: JSON.stringify({
+        video_creation_id: videoCreationId,
+        audio_creation_id: audioCreationId,
+      }),
+    });
+  }
+
   static async cancelFreeCreation(
     projectName: string,
     creationId: string,
@@ -1227,10 +1254,40 @@ class API {
     );
   }
 
+  static async deleteFreeCreation(
+    projectName: string,
+    creationId: string,
+  ): Promise<{ success: boolean; creation: FreeCreation }> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/creations/${encodeURIComponent(creationId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  static async deleteFreeCreationItems(
+    projectName: string,
+    payload: { creation_ids: readonly string[]; reference_ids: readonly string[] },
+  ): Promise<{ success: boolean; creation_ids: string[]; reference_ids: string[] }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-items/delete`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  static async restoreFreeCreation(
+    projectName: string,
+    creationId: string,
+  ): Promise<{ success: boolean; creation: FreeCreation }> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectName)}/creations/${encodeURIComponent(creationId)}/restore`,
+      { method: "POST" },
+    );
+  }
+
   static async retryFreeCreation(
     projectName: string,
     creationId: string,
-  ): Promise<{ success: boolean; creation_id: string; task_id: string }> {
+  ): Promise<{ success: boolean; creation_id: string; task_id: string; model?: string | null }> {
     return this.request(
       `/projects/${encodeURIComponent(projectName)}/creations/${encodeURIComponent(creationId)}/retry`,
       { method: "POST" },
@@ -3258,6 +3315,15 @@ class API {
     return new File([blob], `${asset.name}${extension}`, {
       type: blob.type || (extension === ".jpg" || extension === ".jpeg" ? "image/jpeg" : "image/png"),
       lastModified: Date.parse(asset.updated_at ?? "") || 0,
+    });
+  }
+
+  static async restoreFreeCreationReference(
+    projectName: string,
+    referenceId: string,
+  ): Promise<{ success: boolean; reference: FreeCreationUpload; url: string }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-references/${encodeURIComponent(referenceId)}/restore`, {
+      method: "POST",
     });
   }
 

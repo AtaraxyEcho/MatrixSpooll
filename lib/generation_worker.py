@@ -50,7 +50,7 @@ from lib.reference_video.execution_checkpoint import (
 from lib.reference_video.request_projection import ReferenceProjectionBlockedError
 from lib.script_editor import ScriptEditError
 from lib.task_failure import encode_failure
-from lib.video_backends.base import VideoCapabilityError
+from lib.video_backends.base import VideoCapabilityError, VideoProviderError
 
 # Default provider used when a task payload does not specify one.
 DEFAULT_PROVIDER = "gemini-aistudio"
@@ -101,6 +101,7 @@ def _encode_task_failure_message(exc: Exception) -> str:
         exc,
         ImageCapabilityError
         | VideoCapabilityError
+        | VideoProviderError
         | ReferencePayloadFloorError
         | VideoBucketCapabilityError
         | ReferenceProjectionBlockedError

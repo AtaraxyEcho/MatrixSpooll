@@ -8,6 +8,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: [
+      { find: "@test", replacement: path.resolve(__dirname, "test") },
       { find: "@", replacement: path.resolve(__dirname, "src") },
       // Mock @lobehub/icons and all its subpath imports to avoid
       // @lobehub/fluent-emoji ESM directory import errors in tests.
@@ -19,7 +20,8 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    setupFiles: ["src/test/setup.ts"],
+    setupFiles: ["test/setup.ts"],
+    include: ["test/**/*.{test,spec}.{js,ts,jsx,tsx}"],
     restoreMocks: true,
     clearMocks: true,
     testTimeout: 15_000,

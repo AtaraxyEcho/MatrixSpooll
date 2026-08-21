@@ -253,9 +253,17 @@ function StudioWorkspace() {
   }
 
   if (currentProjectData.content_mode === "free" && projectName) {
+    const projectAspectRatio = typeof currentProjectData.aspect_ratio === "string"
+      ? currentProjectData.aspect_ratio
+      : currentProjectData.aspect_ratio?.video ?? currentProjectData.aspect_ratio?.storyboard;
     return (
       <FreeCreationLayout key={`free-${projectName}`}>
-        <FreeCreationWorkspace projectName={projectName} readOnly={isDemoProject(projectName)} initialMode={handoffMode} />
+        <FreeCreationWorkspace
+          projectName={projectName}
+          readOnly={isDemoProject(projectName)}
+          initialMode={handoffMode}
+          initialAspectRatio={projectAspectRatio}
+        />
       </FreeCreationLayout>
     );
   }

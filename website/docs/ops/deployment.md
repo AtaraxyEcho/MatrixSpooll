@@ -50,14 +50,14 @@ openssl rand -hex 32
 启动：
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
 验证：
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 arcreel
+docker compose logs --tail=100 matrixspooll
 curl http://localhost:1241/health
 ```
 
@@ -113,10 +113,10 @@ POSTGRES_PASSWORD_URLENCODED=p%40ss%2Fword
 
 然后把 `deploy/production/docker-compose.yml` 中 `DATABASE_URL` 的密码部分改为 `${POSTGRES_PASSWORD_URLENCODED}`；PostgreSQL 容器的 `POSTGRES_PASSWORD` 仍保持不变。可用 `urllib.parse.quote(raw_password, safe="")` 生成编码值。如果不想维护这项 Compose 改动，就使用上述十六进制密码。
 
-启动：
+构建版启动（在服务器按 Dockerfile 构建）：
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml up -d --build
 ```
 
 验证：
@@ -124,9 +124,25 @@ docker compose up -d
 ```bash
 docker compose ps
 docker compose logs --tail=100 postgres
-docker compose logs --tail=100 arcreel
+docker compose logs --tail=100 matrixspooll
 curl http://localhost:1241/health
 ```
+
+如需避免服务器安装 Python/Node 依赖，先在开发机或 CI 构建完整 Linux 镜像并推送：
+
+```bash
+docker build -t ccr.ccs.tencentyun.com/mock_mine/image-warehouse:production .
+docker push ccr.ccs.tencentyun.com/mock_mine/image-warehouse:production
+```
+
+服务器在 `deploy/production/` 中使用镜像版 Compose：
+
+```bash
+docker compose -f docker-compose-img.yml pull
+docker compose -f docker-compose-img.yml up -d
+```
+
+`docker-compose.yml` 与 `docker-compose-img.yml` 分别代表“服务器构建”和“拉取完整镜像”，不要混用。镜像构建阶段已经安装全部 Linux 依赖，容器启动不会执行 `uv sync` 或 `pnpm install`。Windows 的 `.venv` 和 `node_modules` 不能复制到 Linux 镜像中。
 
 ### 2.2 PostgreSQL 持久化目录 {#postgresql-volumes}
 
@@ -222,7 +238,7 @@ docker compose logs -f postgres
 1. 阅读 [CHANGELOG](https://github.com/MockMine/MatrixSpooll/blob/main/CHANGELOG.md) 和目标 Release 说明；
 2. 确认是否存在破坏性变更；
 3. 备份数据库和项目目录；
-4. 记录当前镜像版本；
+4. 记录当前源码 commit；
 5. 在可接受的维护窗口执行升级。
 
 ### 5.2 默认部署升级 {#upgrade-sqlite-deployment}
@@ -231,11 +247,11 @@ docker compose logs -f postgres
 
 ```bash
 # 先备份，见后文
-docker compose pull
+docker compose build matrixspooll
 docker compose up -d
 
 docker compose ps
-docker compose logs --tail=100 arcreel
+docker compose logs --tail=100 matrixspooll
 curl -f http://localhost:1241/health
 ```
 
@@ -245,12 +261,12 @@ curl -f http://localhost:1241/health
 
 ```bash
 # 先备份数据库和 projects/
-docker compose pull
+docker compose -f docker-compose.yml build matrixspooll
 docker compose up -d
 
 docker compose ps
 docker compose logs --tail=100 postgres
-docker compose logs --tail=200 arcreel
+docker compose logs --tail=200 matrixspooll
 curl -f http://localhost:1241/health
 ```
 
@@ -276,17 +292,16 @@ curl -f http://localhost:1241/health
 
 如果某个项目迁移失败，先保留现场并查看启动日志，不要手工修改 schema 版本或删除备份文件。修复损坏的项目引用或权限后再重启服务。
 
-### 5.5 固定版本 {#pin-version}
+### 5.5 本地构建 {#local-build}
 
-`latest` 适合快速体验，但生产环境更适合固定 Release 标签。
+`docker-compose.yml` 使用仓库根目录构建应用镜像。首次构建仍需下载 Linux 基础镜像和锁文件中的依赖；Dockerfile 的 BuildKit 缓存会复用后续构建所需的软件包。升级代码后重新构建应用服务：
 
-将 Compose 中的镜像改为：
-
-```yaml
-image: ghcr.io/arcreel/arcreel:vX.Y.Z
+```bash
+docker compose build matrixspooll
+docker compose up -d
 ```
 
-升级时显式修改版本，可以降低无意中拉取新版本的风险。
+依赖会在构建阶段固化进最终镜像，运行阶段不再同步。若部署服务器网络不适合执行首次构建，请在可联网的开发机或 CI 构建并推送镜像，然后改用 `docker-compose-img.yml`。
 
 ## 6. 备份与恢复 {#backup-and-restore}
 

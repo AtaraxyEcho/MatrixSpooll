@@ -8,7 +8,14 @@ import {
   lookupSupportedDurations,
   type DurationConstraints,
 } from "@/utils/provider-models";
-import type { CustomProviderInfo, ProviderInfo, VideoCapabilities, VoiceConsistencyTier } from "@/types";
+import type {
+  CustomProviderInfo,
+  FreeCreationCapabilities,
+  ProviderInfo,
+  VideoCapabilities,
+  VoiceConsistencyTier,
+} from "@/types";
+import { errMsg } from "@/utils/async";
 
 // ---------------------------------------------------------------------------
 // 视频模型能力：前端唯一的能力消费入口。
@@ -75,6 +82,8 @@ export interface ModelCapabilities {
   /** 经联动约束收窄并升序排列的时长候选；未知为 null。 */
   supportedDurations: number[] | null;
   durationConstraints: DurationConstraints;
+  /** Exact backend-declared resolutions for the selected project model. */
+  supportedResolutions: string[] | null;
   /**
    * 时长与约束实际查自哪个 `provider/model`；未知为 null。
    *
@@ -94,6 +103,83 @@ export interface ModelCapabilities {
   voiceConsistency: VoiceConsistencyTier | null;
   /** 服务端能力查询在途。目录侧不受影响，时长仍即时可用。 */
   loading: boolean;
+}
+
+export interface GenerationCapabilitiesInput {
+  outputType: "image" | "video";
+  model?: string | null;
+  referenceKind?: "none" | "frame" | "image" | "video" | "audio";
+  projectName?: string | null;
+  /** Strict mode validates that the selected reference kind can generate. */
+  strictMode?: boolean;
+  enabled?: boolean;
+}
+
+export interface GenerationCapabilitiesState {
+  capabilities: FreeCreationCapabilities | null;
+  loading: boolean;
+  error: string | null;
+}
+
+/**
+ * Read normalized model capabilities for settings or generation admission.
+ * Strict mode also validates the active reference kind. The key includes every
+ * input that can change the result, and stale requests are aborted on switch.
+ */
+export function useGenerationCapabilities({
+  outputType,
+  model,
+  referenceKind = "none",
+  projectName,
+  strictMode = true,
+  enabled = true,
+}: GenerationCapabilitiesInput): GenerationCapabilitiesState {
+  const revision = useCapabilitiesStore((state) => state.revision);
+  const key = enabled
+    ? JSON.stringify([revision, strictMode, outputType, model ?? "", referenceKind, projectName ?? ""])
+    : null;
+  const [result, setResult] = useState<{
+    key: string;
+    capabilities: FreeCreationCapabilities | null;
+    error: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (key === null) return;
+    const controller = new AbortController();
+    const request = strictMode
+      ? API.getFreeCreationCapabilities({
+          outputType,
+          model: model || undefined,
+          referenceKind,
+          projectName: projectName || undefined,
+          signal: controller.signal,
+        })
+      : API.getModelCapabilities({
+          outputType,
+          model: model || undefined,
+          projectName: projectName || undefined,
+          signal: controller.signal,
+        });
+    request
+      .then((capabilities) => {
+        if (controller.signal.aborted) return;
+        setResult({ key, capabilities, error: null });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setResult({ key, capabilities: null, error: errMsg(error) });
+      });
+
+    return () => controller.abort();
+  }, [key, model, outputType, projectName, referenceKind, strictMode]);
+
+  const settled = key !== null && result?.key === key;
+  return {
+    capabilities: settled ? result.capabilities : null,
+    loading: key !== null && !settled,
+    error: settled ? result.error : null,
+  };
 }
 
 /**
@@ -270,6 +356,10 @@ export function useModelCapabilities({
     rawDurations,
     supportedDurations,
     durationConstraints,
+    supportedResolutions:
+      projectName && !isDemoProject(projectName) && caps?.supported_resolutions?.length
+        ? caps.supported_resolutions
+        : null,
     resolvedVideoBackend: durationSource?.backend ?? null,
     firstFrame: caps ? caps.first_frame : null,
     lastFrame: caps ? caps.last_frame : null,

@@ -235,6 +235,9 @@ class VideoLaneResult:
     # 续跑据此与提交时持久化的 endpoint 比对，见 server.services.resume_executor。
     endpoint: str | None = None
     max_reference_videos: int | None = None
+    min_reference_video_seconds: float | None = None
+    max_reference_video_seconds: float | None = None
+    max_reference_video_total_seconds: float | None = None
     max_reference_media_count: int | None = None
     supported_aspect_ratios: tuple[str, ...] = ()
     supported_durations_with_reference_video: tuple[int, ...] = ()
@@ -377,6 +380,9 @@ async def resolve_generation_context(
             first_frame = True
             last_frame = False
             max_reference_videos: int | None = None
+            min_reference_video_seconds: float | None = None
+            max_reference_video_seconds: float | None = None
+            max_reference_video_total_seconds: float | None = None
             max_reference_media_count: int | None = None
             supported_aspect_ratios: tuple[str, ...] = ()
             supported_durations_with_reference_video: tuple[int, ...] = ()
@@ -396,6 +402,9 @@ async def resolve_generation_context(
                 first_frame = bool(caps.get("first_frame", True))
                 last_frame = bool(caps.get("last_frame", False))
                 max_reference_videos = caps.get("max_reference_videos")
+                min_reference_video_seconds = caps.get("min_reference_video_seconds")
+                max_reference_video_seconds = caps.get("max_reference_video_seconds")
+                max_reference_video_total_seconds = caps.get("max_reference_video_total_seconds")
                 max_reference_media_count = caps.get("max_reference_media_count")
                 supported_aspect_ratios = tuple(str(item) for item in caps.get("supported_aspect_ratios") or [])
                 supported_durations_with_reference_video = tuple(
@@ -425,6 +434,9 @@ async def resolve_generation_context(
                 first_frame=first_frame,
                 last_frame=last_frame,
                 max_reference_videos=max_reference_videos,
+                min_reference_video_seconds=min_reference_video_seconds,
+                max_reference_video_seconds=max_reference_video_seconds,
+                max_reference_video_total_seconds=max_reference_video_total_seconds,
                 max_reference_media_count=max_reference_media_count,
                 supported_aspect_ratios=supported_aspect_ratios,
                 supported_durations_with_reference_video=supported_durations_with_reference_video,

@@ -33,6 +33,8 @@ from lib.speech_composition import admit_script_unit
 from lib.version_manager import MANUAL_UPLOAD_VERSION_SOURCE, VersionManager
 from lib.workflow_state import WorkflowStateService, planning_docs
 
+pytestmark = pytest.mark.integration
+
 
 def _make_project(
     tmp_path: Path,

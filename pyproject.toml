@@ -4,6 +4,7 @@ name = "arcreel"
 version = "0.26.0"
 description = "AI video generation workspace"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
 dependencies = [
     "claude-agent-sdk>=0.1.76",
@@ -38,6 +39,11 @@ dependencies = [
     "pdf-oxide>=0.3.46",
     "socksio>=1.0.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/MockMine/MatrixSpooll"
+License = "https://github.com/MockMine/MatrixSpooll/blob/main/LICENSE"
+Notice = "https://github.com/MockMine/MatrixSpooll/blob/main/NOTICE"
 
 [dependency-groups]
 dev = [

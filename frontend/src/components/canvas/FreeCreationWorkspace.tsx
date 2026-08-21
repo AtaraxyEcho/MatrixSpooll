@@ -23,16 +23,17 @@ import { useTranslation } from "react-i18next";
 import { API } from "@/api";
 import { ASPECT_RATIO_OPTIONS } from "@/components/shared/AspectRatioPicker";
 import { useModelCandidates } from "@/hooks/useModelCandidates";
+import { useGenerationCapabilities } from "@/hooks/useModelCapabilities";
 import { useAppStore } from "@/stores/app-store";
 import { useFreeCreationStore } from "@/stores/free-creation-store";
 import type {
   CreateFreeCreationRequest,
   FreeCreation,
   FreeCreationArtifactMediaType,
-  FreeCreationCapabilities,
   FreeCreationMediaType,
   FreeCreationReferenceClaim,
   FreeCreationRequestSummary,
+  FreeSubtitleTrack,
   FreeCreationUpload,
 } from "@/types";
 import { errMsg } from "@/utils/async";
@@ -47,12 +48,15 @@ import {
   AgentParameterControl,
   type AgentGenerationPreference,
   DurationControl,
+  DEFAULT_VIDEO_DURATIONS,
+  DEFAULT_VIDEO_RESOLUTIONS,
   handleComposerStripWheel,
   HomeMenu,
   ImageParameterControl,
   HomeSelect,
   modelLabel,
   VideoParameterControl,
+  videoDurationsForModel,
 } from "@/components/generation/GenerationComposer";
 import { FreeCreationAssetPickerModal } from "@/components/generation/FreeCreationAssetPickerModal";
 import {
@@ -72,17 +76,24 @@ import {
   referenceUploadLimit,
   supportsFrameReferences,
 } from "@/components/generation/FreeCreationReferenceInput";
+import {
+  readFreeCreationComposerPreferences,
+  writeFreeCreationComposerPreferences,
+  type FreeCreationComposerPreferences,
+} from "@/components/generation/freeCreationComposerPreference";
 import type { Asset } from "@/types/asset";
 
 export interface FreeCreationWorkspaceProps {
   projectName: string;
   readOnly?: boolean;
   initialMode?: ComposerMode;
+  initialAspectRatio?: string;
 }
 
 interface ComposerReference {
   claim: FreeCreationReferenceClaim;
   label: string;
+  previewUrl?: string;
 }
 
 type ComposerMode = "agent" | FreeCreationMediaType;
@@ -132,36 +143,51 @@ function uploadMediaTypeForFile(file: File): FreeCreationUpload["media_type"] {
   return "image";
 }
 
-export function FreeCreationWorkspace({ projectName, readOnly = false, initialMode = "video" }: FreeCreationWorkspaceProps) {
+export function FreeCreationWorkspace({
+  projectName,
+  readOnly = false,
+  initialMode = "video",
+  initialAspectRatio,
+}: FreeCreationWorkspaceProps) {
   const { t } = useTranslation("dashboard");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingFrameRoleRef = useRef<"first_frame" | "last_frame" | null>(null);
   const loadSequenceRef = useRef(0);
+  const initialProjectAspectRatio = initialAspectRatio?.trim() || "16:9";
   const initialMediaType: FreeCreationMediaType = initialMode === "image" ? "image" : "video";
-  const [mediaType, setMediaType] = useState<FreeCreationMediaType>(initialMediaType);
-  const [composerMode, setComposerMode] = useState<ComposerMode>(initialMode);
-  const [agentPreference, setAgentPreference] = useState<AgentGenerationPreference>("video");
-  const [agentAspectRatio, setAgentAspectRatio] = useState("16:9");
+  const [storedComposerPreferences] = useState<FreeCreationComposerPreferences | null>(() => (
+    readFreeCreationComposerPreferences(projectName)
+  ));
+  const restoredMode = storedComposerPreferences?.composerMode ?? initialMode;
+  const restoredMediaType = storedComposerPreferences?.mediaType
+    ?? (restoredMode === "image" || restoredMode === "video" ? restoredMode : initialMediaType);
+  const [mediaType, setMediaType] = useState<FreeCreationMediaType>(restoredMediaType);
+  const [composerMode, setComposerMode] = useState<ComposerMode>(restoredMode);
+  const [agentPreference, setAgentPreference] = useState<AgentGenerationPreference>(storedComposerPreferences?.agentPreference ?? "video");
+  const [agentAspectRatio, setAgentAspectRatio] = useState(storedComposerPreferences?.agentAspectRatio ?? initialProjectAspectRatio);
   const [prompt, setPrompt] = useState("");
-  const [referenceMode, setReferenceMode] = useState<FreeCreationReferenceMode>("omni");
+  const [referenceMode, setReferenceMode] = useState<FreeCreationReferenceMode>(storedComposerPreferences?.referenceMode ?? "omni");
   const [omniReferences, setOmniReferences] = useState<ComposerReference[]>([]);
   const [frameReferences, setFrameReferences] = useState<ComposerReference[]>([]);
   const [uploads, setUploads] = useState<FreeCreationUpload[]>([]);
-  const [aspectRatio, setAspectRatio] = useState("16:9");
-  const [resolution, setResolution] = useState("1080p");
-  const initialDimensions = dimensionsFor("1.5k", "16:9");
-  const [imageWidth, setImageWidth] = useState(initialDimensions.width);
-  const [imageHeight, setImageHeight] = useState(initialDimensions.height);
-  const [customSize, setCustomSize] = useState(false);
-  const [quantity, setQuantity] = useState(1);
-  const [modelPreferences, setModelPreferences] = useState(readGenerationModelPreferences);
-  const [duration, setDuration] = useState(4);
+  const [aspectRatio, setAspectRatio] = useState(storedComposerPreferences?.aspectRatio ?? initialProjectAspectRatio);
+  const [resolution, setResolution] = useState(
+    storedComposerPreferences?.resolution ?? (restoredMediaType === "image" ? "1.5k" : "1080p"),
+  );
+  const initialDimensions = dimensionsFor("1.5k", initialProjectAspectRatio);
+  const [imageWidth, setImageWidth] = useState(storedComposerPreferences?.imageWidth ?? initialDimensions.width);
+  const [imageHeight, setImageHeight] = useState(storedComposerPreferences?.imageHeight ?? initialDimensions.height);
+  const [customSize, setCustomSize] = useState(storedComposerPreferences?.customSize ?? false);
+  const [quantity, setQuantity] = useState(storedComposerPreferences?.quantity ?? 1);
+  const [modelPreferences, setModelPreferences] = useState(
+    storedComposerPreferences?.modelPreferences ?? readGenerationModelPreferences(),
+  );
+  const [duration, setDuration] = useState(storedComposerPreferences?.duration ?? 4);
   const [parentId, setParentId] = useState("");
   const [creations, setCreations] = useState<FreeCreation[]>([]);
+  const [subtitleTracks, setSubtitleTracks] = useState<FreeSubtitleTrack[]>([]);
   const [requests, setRequests] = useState<FreeCreationRequestSummary[]>([]);
   const [totalCreations, setTotalCreations] = useState(0);
-  const [capabilities, setCapabilities] = useState<FreeCreationCapabilities | null>(null);
-  const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
@@ -172,9 +198,43 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
   const [storyboardOpen, setStoryboardOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [subtitleOpen, setSubtitleOpen] = useState(false);
+  const [subtitleCreationId, setSubtitleCreationId] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
   const refreshToken = useFreeCreationStore((state) => state.refreshToken);
   const { candidates, reload: reloadCandidates } = useModelCandidates();
+
+  useEffect(() => {
+    writeFreeCreationComposerPreferences(projectName, {
+      composerMode,
+      mediaType,
+      agentPreference,
+      agentAspectRatio,
+      referenceMode,
+      aspectRatio,
+      resolution,
+      imageWidth,
+      imageHeight,
+      customSize,
+      quantity,
+      duration,
+      modelPreferences,
+    });
+  }, [
+    agentAspectRatio,
+    agentPreference,
+    aspectRatio,
+    composerMode,
+    customSize,
+    duration,
+    imageHeight,
+    imageWidth,
+    mediaType,
+    modelPreferences,
+    projectName,
+    quantity,
+    referenceMode,
+    resolution,
+  ]);
 
   useEffect(() => {
     void reloadCandidates();
@@ -196,7 +256,10 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
     const values = effectiveMediaType === "video" ? candidates?.video.default : candidates?.image.default;
     return [...new Set(values ?? [])];
   }, [candidates, effectiveMediaType]);
-  const selectedModel = model === "auto" || modelOptions.includes(model) ? model : "auto";
+  // Keep a persisted explicit model while candidates are still loading. Falling back to
+  // auto here would briefly request the default model's capabilities and show its ratios,
+  // resolutions, and durations for the user's selected model.
+  const selectedModel = model === "auto" || candidates === null || modelOptions.includes(model) ? model : "auto";
 
   const referenceKind = useMemo<"none" | "frame" | "image" | "video" | "audio">(() => {
     if (effectiveMediaType !== "video") {
@@ -210,22 +273,13 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
     return "none";
   }, [effectiveMediaType, referenceMode, references, selectedParent]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void API.getFreeCreationCapabilities({
-      outputType: effectiveMediaType,
-      model: selectedModel === "auto" ? undefined : selectedModel,
-      referenceKind,
-      projectName,
-      signal: controller.signal,
-    }).then((next) => {
-      setCapabilities(next);
-      setCapabilityError(null);
-    }).catch((nextError) => {
-      if (!controller.signal.aborted && effectiveMediaType === "video") setCapabilityError(errMsg(nextError));
-    });
-    return () => controller.abort();
-  }, [effectiveMediaType, projectName, referenceKind, selectedModel]);
+  const { capabilities, error: rawCapabilityError } = useGenerationCapabilities({
+    outputType: effectiveMediaType,
+    model: selectedModel === "auto" ? null : selectedModel,
+    referenceKind,
+    projectName,
+  });
+  const capabilityError = effectiveMediaType === "video" ? rawCapabilityError : null;
 
   const ratioOptions = useMemo(
     () => capabilities?.output_type === effectiveMediaType && capabilities.ratios.length
@@ -236,18 +290,27 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
     [capabilities, effectiveMediaType],
   );
   const resolutionOptions = useMemo(
-    () => capabilities?.output_type === effectiveMediaType && capabilities.resolutions.length
-      ? capabilities.resolutions
-      : effectiveMediaType === "image"
-        ? [...IMAGE_RESOLUTIONS]
-        : [],
-    [capabilities, effectiveMediaType],
+    () => {
+      if (capabilities?.output_type === effectiveMediaType && capabilities.resolutions.length) {
+        if (effectiveMediaType === "video") {
+          const declared = capabilities.resolutions.filter((value) => value !== "auto");
+          return declared.length || selectedModel !== "auto" ? declared : [...DEFAULT_VIDEO_RESOLUTIONS];
+        }
+        return capabilities.resolutions;
+      }
+      if (effectiveMediaType === "video" && selectedModel !== "auto") return [];
+      return effectiveMediaType === "image" ? [...IMAGE_RESOLUTIONS] : [...DEFAULT_VIDEO_RESOLUTIONS];
+    },
+    [capabilities, effectiveMediaType, selectedModel],
   );
   const durationOptions = useMemo(
-    () => capabilities?.output_type === "video"
-      ? capabilities.durations.filter((value) => Number.isInteger(value) && value > 0)
-      : [],
-    [capabilities],
+    () => videoDurationsForModel(
+      selectedModel,
+      capabilities?.output_type === "video" && capabilities.durations.length
+        ? capabilities.durations.filter((value) => Number.isInteger(value) && value > 0)
+        : DEFAULT_VIDEO_DURATIONS,
+    ),
+    [capabilities, selectedModel],
   );
   const effectiveAspectRatio = ratioOptions.includes(aspectRatio) ? aspectRatio : ratioOptions[0] ?? "16:9";
   const selectedResolution = resolutionOptions.includes(resolution) ? resolution : resolutionOptions[0] ?? "";
@@ -273,6 +336,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
     const sequence = ++loadSequenceRef.current;
     try {
       const requestsPromise = API.listFreeCreationRequests(projectName, 40);
+      const subtitlesPromise = API.listFreeSubtitleTracks(projectName).catch(() => ({ tracks: [] as FreeSubtitleTrack[] }));
       const loaded: FreeCreation[] = [];
       const seen = new Set<string>();
       let cursor: string | undefined;
@@ -285,10 +349,11 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
         seen.add(response.next_cursor);
         cursor = response.next_cursor;
       } while (loaded.length < total && loaded.length < 500);
-      const requestResponse = await requestsPromise;
+      const [requestResponse, subtitleResponse] = await Promise.all([requestsPromise, subtitlesPromise]);
       if (loadSequenceRef.current !== sequence) return;
       setCreations(loaded);
       setRequests(requestResponse.requests);
+      setSubtitleTracks(subtitleResponse.tracks);
       setTotalCreations(total);
       setError(null);
     } catch (loadError) {
@@ -537,14 +602,16 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
           continue;
         }
         const result = await API.uploadFreeCreationReference(projectName, file);
-        setUploads((current) => [result.reference, ...current.filter((item) => item.reference_id !== result.reference.reference_id)]);
+        const uploadedRecord: FreeCreationUpload = { ...result.reference, url: result.url };
+        setUploads((current) => [uploadedRecord, ...current.filter((item) => item.reference_id !== uploadedRecord.reference_id)]);
         const uploadedReference: ComposerReference = {
           claim: {
             type: "upload",
-            reference_id: result.reference.reference_id,
+            reference_id: uploadedRecord.reference_id,
             role,
           },
-          label: result.reference.original_filename,
+          label: uploadedRecord.original_filename,
+          previewUrl: uploadedRecord.url,
         };
         nextReferences = [...withoutReplacedFrame, uploadedReference];
         uploadedCount += 1;
@@ -569,12 +636,11 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
     try {
       for (const file of files) {
         const result = await API.uploadFreeCreationReference(projectName, file);
-        uploaded.push(result.reference);
-      }
-      if (uploaded.length) {
+        const uploadedRecord = { ...result.reference, url: result.url };
+        uploaded.push(uploadedRecord);
         setUploads((current) => [
-          ...uploaded,
-          ...current.filter((item) => !uploaded.some((next) => next.reference_id === item.reference_id)),
+          uploadedRecord,
+          ...current.filter((item) => item.reference_id !== uploadedRecord.reference_id),
         ]);
       }
       return uploaded;
@@ -595,30 +661,6 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
       useAppStore.getState().pushToast(errMsg(importError), "error");
     } finally {
       setImportingAssets(false);
-    }
-  };
-
-  const deleteUpload = async (referenceId: string) => {
-    if (readOnly) return;
-    try {
-      await API.deleteFreeCreationReference(projectName, referenceId);
-      setUploads((current) => current.filter((item) => item.reference_id !== referenceId));
-      setOmniReferences((current) => current.filter((item) => item.claim.type !== "upload" || item.claim.reference_id !== referenceId));
-      setFrameReferences((current) => current.filter((item) => item.claim.type !== "upload" || item.claim.reference_id !== referenceId));
-    } catch (deleteError) {
-      useAppStore.getState().pushToast(errMsg(deleteError), "error");
-    }
-  };
-
-  const detachUpload = async (referenceId: string) => {
-    if (readOnly) return;
-    try {
-      await API.detachFreeCreationReference(projectName, referenceId);
-      setUploads((current) => current.filter((item) => item.reference_id !== referenceId));
-      setOmniReferences((current) => current.filter((item) => item.claim.type !== "upload" || item.claim.reference_id !== referenceId));
-      setFrameReferences((current) => current.filter((item) => item.claim.type !== "upload" || item.claim.reference_id !== referenceId));
-    } catch (detachError) {
-      useAppStore.getState().pushToast(errMsg(detachError), "error");
     }
   };
 
@@ -708,7 +750,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
       const upload = uploads.find((item) => item.reference_id === claim.reference_id);
       return {
         mediaType: resolvedMediaType,
-        previewUrl: upload ? API.getFileUrl(projectName, upload.path) : undefined,
+        previewUrl: reference.previewUrl ?? upload?.url ?? (upload ? API.getFileUrl(projectName, upload.path) : undefined),
       };
     }
     return {
@@ -733,6 +775,77 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
       setFrameReferences((current) => current.filter((item) => claimKey(item.claim) !== id));
     } else {
       setOmniReferences((current) => current.filter((item) => claimKey(item.claim) !== id));
+    }
+  };
+
+  const deleteItems = async ({
+    creationIds,
+    referenceIds,
+  }: {
+    creationIds: readonly string[];
+    referenceIds: readonly string[];
+  }) => {
+    if (readOnly || (!creationIds.length && !referenceIds.length)) return false;
+    const creationTargets = new Set(creationIds);
+    const referenceTargets = new Set(referenceIds);
+    try {
+      await API.deleteFreeCreationItems(projectName, {
+        creation_ids: creationIds,
+        reference_ids: referenceIds,
+      });
+      setCreations((current) => current.filter((item) => !creationTargets.has(item.creation_id)));
+      setTotalCreations((current) => Math.max(0, current - creationTargets.size));
+      setUploads((current) => current.filter((item) => !referenceTargets.has(item.reference_id)));
+      setOmniReferences((current) => current.filter(
+        (item) => item.claim.type === "creation"
+          ? !creationTargets.has(item.claim.creation_id)
+          : !referenceTargets.has(item.claim.reference_id),
+      ));
+      setFrameReferences((current) => current.filter(
+        (item) => item.claim.type === "creation"
+          ? !creationTargets.has(item.claim.creation_id)
+          : !referenceTargets.has(item.claim.reference_id),
+      ));
+      setParentId((current) => creationTargets.has(current) ? "" : current);
+      await loadCreations();
+      return true;
+    } catch (deleteError) {
+      useAppStore.getState().pushToast(errMsg(deleteError), "error");
+      await loadCreations();
+      return false;
+    }
+  };
+
+  const restoreUpload = async (referenceId: string) => {
+    if (readOnly) return false;
+    try {
+      const result = await API.restoreFreeCreationReference(projectName, referenceId);
+      const restored = { ...result.reference, url: result.url };
+      setUploads((current) => [restored, ...current.filter((item) => item.reference_id !== referenceId)]);
+      return true;
+    } catch (restoreError) {
+      useAppStore.getState().pushToast(errMsg(restoreError), "error");
+      return false;
+    }
+  };
+
+  const restoreCreations = async (creationIds: readonly string[]) => {
+    if (readOnly || !creationIds.length) return false;
+    try {
+      const restored = await Promise.all(
+        creationIds.map((creationId) => API.restoreFreeCreation(projectName, creationId)),
+      );
+      setCreations((current) => [
+        ...restored.map((result) => result.creation),
+        ...current.filter((item) => !creationIds.includes(item.creation_id)),
+      ]);
+      setTotalCreations((current) => current + restored.length);
+      await loadCreations();
+      return true;
+    } catch (restoreError) {
+      useAppStore.getState().pushToast(errMsg(restoreError), "error");
+      await loadCreations();
+      return false;
     }
   };
   const swapFrameReferences = () => {
@@ -788,6 +901,23 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
     }
   };
 
+  const compositeCreationAudio = async (videoCreationId: string, audioCreationId: string) => {
+    if (readOnly || merging) return;
+    setMerging(true);
+    try {
+      await API.compositeFreeCreationAudio(projectName, videoCreationId, audioCreationId);
+      await loadCreations();
+      useAppStore.getState().pushToast(t("free_creation_audio_composite_succeeded"), "success");
+    } catch (compositeError) {
+      useAppStore.getState().pushToast(
+        t("free_creation_audio_composite_failed", { message: errMsg(compositeError) }),
+        "error",
+      );
+    } finally {
+      setMerging(false);
+    }
+  };
+
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-background)] text-[var(--color-text)]">
       {composerMode === "agent" ? (
@@ -806,6 +936,7 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
         <FreeCreationInfiniteCanvas
           projectName={projectName}
           creations={creations}
+          subtitleTracks={subtitleTracks}
           uploads={uploads}
           readOnly={readOnly}
           actingId={actingId}
@@ -815,9 +946,15 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
           onReference={addReference}
           onReferences={addReferences}
           onPreview={setPreviewTarget}
-          onDetachUpload={(referenceId) => void detachUpload(referenceId)}
-          onDeleteUpload={(referenceId) => void deleteUpload(referenceId)}
+          onEditSubtitle={(creationId) => {
+            setSubtitleCreationId(creationId);
+            setSubtitleOpen(true);
+          }}
+          onDeleteItems={deleteItems}
+          onRestoreCreations={restoreCreations}
+          onRestoreUpload={restoreUpload}
           onMerge={(creationIds) => void mergeCreationVideos(creationIds)}
+          onCompositeAudio={(videoCreationId, audioCreationId) => void compositeCreationAudio(videoCreationId, audioCreationId)}
           onUploadFiles={uploadCanvasFiles}
         />
       </div>
@@ -828,9 +965,9 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
             <article key={upload.reference_id} className="overflow-hidden rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]" onDoubleClick={(event) => { event.preventDefault(); setPreviewTarget({ kind: "upload", upload }); }}>
               <div className="flex h-10 items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-3 text-xs"><span className="truncate font-medium">{upload.original_filename}</span><span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{t("free_creation_reference")}</span></div>
               <div role={upload.media_type === "audio" || upload.media_type === "video" ? undefined : "button"} tabIndex={upload.media_type === "audio" || upload.media_type === "video" ? undefined : 0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id }, upload.original_filename)} onKeyDown={upload.media_type === "audio" || upload.media_type === "video" ? undefined : (event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id }, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
-                {upload.media_type === "image" ? <img src={API.getFileUrl(projectName, upload.path)} alt={upload.original_filename} className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
-                  <video src={API.getFileUrl(projectName, upload.path)} className="h-full w-full object-contain" aria-label={upload.original_filename} controls onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id }, upload.original_filename)} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "upload", upload }); }} />
-                ) : upload.media_type === "audio" ? <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={API.getFileUrl(projectName, upload.path)} className="w-full" aria-label={upload.original_filename} controls /></div> : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto pt-12 h-8 w-8 text-[var(--color-text-muted)]" aria-hidden />}
+                {upload.media_type === "image" ? <img src={upload.url ?? API.getFileUrl(projectName, upload.path)} alt={upload.original_filename} className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
+                  <video src={upload.url ?? API.getFileUrl(projectName, upload.path)} className="h-full w-full object-contain" aria-label={upload.original_filename} controls onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id }, upload.original_filename)} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "upload", upload }); }} />
+                ) : upload.media_type === "audio" ? <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={upload.url ?? API.getFileUrl(projectName, upload.path)} className="w-full" aria-label={upload.original_filename} controls /></div> : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto pt-12 h-8 w-8 text-[var(--color-text-muted)]" aria-hidden />}
               </div>
               <div className="flex justify-end px-3 py-2"><button type="button" onClick={() => addReference({ type: "upload", reference_id: upload.reference_id }, upload.original_filename)} className="focus-ring inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button></div>
             </article>
@@ -843,8 +980,8 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
                 <div className="flex h-10 items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-3 text-xs"><span className="font-medium">{t(`free_creation_${creation.output_type}`)}</span><span className="text-[10px] text-[var(--color-text-muted)]">{t(`free_creation_status_${creation.status}`)}</span></div>
                 {creation.status === "succeeded" && creation.media_path ? artifactType === "video" ? (
                   <video src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} className="aspect-video w-full bg-black object-contain" aria-label={creation.prompt ?? creation.creation_id} controls onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_video" }, creation.prompt || t("free_creation"))} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "creation", creation }); }} />
-                ) : artifactType === "audio" ? <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 bg-black px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} className="w-full" aria-label={creation.prompt ?? creation.creation_id} controls /></div> : <div role="button" tabIndex={0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))} onKeyDown={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))}><img src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} alt={creation.prompt ?? creation.creation_id} className="h-full w-full object-contain" /></div> : <div className="grid aspect-video place-items-center bg-black px-3 text-center text-xs text-[var(--color-text-muted)]">{creation.status === "failed" ? t("free_creation_failed") : t(`free_creation_status_${creation.status}`)}</div>}
-                <p className="line-clamp-2 px-3 py-2 text-xs leading-5 text-[var(--color-text-2)]">{creation.prompt || t("free_creation_prompt")}</p>
+                ) : artifactType === "audio" ? <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 bg-black px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} className="w-full" aria-label={creation.prompt ?? creation.creation_id} controls /></div> : <div role="button" tabIndex={0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))} onKeyDown={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))}><img src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} alt={creation.prompt ?? creation.creation_id} className="h-full w-full object-contain" /></div> : <div className="grid aspect-video place-items-center bg-black px-3 text-center text-xs leading-5 text-[var(--color-text-muted)]"><span className="line-clamp-5">{creation.status === "failed" ? creation.error || t("free_creation_failed") : t(`free_creation_status_${creation.status}`)}</span></div>}
+                <div className="px-3 py-2"><p className="line-clamp-2 text-xs leading-5 text-[var(--color-text-2)]">{creation.prompt || t("free_creation_prompt")}</p>{subtitleTracks.filter((track) => track.creation_id === creation.creation_id).length ? <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-[var(--color-accent-2)]"><Captions className="h-3 w-3" aria-hidden />{t("free_creation_subtitle_badge", { count: subtitleTracks.filter((track) => track.creation_id === creation.creation_id).length })}</span> : null}</div>
                 {creation.status === "succeeded" && creation.media_path ? <div className="flex justify-end gap-1 border-t border-[var(--color-hairline)] p-2"><button type="button" onClick={() => addReference({ type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation"))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_add_reference")}><Link2 className="h-4 w-4" aria-hidden /></button>{artifactType === "image" ? <button type="button" onClick={() => editFromCreation(creation.creation_id)} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_use_as_parent")}><Pencil className="h-4 w-4" aria-hidden /></button> : null}<a href={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} download className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_download")}><Download className="h-4 w-4" aria-hidden /></a></div> : null}
               </article>
             );
@@ -930,7 +1067,6 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
                     return limit !== null && references.length >= limit;
                   })()}
                   className="home-param-trigger"
-                  title={t("free_creation_reference_assets")}
                   aria-label={t("free_creation_reference_assets")}
                 >
                   <span className="home-param-trigger__value">
@@ -1046,7 +1182,10 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
               onSelect={(value) => {
                 if (value === "storyboard") setStoryboardOpen(true);
                 else if (value === "voice") setVoiceOpen(true);
-                else setSubtitleOpen(true);
+                else {
+                  setSubtitleCreationId(null);
+                  setSubtitleOpen(true);
+                }
               }}
             />
           </div>
@@ -1091,7 +1230,9 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
         prompt={prompt}
         sourceReferenceId={storyboardSourceReferenceId}
         aspectRatio={effectiveAspectRatio}
-        resolution={effectiveMediaType === "image" ? selectedResolution : undefined}
+        resolution={selectedResolution || undefined}
+        model={selectedModel === "auto" ? undefined : selectedModel}
+        durationOptions={effectiveMediaType === "video" ? durationOptions : undefined}
         onClose={() => setStoryboardOpen(false)}
         onCreated={() => void loadCreations()}
       />
@@ -1105,6 +1246,8 @@ export function FreeCreationWorkspace({ projectName, readOnly = false, initialMo
         projectName={projectName}
         open={subtitleOpen}
         creations={creations}
+        tracks={subtitleTracks}
+        initialCreationId={subtitleCreationId}
         onClose={() => setSubtitleOpen(false)}
         onCreated={() => void loadCreations()}
       />

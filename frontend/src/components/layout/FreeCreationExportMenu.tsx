@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Clapperboard, Download, Loader2 } from "lucide-react";
+import { Archive, ChevronDown, Clapperboard, Download, Files, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { API } from "@/api";
 import { useAppStore } from "@/stores/app-store";
@@ -25,6 +25,7 @@ function downloadBlob(blob: Blob, filename: string) {
 export function FreeCreationExportMenu({ projectName, disabled = false }: FreeCreationExportMenuProps) {
   const { t } = useTranslation("dashboard");
   const selectedIds = useFreeCreationStore((state) => state.selectedIds);
+  const selectedVideoIds = useFreeCreationStore((state) => state.selectedVideoIds);
   const selectedRequestId = useFreeCreationStore((state) => state.selectedRequestId);
   const [open, setOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -65,11 +66,11 @@ export function FreeCreationExportMenu({ projectName, disabled = false }: FreeCr
   };
 
   const runMerge = async () => {
-    if (!projectName || merging || selectedIds.length < 2) return;
+    if (!projectName || merging || selectedVideoIds.length < 2) return;
     setOpen(false);
     setMerging(true);
     try {
-      const blob = await API.mergeFreeCreationVideos(projectName, selectedIds);
+      const blob = await API.mergeFreeCreationVideos(projectName, selectedVideoIds);
       downloadBlob(blob, `${projectName}-merged.mp4`);
       useAppStore.getState().pushToast(t("free_creation_merge_started"), "success");
     } catch (error) {
@@ -112,36 +113,40 @@ export function FreeCreationExportMenu({ projectName, disabled = false }: FreeCr
             role="menuitem"
             disabled={selectedIds.length === 0}
             onClick={() => void runExport("selected")}
-            className="focus-ring flex w-full items-center justify-between rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)] disabled:opacity-40"
+            className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)] disabled:opacity-40"
           >
+            <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
             <span>{t("free_creation_export_selected")}</span>
-            <span className="text-[var(--color-text-muted)]">{selectedIds.length}</span>
+            <span className="ml-auto text-[var(--color-text-muted)]">{selectedIds.length}</span>
           </button>
           <button
             type="button"
             role="menuitem"
-            disabled={selectedIds.length < 2}
+            disabled={selectedVideoIds.length < 2}
             onClick={() => void runMerge()}
             className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)] disabled:opacity-40"
           >
             <Clapperboard className="h-3.5 w-3.5" aria-hidden />
             <span>{t("free_creation_merge_selected")}</span>
+            <span className="ml-auto text-[var(--color-text-muted)]">{selectedVideoIds.length}</span>
           </button>
           <button
             type="button"
             role="menuitem"
             disabled={!selectedRequestId}
             onClick={() => void runExport("request")}
-            className="focus-ring w-full rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)] disabled:opacity-40"
+            className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)] disabled:opacity-40"
           >
+            <Files className="h-3.5 w-3.5 shrink-0" aria-hidden />
             {t("free_creation_export_request")}
           </button>
           <button
             type="button"
             role="menuitem"
             onClick={() => void runExport("all")}
-            className="focus-ring w-full rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"
+            className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"
           >
+            <Archive className="h-3.5 w-3.5 shrink-0" aria-hidden />
             {t("free_creation_export_all")}
           </button>
         </div>

@@ -1,7 +1,6 @@
 services:
-  arcreel:
-    image: ghcr.io/arcreel/arcreel:latest
-    # build: ../  # 本地构建时取消注释，注释掉 image 行
+  matrixspooll:
+    build: ../  # 本地构建时取消注释，注释掉 image 行
     ports:
       - "1241:1241"
     env_file: .env

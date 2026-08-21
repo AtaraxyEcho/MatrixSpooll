@@ -562,8 +562,17 @@ _ASR_PATTERN = re.compile(r"transcribe|speech.?to.?text|recognition", re.IGNOREC
 _WAN_VERSION_TOKEN_PATTERN = re.compile(r"wan[-_]\d|wan\d+\.\d+|(?<![a-z0-9])wan\d+(?![a-z0-9])", re.IGNORECASE)
 
 
-def infer_endpoint(model_id: str, discovery_format: str) -> str:
-    """根据模型 id 与 discovery_format 推默认 endpoint（content-first）。
+def _is_anyfast_base_url(base_url: str | None) -> bool:
+    raw = (base_url or "").strip()
+    if not raw:
+        return False
+    parsed = urlsplit(raw if "://" in raw else f"https://{raw}")
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    return hostname == "anyfast.ai" or hostname.endswith(".anyfast.ai")
+
+
+def infer_endpoint(model_id: str, discovery_format: str, *, base_url: str | None = None) -> str:
+    """根据模型 id、discovery_format 与供应商地址推默认 endpoint（content-first）。
 
     model id 内容优先于 discovery_format：中转站普遍 discovery_format="openai"，但模型
     列表常夹带 gemini-*/imagen-* 原生 id，必须按内容纠偏到 Google 端点，否则被错推到
@@ -588,7 +597,8 @@ def infer_endpoint(model_id: str, discovery_format: str) -> str:
        默认归视频、图像手动选。
     3) imagen → "gemini-image"（图像，不论 discovery_format）
     4) gemini 原生模型（非 video）→ image 形态走 "gemini-image"，否则文本走 "gemini-generate"
-    5) 视频家族 → seedance→"ark-seedance"、viduq3→"vidu-video"、否则 "openai-video"
+    5) 视频家族 → AnyFast 域名下的 seedance 走 "anyfast-seedance"，其余 seedance 走
+       "ark-seedance"；viduq3 走 "vidu-video"，否则走 "openai-video"
     6) 图像家族 → discovery_format=google 走 "gemini-image" 否则 "openai-images"
     7) TTS 家族（tts/speech/cosyvoice）→ "openai-tts"（audio 仅 OpenAI 兼容一条端点，
        不分 discovery_format；precedence 在 text 默认之前）
@@ -684,7 +694,7 @@ def infer_endpoint(model_id: str, discovery_format: str) -> str:
         return "gemini-image" if is_image else "gemini-generate"
     if is_video:
         if "seedance" in lowered:
-            return "ark-seedance"
+            return "anyfast-seedance" if _is_anyfast_base_url(base_url) else "ark-seedance"
         if "viduq3" in lowered:
             return "vidu-video"
         return "openai-video"

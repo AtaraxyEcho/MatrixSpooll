@@ -1382,12 +1382,17 @@ class ConfigResolver:
                 raise ValueError(f"cannot resolve video capabilities for {provider_id}/{model_id}: {exc}") from exc
             max_reference_images = caps.max_reference_images
             max_reference_videos = caps.max_reference_videos
+            min_reference_video_seconds = caps.min_reference_video_seconds
+            max_reference_video_seconds = caps.max_reference_video_seconds
+            max_reference_video_total_seconds = caps.max_reference_video_total_seconds
             max_reference_media_count = caps.max_reference_media_count
             supported_aspect_ratios = caps.supported_aspect_ratios
+            supported_resolutions = caps.supported_resolutions
             supported_durations_with_reference_video = caps.supported_durations_with_reference_video
             text_to_video = caps.text_to_video
             first_frame = caps.first_frame
             last_frame = caps.last_frame
+            first_frame_ratio_adaptive_only = caps.first_frame_ratio_adaptive_only
             reference_audio_mode = caps.reference_audio_mode
             max_reference_audio_count = caps.max_reference_audio_count
             reference_audio_per_image = caps.reference_audio_per_image
@@ -1399,6 +1404,8 @@ class ConfigResolver:
             has_audio = True
             raw_durations = model.supported_durations
             supported_durations: list[int] = []
+            if caps.supported_durations:
+                supported_durations = list(caps.supported_durations)
             if raw_durations:
                 try:
                     parsed = json.loads(raw_durations)
@@ -1407,7 +1414,8 @@ class ConfigResolver:
                         f"invalid supported_durations JSON on custom model {provider_id}/{model_id}"
                     ) from exc
                 if isinstance(parsed, list):
-                    supported_durations = [int(d) for d in parsed]
+                    if not supported_durations:
+                        supported_durations = [int(d) for d in parsed]
         else:
             source = "registry"
             provider_meta = PROVIDER_REGISTRY.get(provider_id)
@@ -1417,6 +1425,7 @@ class ConfigResolver:
             if model_info is None:
                 raise ValueError(f"model not found in registry: {provider_id}/{model_id}")
             supported_durations = list(model_info.supported_durations or [])
+            supported_resolutions = tuple(model_info.resolutions or [])
             # 视频能力位与参考图上限只在 backend 声明：backend 是执行期真正构造请求的一方，
             # 也是能力闸（`_ensure_video_bucket_capability`）与桶候选下拉
             # （`lib.capability_buckets`）的口径，展示层与执行层因此严格同源。
@@ -1427,12 +1436,16 @@ class ConfigResolver:
                 raise ValueError(f"cannot resolve video capabilities for {provider_id}/{model_id}: {exc}") from exc
             max_reference_images = builtin_caps.max_reference_images
             max_reference_videos = builtin_caps.max_reference_videos
+            min_reference_video_seconds = builtin_caps.min_reference_video_seconds
+            max_reference_video_seconds = builtin_caps.max_reference_video_seconds
+            max_reference_video_total_seconds = builtin_caps.max_reference_video_total_seconds
             max_reference_media_count = builtin_caps.max_reference_media_count
             supported_aspect_ratios = builtin_caps.supported_aspect_ratios
             supported_durations_with_reference_video = builtin_caps.supported_durations_with_reference_video
             text_to_video = builtin_caps.text_to_video
             first_frame = builtin_caps.first_frame
             last_frame = builtin_caps.last_frame
+            first_frame_ratio_adaptive_only = builtin_caps.first_frame_ratio_adaptive_only
             reference_audio_mode = builtin_caps.reference_audio_mode
             max_reference_audio_count = builtin_caps.max_reference_audio_count
             reference_audio_per_image = builtin_caps.reference_audio_per_image
@@ -1492,10 +1505,15 @@ class ConfigResolver:
             "max_duration": max_duration,
             "max_reference_images": max_reference_images,
             "max_reference_videos": max_reference_videos,
+            "min_reference_video_seconds": min_reference_video_seconds,
+            "max_reference_video_seconds": max_reference_video_seconds,
+            "max_reference_video_total_seconds": max_reference_video_total_seconds,
             "max_reference_media_count": max_reference_media_count,
             "supported_aspect_ratios": list(supported_aspect_ratios or []),
+            "supported_resolutions": list(supported_resolutions or []),
             "first_frame": first_frame,
             "last_frame": last_frame,
+            "first_frame_ratio_adaptive_only": first_frame_ratio_adaptive_only,
             "generate_audio": generate_audio,
             "requested_generate_audio": requested_generate_audio,
             "max_reference_audio_count": max_reference_audio_count,

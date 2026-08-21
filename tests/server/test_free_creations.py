@@ -1,6 +1,7 @@
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -8,6 +9,8 @@ from pydantic import ValidationError
 from lib.api_errors import BadRequestError
 from lib.artifact_manifest import ArtifactKey, ProjectArtifactManifestAdapter
 from lib.generation_queue import free_video_capability
+from lib.i18n import _ as translate_message
+from lib.task_failure import encode_failure
 from lib.version_manager import VersionManager
 from lib.video_backends.base import VideoCapabilityError
 from server.auth import CurrentUserInfo
@@ -16,6 +19,7 @@ from server.routers.free_creations import (
     FreeCreationRequest,
     _free_creation_request_summary,
     _free_request_payload,
+    _localize_creation,
     _preflight_free_creation,
     _record_batch_compensation,
     _record_enqueued_metadata,
@@ -23,13 +27,21 @@ from server.routers.free_creations import (
     _validate_reference_roles,
     _validate_references,
     get_free_creation_capabilities,
+    get_model_capabilities,
     retry_free_creation,
 )
+from server.services import free_creation_merge as free_creation_merge_module
 from server.services import free_creation_tasks as free_creation_tasks_module
-from server.services.free_creation_merge import resolve_merge_video_paths
+from server.services.free_creation_merge import (
+    composite_creation_audio,
+    render_creation_subtitles,
+    resolve_audio_composite_paths,
+    resolve_merge_video_paths,
+)
 from server.services.free_creation_planner import plan_video_references
 from server.services.free_creation_tasks import (
     commit_free_creation_state,
+    delete_creation_metadata,
     discard_free_creation_result,
     execute_free_audio_task,
     execute_free_edit_task,
@@ -37,31 +49,55 @@ from server.services.free_creation_tasks import (
     list_creation_metadata,
     load_creation_metadata,
     register_free_creation_artifact,
+    restore_creation_metadata,
     write_creation_metadata,
 )
 from server.services.free_creation_workspace import (
     build_creation_export,
     create_storyboard_plan,
     create_subtitle_track,
+    delete_reference_upload,
     delete_storyboard_plan,
     delete_subtitle_track,
     derive_storyboard_plan_status,
     list_creation_requests,
+    list_reference_uploads,
     list_storyboard_plans,
     load_canvas_state,
     load_storyboard_plan,
     load_subtitle_track,
     read_reference_preview,
     resolve_reference_claims,
+    restore_reference_upload,
     save_canvas_state,
     save_reference_upload,
     save_storyboard_plan,
     save_subtitle_track,
     split_storyboard_text,
+    subtitle_track_webvtt,
     write_creation_request,
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_localize_creation_exposes_specific_failure_in_request_language() -> None:
+    stored = encode_failure("video_first_frame_content_rejected")
+
+    localized = _localize_creation(
+        {
+            "creation_id": "c_0123456789abcdef0123",
+            "status": "failed",
+            "error_code": "video_first_frame_content_rejected",
+            "error": stored,
+        },
+        lambda key, **params: translate_message(key, locale="zh", **params),
+    )
+
+    assert localized["error_code"] == "video_first_frame_content_rejected"
+    assert localized["error_params"] == {}
+    assert "首帧" in localized["error"]
+    assert not localized["error"].startswith("[")
 
 
 def test_free_creation_request_read_model_aggregates_batch_status() -> None:
@@ -204,6 +240,7 @@ def test_subtitle_track_persists_cues_with_optimistic_revision_and_soft_delete(t
     assert track["subtitle_id"].startswith("sub_")
     assert track["revision"] == 1
     assert track["cues"] == [{"start_seconds": 0.0, "end_seconds": 8, "text": "A quiet station at night"}]
+    assert subtitle_track_webvtt(track) == ("WEBVTT\n\n1\n00:00:00.000 --> 00:00:08.000\nA quiet station at night\n")
 
     updated = save_subtitle_track(
         tmp_path,
@@ -409,6 +446,55 @@ async def test_video_duration_defaults_to_the_selected_models_first_declared_tie
 
 
 @pytest.mark.asyncio
+async def test_preflight_rejects_frame_and_reference_roles_in_one_request(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def _context(*_args, **_kwargs):
+        return SimpleNamespace(
+            video=SimpleNamespace(
+                supported_durations=(4, 8, 12),
+                supported_durations_with_reference_video=(),
+                supported_aspect_ratios=("16:9", "9:16"),
+                max_reference_images=3,
+                max_reference_videos=1,
+                max_reference_media_count=3,
+                max_reference_audio_count=0,
+                provider_model=SimpleNamespace(provider_id="anyfast"),
+                backend_model="seedance-2.0",
+                text_to_video=True,
+                first_frame=True,
+                last_frame=True,
+            )
+        )
+
+    monkeypatch.setattr("server.routers.free_creations.resolve_generation_context", _context)
+    request = FreeCreationRequest(
+        output_type="video",
+        prompt="a train in rain",
+        references=["uploads/frame.png", "uploads/style.png"],
+        aspect_ratio="16:9",
+        duration_seconds=8,
+    )
+
+    with pytest.raises(BadRequestError) as exc:
+        await _preflight_free_creation(
+            "demo",
+            {"content_mode": "free", "aspect_ratio": "16:9"},
+            tmp_path,
+            request,
+            media_type="video",
+            reference_claims=[
+                {"type": "upload", "reference_id": "r-frame", "role": "first_frame"},
+                {"type": "upload", "reference_id": "r-style", "role": "reference_image"},
+            ],
+            user_id="user-1",
+        )
+
+    assert exc.value.key == "free_creation_input_combination_unsupported"
+
+
+@pytest.mark.asyncio
 async def test_capability_endpoint_uses_video_reference_duration_subset(monkeypatch) -> None:
     class FakeResolver:
         def __init__(self, _session_factory):
@@ -444,6 +530,60 @@ async def test_capability_endpoint_uses_video_reference_duration_subset(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_capability_endpoint_limits_first_frame_to_adaptive_ratio(monkeypatch) -> None:
+    class FakeResolver:
+        def __init__(self, _session_factory):
+            pass
+
+        async def resolve_video_backend(self, _project, _payload, *, capability=None):
+            assert capability == "i2v"
+            return SimpleNamespace(provider_id="custom-provider", model_id="frame-model")
+
+        async def video_capabilities_for_model(self, _provider_id, _model_id, _project):
+            return {
+                "supported_durations": [4, 8],
+                "supported_aspect_ratios": ["16:9", "adaptive", "9:16"],
+                "first_frame_ratio_adaptive_only": True,
+            }
+
+        async def resolve_resolution(self, _project, _provider_id, _model_id):
+            return None
+
+    monkeypatch.setattr("lib.config.resolver.ConfigResolver", FakeResolver)
+
+    result = await get_free_creation_capabilities(output_type="video", model=None, reference_kind="frame")
+
+    assert result["ratios"] == ["adaptive"]
+
+
+@pytest.mark.asyncio
+async def test_capability_endpoint_hides_first_frame_only_adaptive_ratio_for_t2v(monkeypatch) -> None:
+    class FakeResolver:
+        def __init__(self, _session_factory):
+            pass
+
+        async def resolve_video_backend(self, _project, _payload, *, capability=None):
+            assert capability is None
+            return SimpleNamespace(provider_id="custom-provider", model_id="mixed-model")
+
+        async def video_capabilities_for_model(self, _provider_id, _model_id, _project):
+            return {
+                "supported_durations": [4, 8],
+                "supported_aspect_ratios": ["16:9", "adaptive", "9:16"],
+                "first_frame_ratio_adaptive_only": True,
+            }
+
+        async def resolve_resolution(self, _project, _provider_id, _model_id):
+            return None
+
+    monkeypatch.setattr("lib.config.resolver.ConfigResolver", FakeResolver)
+
+    result = await get_free_creation_capabilities(output_type="video", model=None, reference_kind="none")
+
+    assert result["ratios"] == ["16:9", "9:16"]
+
+
+@pytest.mark.asyncio
 async def test_capability_endpoint_fails_when_video_ratios_are_undeclared(monkeypatch) -> None:
     class FakeResolver:
         def __init__(self, _session_factory):
@@ -461,6 +601,65 @@ async def test_capability_endpoint_fails_when_video_ratios_are_undeclared(monkey
         await get_free_creation_capabilities(output_type="video", model=None, reference_kind="none")
 
     assert exc.value.key == "free_creation_aspect_ratio_capabilities_missing"
+
+
+@pytest.mark.asyncio
+async def test_model_capability_endpoint_describes_i2v_only_model_without_t2v_gate(monkeypatch) -> None:
+    class FakeResolver:
+        def __init__(self, _session_factory):
+            pass
+
+        async def resolve_video_backend(self, _project, payload, *, capability=None):
+            assert capability is None
+            assert payload == {
+                "video_provider_i2v": "anyfast/seedance-i2v-only",
+                "video_provider_r2v": "anyfast/seedance-i2v-only",
+            }
+            return SimpleNamespace(provider_id="anyfast", model_id="seedance-i2v-only")
+
+        async def video_capabilities_for_model(self, _provider_id, _model_id, _project):
+            return {
+                "text_to_video": False,
+                "first_frame": True,
+                "last_frame": False,
+                "supported_durations": [4, 8, 12],
+                "supported_aspect_ratios": ["16:9", "9:16"],
+                "supported_resolutions": ["480p", "720p", "1080p"],
+                "max_reference_images": 0,
+                "max_reference_videos": 0,
+            }
+
+        async def resolve_resolution(self, _project, _provider_id, _model_id):
+            return None
+
+    monkeypatch.setattr("lib.config.resolver.ConfigResolver", FakeResolver)
+
+    result = await get_model_capabilities(
+        output_type="video",
+        model="anyfast/seedance-i2v-only",
+    )
+
+    assert result["model"] == "anyfast/seedance-i2v-only"
+    assert result["text_to_video"] is False
+    assert result["modes"] == ["first_frame"]
+    assert result["resolutions"] == ["480p", "720p", "1080p"]
+
+
+@pytest.mark.asyncio
+async def test_model_capability_endpoint_does_not_silently_fallback_from_selected_model(monkeypatch) -> None:
+    class FakeResolver:
+        def __init__(self, _session_factory):
+            pass
+
+        async def resolve_video_backend(self, _project, _payload, *, capability=None):
+            return SimpleNamespace(provider_id="anyfast", model_id="seedance-2.0")
+
+    monkeypatch.setattr("lib.config.resolver.ConfigResolver", FakeResolver)
+
+    with pytest.raises(BadRequestError) as exc:
+        await get_model_capabilities(output_type="video", model="anyfast/seedance-2.0-ultra")
+
+    assert exc.value.key == "video_model_unsupported"
 
 
 @pytest.mark.asyncio
@@ -673,6 +872,48 @@ def test_list_creation_metadata_honors_recent_limit(tmp_path: Path) -> None:
     assert len(list_creation_metadata(tmp_path, limit=2)) == 2
 
 
+def test_deleted_creation_is_removed_from_lists_and_can_be_restored(tmp_path: Path) -> None:
+    creation_id = "c_0123456789abcdef0123"
+    write_creation_metadata(
+        tmp_path,
+        creation_id,
+        {"creation_id": creation_id, "status": "succeeded", "media_type": "video"},
+    )
+
+    deleted = delete_creation_metadata(tmp_path, creation_id)
+
+    assert isinstance(deleted.get("deleted_at"), str)
+    assert list_creation_metadata(tmp_path) == []
+    restored = restore_creation_metadata(tmp_path, creation_id)
+    assert "deleted_at" not in restored
+    assert [item["creation_id"] for item in list_creation_metadata(tmp_path)] == [creation_id]
+
+
+def test_active_creation_cannot_be_deleted(tmp_path: Path) -> None:
+    creation_id = "c_0123456789abcdef0123"
+    write_creation_metadata(tmp_path, creation_id, {"creation_id": creation_id, "status": "running"})
+
+    with pytest.raises(RuntimeError, match="active free creation"):
+        delete_creation_metadata(tmp_path, creation_id)
+
+
+def test_reference_soft_delete_is_not_blocked_by_request_history(tmp_path: Path) -> None:
+    upload = save_reference_upload(tmp_path, original_filename="reference.png", content=b"png")
+    reference_id = upload["reference_id"]
+    write_creation_request(
+        tmp_path,
+        "q_0123456789abcdef0123",
+        {"reference_claims": [{"type": "upload", "reference_id": reference_id}]},
+    )
+
+    delete_reference_upload(tmp_path, reference_id)
+
+    assert list_reference_uploads(tmp_path) == []
+    restored = restore_reference_upload(tmp_path, reference_id)
+    assert restored["reference_id"] == reference_id
+    assert [item["reference_id"] for item in list_reference_uploads(tmp_path)] == [reference_id]
+
+
 def test_free_creation_artifact_is_registered_in_project_manifest(tmp_path: Path) -> None:
     creation_id = "c_0123456789abcdef0123"
     media = tmp_path / "creations" / f"{creation_id}.png"
@@ -819,6 +1060,55 @@ async def test_failed_audio_creation_retries_through_the_audio_lane(tmp_path: Pa
     assert retried["task_id"] == "task-audio-retry"
 
 
+@pytest.mark.asyncio
+async def test_failed_video_creation_retry_keeps_the_original_model(tmp_path: Path, monkeypatch) -> None:
+    creation_id = "c_0123456789abcdef0123"
+    original_model = "anyfast/seedance-2.0"
+    write_creation_metadata(
+        tmp_path,
+        creation_id,
+        {
+            "creation_id": creation_id,
+            "request_id": "q_0123456789abcdef0123",
+            "output_type": "video",
+            "media_type": "video",
+            "status": "failed",
+            "prompt": "Night train announcement",
+            "model": original_model,
+            "references": [],
+            "reference_claims": [],
+            "aspect_ratio": "16:9",
+            "duration_seconds": 8,
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    async def fake_preflight(*args, **_kwargs):
+        request = args[3]
+        captured["model"] = request.model
+        return {"model": request.model, "duration_seconds": request.duration_seconds}
+
+    class Queue:
+        async def enqueue_task(self, **kwargs):
+            captured["payload"] = kwargs["payload"]
+            return {"task_id": "task-video-retry"}
+
+    monkeypatch.setattr(
+        free_creation_router_module,
+        "_load_free_project",
+        lambda _project_name: ({"content_mode": "free"}, tmp_path),
+    )
+    monkeypatch.setattr(free_creation_router_module, "_validate_references", lambda *_args: None)
+    monkeypatch.setattr(free_creation_router_module, "_preflight_free_creation", fake_preflight)
+    monkeypatch.setattr(free_creation_router_module, "get_generation_queue", lambda: Queue())
+
+    result = await retry_free_creation("demo", creation_id, CurrentUserInfo(id="user-1", sub="user-1"))
+
+    assert result["model"] == original_model
+    assert captured["model"] == original_model
+    assert captured["payload"]["model"] == original_model
+
+
 def test_record_enqueued_metadata_preserves_fast_running_state(tmp_path: Path) -> None:
     creation_id = "c_0123456789abcdef0123"
     write_creation_metadata(
@@ -882,11 +1172,24 @@ def test_canvas_state_persists_and_rejects_stale_revision(tmp_path: Path) -> Non
         viewport={"x": 12.0, "y": -8.0, "scale": 0.9},
         positions={"c_0123456789abcdef0123": {"x": 120.0, "y": 80.0}},
         hidden_creation_ids=["c_0123456789abcdef0123"],
+        groups=[
+            {
+                "group_id": "g_0123456789abcdef0123",
+                "member_ids": ["c_0123456789abcdef0123", "r_0123456789abcdef0123"],
+            }
+        ],
+        show_relations=False,
         expected_revision=0,
     )
 
     assert saved["revision"] == 1
-    assert load_canvas_state(tmp_path)["viewport"]["scale"] == 0.9
+    loaded = load_canvas_state(tmp_path)
+    assert loaded["viewport"]["scale"] == 0.9
+    assert loaded["groups"][0]["member_ids"] == [
+        "c_0123456789abcdef0123",
+        "r_0123456789abcdef0123",
+    ]
+    assert loaded["show_relations"] is False
     with pytest.raises(RuntimeError, match="revision conflict"):
         save_canvas_state(
             tmp_path,
@@ -1020,3 +1323,142 @@ def test_free_creation_merge_resolves_only_manifested_videos_in_requested_order(
 
     with pytest.raises(ValueError, match="at least two"):
         resolve_merge_video_paths(tmp_path, [creations[0]["creation_id"]], creations)
+
+
+def test_audio_composite_resolves_one_manifested_video_and_voice(tmp_path: Path) -> None:
+    video_id = "c_0123456789abcdef0123"
+    audio_id = "c_0123456789abcdef0124"
+    video_path = tmp_path / "creations" / f"{video_id}.mp4"
+    audio_path = tmp_path / "audio" / f"segment_{audio_id}.wav"
+    video_path.parent.mkdir(parents=True)
+    audio_path.parent.mkdir(parents=True)
+    video_path.write_bytes(b"video")
+    audio_path.write_bytes(b"voice")
+    video = {
+        "creation_id": video_id,
+        "status": "succeeded",
+        "output_type": "video",
+        "media_type": "video",
+        "references": [],
+        "media_path": video_path.relative_to(tmp_path).as_posix(),
+    }
+    audio = {
+        "creation_id": audio_id,
+        "status": "succeeded",
+        "output_type": "audio",
+        "media_type": "audio",
+        "references": [],
+        "media_path": audio_path.relative_to(tmp_path).as_posix(),
+    }
+    register_free_creation_artifact(tmp_path, video)
+    register_free_creation_artifact(tmp_path, audio)
+
+    resolved_video, resolved_video_path, resolved_audio, resolved_audio_path = resolve_audio_composite_paths(
+        tmp_path,
+        video_id,
+        audio_id,
+        [video, audio],
+    )
+
+    assert resolved_video is video
+    assert resolved_video_path == video_path
+    assert resolved_audio is audio
+    assert resolved_audio_path == audio_path
+
+
+@pytest.mark.asyncio
+async def test_audio_composite_and_subtitle_render_create_derived_canvas_videos(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    video_id = "c_0123456789abcdef0123"
+    audio_id = "c_0123456789abcdef0124"
+    composite_id = "c_0123456789abcdef0125"
+    subtitle_id = "c_0123456789abcdef0126"
+    video_path = tmp_path / "creations" / f"{video_id}.mp4"
+    audio_path = tmp_path / "audio" / f"segment_{audio_id}.wav"
+    video_path.parent.mkdir(parents=True)
+    audio_path.parent.mkdir(parents=True)
+    video_path.write_bytes(b"video")
+    audio_path.write_bytes(b"voice")
+    video = {
+        "creation_id": video_id,
+        "status": "succeeded",
+        "output_type": "video",
+        "media_type": "video",
+        "prompt": "A rainy station",
+        "version": 1,
+        "references": [],
+        "media_path": video_path.relative_to(tmp_path).as_posix(),
+        "duration_seconds": 8,
+    }
+    audio = {
+        "creation_id": audio_id,
+        "status": "succeeded",
+        "output_type": "audio",
+        "media_type": "audio",
+        "prompt": "Station announcement",
+        "version": 1,
+        "references": [],
+        "media_path": audio_path.relative_to(tmp_path).as_posix(),
+    }
+    register_free_creation_artifact(tmp_path, video)
+    register_free_creation_artifact(tmp_path, audio)
+    track = create_subtitle_track(
+        tmp_path,
+        creation_id=video_id,
+        text="The train arrives.",
+        duration_seconds=8,
+    )
+    commands: list[tuple[object, ...]] = []
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+        def kill(self) -> None:
+            return None
+
+        async def wait(self) -> int:
+            return 0
+
+    async def fake_create_subprocess_exec(*args, **_kwargs):
+        commands.append(args)
+        Path(str(args[-1])).write_bytes(b"derived-video")
+        return FakeProcess()
+
+    async def fake_thumbnail(_video_path: Path, _cover_path: Path):
+        return None
+
+    monkeypatch.setattr(free_creation_merge_module.shutil, "which", lambda _name: "ffmpeg")
+    monkeypatch.setattr(free_creation_merge_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(free_creation_merge_module, "extract_video_thumbnail", fake_thumbnail)
+
+    composited = await composite_creation_audio(
+        tmp_path,
+        video_creation_id=video_id,
+        audio_creation_id=audio_id,
+        output_creation_id=composite_id,
+        creations=[video, audio],
+    )
+    subtitled = await render_creation_subtitles(
+        tmp_path,
+        track=track,
+        output_creation_id=subtitle_id,
+        creations=[video, audio],
+    )
+
+    assert composited["effective_mode"] == "audio_composite"
+    assert [claim["role"] for claim in composited["reference_claims"]] == [
+        "reference_video",
+        "reference_audio",
+    ]
+    assert subtitled["effective_mode"] == "subtitle_burn"
+    assert subtitled["subtitle_id"] == track["subtitle_id"]
+    assert load_creation_metadata(tmp_path, composite_id) == composited
+    assert load_creation_metadata(tmp_path, subtitle_id) == subtitled
+    assert ProjectArtifactManifestAdapter(tmp_path).get_entry(ArtifactKey.free_creation(composite_id)) is not None
+    assert ProjectArtifactManifestAdapter(tmp_path).get_entry(ArtifactKey.free_creation(subtitle_id)) is not None
+    assert any("subtitles=subtitles.vtt" in command for args in commands for command in map(str, args))

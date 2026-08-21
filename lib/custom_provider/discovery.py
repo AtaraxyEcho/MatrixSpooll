@@ -51,7 +51,7 @@ async def _discover_openai(base_url: str | None, api_key: str) -> list[dict]:
         client = OpenAI(api_key=api_key, base_url=ensure_openai_base_url(base_url))
         raw_models = client.models.list()
         models = sorted(raw_models, key=lambda m: m.id)
-        return _build_result_list([(m.id, infer_endpoint(m.id, "openai")) for m in models])
+        return _build_result_list([(m.id, infer_endpoint(m.id, "openai", base_url=base_url)) for m in models])
 
     return await asyncio.to_thread(_sync)
 
@@ -74,7 +74,7 @@ async def _discover_google(base_url: str | None, api_key: str) -> list[dict]:
             model_id: str = m.name
             if model_id.startswith("models/"):
                 model_id = model_id[len("models/") :]
-            entries.append((model_id, infer_endpoint(model_id, "google")))
+            entries.append((model_id, infer_endpoint(model_id, "google", base_url=base_url)))
 
         entries.sort(key=lambda e: e[0])
         return _build_result_list(entries)

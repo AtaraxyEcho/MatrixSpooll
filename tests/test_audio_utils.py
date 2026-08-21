@@ -220,3 +220,28 @@ class TestProbeReferenceAudioTotalSeconds:
         with patch("lib.audio_utils.shutil.which", return_value=None):
             total = await audio_utils_module.probe_reference_audio_total_seconds([path_a])
         assert total is None
+
+
+class TestProbeReferenceVideoTotalSeconds:
+    @pytest.mark.unit
+    async def test_sums_durations_and_returns_zero_for_empty_list(self, tmp_path):
+        path_a = tmp_path / "a.mp4"
+        path_b = tmp_path / "b.mp4"
+
+        async def _probe(path: Path) -> float | None:
+            return {path_a: 5.0, path_b: 7.5}.get(path)
+
+        with patch("lib.audio_utils.probe_existing_video_duration_seconds", side_effect=_probe):
+            assert await audio_utils_module.probe_reference_video_total_seconds([]) == 0.0
+            assert await audio_utils_module.probe_reference_video_total_seconds([path_a, path_b]) == 12.5
+
+    @pytest.mark.unit
+    async def test_unreadable_file_returns_none_not_partial_sum(self, tmp_path):
+        path_a = tmp_path / "a.mp4"
+        path_missing = tmp_path / "missing.mp4"
+
+        async def _probe(path: Path) -> float | None:
+            return None if path == path_missing else 5.0
+
+        with patch("lib.audio_utils.probe_existing_video_duration_seconds", side_effect=_probe):
+            assert await audio_utils_module.probe_reference_video_total_seconds([path_a, path_missing]) is None

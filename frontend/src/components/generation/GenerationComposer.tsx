@@ -21,11 +21,11 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { createPortal } from "react-dom";
 import { API } from "@/api";
 import { ASPECT_RATIO_OPTIONS } from "@/components/shared/AspectRatioPicker";
 import type {
   CreateFreeCreationRequest,
-  FreeCreationCapabilities,
   FreeCreationReferenceClaim,
   FreeCreationReferenceRole,
   FreeCreationUploadMediaType,
@@ -33,6 +33,7 @@ import type {
 import { errMsg } from "@/utils/async";
 import { useAppStore } from "@/stores/app-store";
 import { useAssistantStore } from "@/stores/assistant-store";
+import { useGenerationCapabilities } from "@/hooks/useModelCapabilities";
 import { referenceCompatibilityIssue } from "./FreeCreationReferenceRoleSelect";
 import { FreeCreationAssetPickerModal } from "./FreeCreationAssetPickerModal";
 import { FloatingParameterPopover } from "./FloatingParameterPopover";
@@ -59,14 +60,11 @@ interface HomeHeroComposerProps {
 type HomeComposerMode = "agent" | "image" | "video";
 export type AgentGenerationPreference = "image" | "video";
 type ModelOptions = { image: string[]; video: string[] };
-type CapabilityResult = {
-  key: string;
-  value: FreeCreationCapabilities | null;
-  error: string | null;
-};
-
+type ModelTooltipState = { label: string; left: number; top: number; below: boolean; width: number };
 const EMPTY_MODEL_OPTIONS: ModelOptions = { image: [], video: [] };
 const IMAGE_RESOLUTIONS = ["1.5k", "2k", "4k"] as const;
+export const DEFAULT_VIDEO_RESOLUTIONS = ["480p", "720p", "1080p"] as const;
+export const DEFAULT_VIDEO_DURATIONS = Array.from({ length: 12 }, (_, index) => index + 4);
 const IMAGE_RESOLUTION_PIXELS: Record<(typeof IMAGE_RESOLUTIONS)[number], number> = {
   "1.5k": 1536,
   "2k": 2048,
@@ -90,6 +88,14 @@ export function modelLabel(model: string, autoLabel: string): string {
   if (model === "auto") return autoLabel;
   const separator = model.indexOf("/");
   return separator >= 0 ? model.slice(separator + 1) : model;
+}
+
+export function videoDurationsForModel(model: string, durations: readonly number[]): number[] {
+  const modelId = model.split("/").pop()?.replace(/_/g, "-") ?? model;
+  if (!/seedance[-.]?2[-.]?5/i.test(modelId)) return [...durations];
+  return [...new Set([...durations, ...Array.from({ length: 27 }, (_, index) => index + 4)])].sort(
+    (left, right) => left - right,
+  );
 }
 
 function dimensionsForPreset(resolution: string, ratio: string) {
@@ -158,6 +164,18 @@ function referenceMediaTypeForFile(file: File): FreeCreationUploadMediaType {
 interface HomeReferenceFile {
   file: File;
   role: FreeCreationReferenceRole;
+  previewUrl?: string;
+}
+
+function createReferencePreviewUrl(file: File): string | undefined {
+  if (referenceMediaTypeForFile(file) !== "image" || typeof URL.createObjectURL !== "function") return undefined;
+  return URL.createObjectURL(file);
+}
+
+function revokeReferencePreviewUrl(reference: HomeReferenceFile): void {
+  if (reference.previewUrl?.startsWith("blob:") && typeof URL.revokeObjectURL === "function") {
+    URL.revokeObjectURL(reference.previewUrl);
+  }
 }
 
 function homeReferenceFileId(reference: HomeReferenceFile): string {
@@ -171,6 +189,7 @@ function homeReferenceItem(reference: HomeReferenceFile): FreeCreationReferenceI
     name: reference.file.name,
     mediaType: referenceMediaTypeForFile(reference.file),
     role: reference.role,
+    previewUrl: reference.previewUrl,
   };
 }
 
@@ -196,6 +215,7 @@ export function HomeSelect<T extends HomeSelectValue>({
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [modelTooltip, setModelTooltip] = useState<ModelTooltipState | null>(null);
   const pendingFocusIndexRef = useRef<number | null>(null);
   const typeaheadRef = useRef("");
   const typeaheadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -220,6 +240,22 @@ export function HomeSelect<T extends HomeSelectValue>({
       clearTimeout(typeaheadTimerRef.current);
       typeaheadTimerRef.current = null;
     }
+  };
+
+  const showModelTooltip = () => {
+    if (!searchable || !selectedOption?.label) return;
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const width = Math.min(320, Math.max(200, rect.width));
+    const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+    const below = rect.top < 96;
+    setModelTooltip({
+      label: selectedOption.label,
+      left,
+      top: below ? rect.bottom + 8 : rect.top - 8,
+      below,
+      width,
+    });
   };
 
   const focusByTypeahead = (key: string) => {
@@ -305,12 +341,17 @@ export function HomeSelect<T extends HomeSelectValue>({
       <button
         ref={triggerRef}
         type="button"
-        className="home-param-trigger"
+        className={`home-param-trigger${searchable ? " home-model-trigger" : ""}`}
         aria-label={label}
+        data-model-name={searchable ? selectedOption?.label : undefined}
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
         aria-haspopup={searchable ? "dialog" : "listbox"}
         aria-describedby={hint ? hintId : undefined}
+        onMouseEnter={showModelTooltip}
+        onMouseLeave={() => setModelTooltip(null)}
+        onFocus={showModelTooltip}
+        onBlur={() => setModelTooltip(null)}
         onClick={() => setOpen((current) => {
           if (current) setQuery("");
           return !current;
@@ -388,8 +429,9 @@ export function HomeSelect<T extends HomeSelectValue>({
                   aria-selected={selected}
                   aria-disabled={option.disabled || undefined}
                   disabled={option.disabled}
-                  title={option.disabledReason}
-                  className="home-param-option"
+                  title={searchable ? undefined : option.disabledReason}
+                  className={`home-param-option${searchable ? " home-param-option--model" : ""}`}
+                  data-model-name={searchable ? option.label : undefined}
                   onClick={() => selectOption(option.value)}
                   onKeyDown={(event) => {
                     if (event.key.length === 1 && event.key !== " " && !event.altKey && !event.ctrlKey && !event.metaKey) {
@@ -417,7 +459,7 @@ export function HomeSelect<T extends HomeSelectValue>({
                     }
                   }}
                 >
-                  <span className={searchable ? "home-param-option__label" : "truncate"} title={option.label}>{option.label}</span>
+                  <span className={searchable ? "home-param-option__label" : "truncate"}>{option.label}</span>
                   {selected ? <Check className="home-param-option__check" aria-hidden /> : null}
                 </button>
               );
@@ -426,6 +468,20 @@ export function HomeSelect<T extends HomeSelectValue>({
           </div>
       </FloatingParameterPopover>
       {hint ? <span id={hintId} className="home-param-hint">{hint}</span> : null}
+      {modelTooltip && typeof document !== "undefined" ? createPortal(
+        <div
+          className={`home-model-tooltip${modelTooltip.below ? " home-model-tooltip--below" : ""}`}
+          role="tooltip"
+          style={{
+            left: `${modelTooltip.left}px`,
+            maxWidth: `${modelTooltip.width}px`,
+            top: `${modelTooltip.top}px`,
+          }}
+        >
+          {modelTooltip.label}
+        </div>,
+        document.body,
+      ) : null}
     </div>
   );
 }
@@ -558,6 +614,10 @@ export function HomeMenu<T extends string>({
 }
 
 export function handleComposerStripWheel(event: ReactWheelEvent<HTMLDivElement>) {
+  const target = event.target;
+  // Keep each portal popover's own scroll context isolated; the strip itself
+  // should remain wheel-scrollable when the pointer is over any control.
+  if (target instanceof Element && target.closest(".home-param-popover")) return;
   const strip = event.currentTarget;
   if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || strip.scrollWidth <= strip.clientWidth) return;
   const maximum = strip.scrollWidth - strip.clientWidth;
@@ -1219,13 +1279,21 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const [duration, setDuration] = useState(4);
   const [modelPreferences, setModelPreferences] = useState(readGenerationModelPreferences);
   const [modelOptions, setModelOptions] = useState<ModelOptions>(EMPTY_MODEL_OPTIONS);
-  const [capabilityResult, setCapabilityResult] = useState<CapabilityResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
   const [importingAssets, setImportingAssets] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const referenceFilesRef = useRef<HomeReferenceFile[]>([]);
   const referenceFiles = referenceMode === "frames" ? frameReferenceFiles : omniReferenceFiles;
   const referenceItems = useMemo(() => referenceFiles.map(homeReferenceItem), [referenceFiles]);
+
+  useEffect(() => {
+    referenceFilesRef.current = [...omniReferenceFiles, ...frameReferenceFiles];
+  }, [frameReferenceFiles, omniReferenceFiles]);
+
+  useEffect(() => () => {
+    referenceFilesRef.current.forEach(revokeReferencePreviewUrl);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -1251,7 +1319,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
     setModelPreferences((current) => writeGenerationModelPreference(current, outputType, nextModel));
   }, [outputType]);
   const selectedModel = useMemo(
-    () => (model === "auto" || models.includes(model) ? model : "auto"),
+    () => (model === "auto" || models.length === 0 || models.includes(model) ? model : "auto"),
     [model, models],
   );
   const referenceKind = useMemo<"none" | "frame" | "image" | "video" | "audio">(() => {
@@ -1261,32 +1329,11 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
     if (referenceFiles.some((item) => item.role === "reference_image")) return "image";
     return "none";
   }, [outputType, referenceFiles, referenceMode]);
-  const capabilityRequestKey = `${outputType}:${selectedModel}:${referenceKind}`;
-  const capabilities = capabilityResult?.key === capabilityRequestKey ? capabilityResult.value : null;
-  const capabilityError = capabilityResult?.key === capabilityRequestKey ? capabilityResult.error : null;
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void API.getFreeCreationCapabilities({
-      outputType,
-      model: selectedModel === "auto" ? undefined : selectedModel,
-      referenceKind,
-      signal: controller.signal,
-    })
-      .then((next) => {
-        setCapabilityResult({ key: capabilityRequestKey, value: next, error: null });
-      })
-      .catch((err) => {
-        if (!controller.signal.aborted) {
-          setCapabilityResult({
-            key: capabilityRequestKey,
-            value: null,
-            error: errMsg(err),
-          });
-        }
-      });
-    return () => controller.abort();
-  }, [capabilityRequestKey, outputType, referenceKind, selectedModel]);
+  const { capabilities, error: capabilityError } = useGenerationCapabilities({
+    outputType,
+    model: selectedModel === "auto" ? null : selectedModel,
+    referenceKind,
+  });
   const ratioValues = useMemo(
     () => capabilities?.output_type === outputType && capabilities.ratios.length
       ? capabilities.ratios
@@ -1306,10 +1353,13 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
     [capabilities],
   );
   const videoResolutionOptions = useMemo(
-    () => capabilities?.output_type === "video" && capabilities.resolutions.length
-      ? capabilities.resolutions
-      : [],
-    [capabilities],
+    () => {
+      if (selectedModel !== "auto" && capabilities?.output_type !== "video") return [];
+      if (capabilities?.output_type !== "video") return [...DEFAULT_VIDEO_RESOLUTIONS];
+      const declared = capabilities.resolutions.filter((value) => value !== "auto");
+      return declared.length || selectedModel !== "auto" ? declared : [...DEFAULT_VIDEO_RESOLUTIONS];
+    },
+    [capabilities, selectedModel],
   );
   const generationCapabilitiesReady = outputType !== "video"
     ? referenceKind !== "image" || capabilities?.output_type === "image"
@@ -1322,7 +1372,12 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const effectiveImageResolution = imageResolutionOptions.includes(imageResolution)
     ? imageResolution
     : imageResolutionOptions[0] ?? "1.5k";
-  const videoDurations = capabilities?.output_type === "video" ? capabilities.durations : [];
+  const videoDurations = videoDurationsForModel(
+    selectedModel,
+    capabilities?.output_type === "video" && capabilities.durations.length
+      ? capabilities.durations
+      : DEFAULT_VIDEO_DURATIONS,
+  );
   const effectiveDuration = videoDurations.includes(duration) ? duration : videoDurations[0] ?? 4;
   const aspectRatio = outputType === "image" ? effectiveImageAspectRatio : effectiveVideoAspectRatio;
   const referenceIssue = composerMode === "agent" ? null : referenceCompatibilityIssue(
@@ -1384,7 +1439,10 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
         reportedIssue = true;
         continue;
       }
-      next = [...withoutReplacedFrame, { file, role }];
+      if (referenceMode === "frames") {
+        next.filter((item) => item.role === role).forEach(revokeReferencePreviewUrl);
+      }
+      next = [...withoutReplacedFrame, { file, role, previewUrl: createReferencePreviewUrl(file) }];
       addedCount += 1;
       if (referenceMode === "frames") break;
     }
@@ -1402,11 +1460,18 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   };
 
   const removeReferenceFile = (id: string) => {
-    if (referenceMode === "frames") {
-      setFrameReferenceFiles((current) => current.filter((item) => homeReferenceFileId(item) !== id));
-    } else {
-      setOmniReferenceFiles((current) => current.filter((item) => homeReferenceFileId(item) !== id));
-    }
+    const current = referenceMode === "frames" ? frameReferenceFiles : omniReferenceFiles;
+    const removed = current.find((item) => homeReferenceFileId(item) === id);
+    if (removed) revokeReferencePreviewUrl(removed);
+    const next = current.filter((item) => homeReferenceFileId(item) !== id);
+    if (referenceMode === "frames") setFrameReferenceFiles(next);
+    else setOmniReferenceFiles(next);
+  };
+
+  const clearReferenceFiles = () => {
+    [...omniReferenceFiles, ...frameReferenceFiles].forEach(revokeReferencePreviewUrl);
+    setOmniReferenceFiles([]);
+    setFrameReferenceFiles([]);
   };
 
   const swapFrameFiles = () => {
@@ -1503,8 +1568,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
           context: `${agentContext}${referenceContext}`,
         });
         setPrompt("");
-        setOmniReferenceFiles([]);
-        setFrameReferenceFiles([]);
+        clearReferenceFiles();
         rollbackProjectName = null;
         onCreated(project.name, "agent");
         return;
@@ -1530,8 +1594,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
           })()
         : await API.createFreeProject({ title: shortProjectTitle(cleanPrompt), creation: payload });
       setPrompt("");
-      setOmniReferenceFiles([]);
-      setFrameReferenceFiles([]);
+      clearReferenceFiles();
       rollbackProjectName = null;
       onCreated(project.name, composerMode);
     } catch (err) {
@@ -1688,7 +1751,6 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
                 return limit !== null && referenceFiles.length >= limit;
               })()}
               className="home-param-trigger"
-              title={t("free_creation_reference_assets")}
               aria-label={t("free_creation_reference_assets")}
             >
               <span className="home-param-trigger__value">

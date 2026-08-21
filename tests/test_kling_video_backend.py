@@ -101,6 +101,14 @@ class TestConstructionAndCapabilities:
         assert caps.max_reference_images == 0
         assert caps.max_reference_images == 0
 
+    @pytest.mark.unit
+    def test_kling_26_declares_free_creation_parameters_for_custom_models(self):
+        caps = KlingVideoBackend.video_capabilities_for_model("kling-2.6")
+
+        assert caps.supported_aspect_ratios == ("16:9", "9:16", "1:1")
+        assert caps.supported_resolutions == ("720p", "1080p")
+        assert caps.supported_durations == (5, 10)
+
 
 class TestVideoCapabilitiesForTier:
     """有请求上下文（service_tier）时的 last_frame 收窄——供 media_generator 转发 end_image 前调用。"""

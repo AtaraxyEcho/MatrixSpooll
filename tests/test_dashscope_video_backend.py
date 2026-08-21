@@ -114,6 +114,7 @@ class TestCapabilities:
         i2v = DashScopeVideoBackend.video_capabilities_for_model("happyhorse-1.1-i2v")
         assert i2v.first_frame is True
         assert i2v.max_reference_images == 0
+        assert "16:9" in i2v.supported_aspect_ratios
 
         r2v = DashScopeVideoBackend.video_capabilities_for_model("happyhorse-1.1-r2v")
         assert r2v.first_frame is False
@@ -218,6 +219,7 @@ class TestCapabilities:
 
         b = DashScopeVideoBackend(api_key="sk", model="wan2.7-i2v")
         assert b.video_capabilities.first_frame is True
+        assert b.video_capabilities.supported_aspect_ratios == ("16:9", "9:16", "1:1", "4:3", "3:4")
 
     @pytest.mark.unit
     def test_decorated_model_name_resolves_r2v_caps(self):

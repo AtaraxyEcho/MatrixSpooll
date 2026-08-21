@@ -32,6 +32,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from lib.script_models import get_generated_assets
+from server.services.free_creation_tasks import list_creation_metadata
+from server.services.free_creation_workspace import list_reference_uploads
 
 if TYPE_CHECKING:
     from lib.project_manager import ProjectManager
@@ -56,6 +58,52 @@ def resolve_project_cover(
     def _url(rel: str) -> str:
         # 统一走 files 静态路由，不直接拼盘路径；相对路径原样透传给 FileResponse。
         return f"/api/v1/files/{project_name}/{rel.lstrip('/')}"
+
+    def _free_creation_cover() -> str | None:
+        if project.get("content_mode") != "free":
+            return None
+        try:
+            project_path = manager.get_project_path(project_name)
+            creations = list_creation_metadata(project_path)
+        except (OSError, ValueError):
+            return None
+
+        # A successful video is the strongest visual identity for a free project.
+        for creation in creations:
+            if creation.get("status") != "succeeded":
+                continue
+            if creation.get("media_type") != "video" and creation.get("output_type") != "video":
+                continue
+            cover_path = creation.get("cover_path")
+            if isinstance(cover_path, str) and cover_path:
+                return _url(cover_path)
+
+        # Generated images are the next best automatic cover.
+        for creation in creations:
+            if creation.get("status") != "succeeded":
+                continue
+            if creation.get("media_type") == "image" or creation.get("output_type") == "image":
+                media_path = creation.get("media_path")
+                if isinstance(media_path, str) and media_path:
+                    return _url(media_path)
+
+        # Keep the first visual upload as an initial identity, but do not let
+        # audio/text references become a project poster.
+        try:
+            uploads = list_reference_uploads(project_path)
+        except (OSError, ValueError):
+            return None
+        visual_uploads = [item for item in uploads if item.get("media_type") == "image"]
+        visual_uploads.sort(key=lambda item: str(item.get("created_at") or ""))
+        for upload in visual_uploads:
+            path = upload.get("path")
+            if isinstance(path, str) and path:
+                return _url(path)
+        return None
+
+    free_cover = _free_creation_cover()
+    if free_cover:
+        return free_cover
 
     # 第一趟：遍历所有 episode 的 script，先整体扫 video_thumbnail，再整体扫
     # storyboard_image。两趟分开而不是在同一 item 上并列判断，是为了保证

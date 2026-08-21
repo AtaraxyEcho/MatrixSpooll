@@ -329,15 +329,49 @@ def _normalize_wan27_alias(family_suffix: str) -> str:
 
 # 按 model id 派发能力声明。happyhorse-r2v 仅 reference_image（无 first_frame）；
 # wan2.7-r2v 额外支持首帧与参考音色。
+_HAPPYHORSE_ASPECT_RATIOS = ("16:9", "9:16", "1:1", "4:3", "3:4", "4:5", "5:4", "9:21", "21:9")
+_WAN_ASPECT_RATIOS = ("16:9", "9:16", "1:1", "4:3", "3:4")
 _MODEL_PROFILES: dict[str, VideoCapabilities] = {
-    "happyhorse-1.1-t2v": VideoCapabilities(text_to_video=True, first_frame=False),
-    "happyhorse-1.1-i2v": VideoCapabilities(text_to_video=False, first_frame=True),
-    "happyhorse-1.1-r2v": VideoCapabilities(text_to_video=False, first_frame=False, max_reference_images=9),
-    "happyhorse-1.0-t2v": VideoCapabilities(text_to_video=True, first_frame=False),
-    "happyhorse-1.0-i2v": VideoCapabilities(text_to_video=False, first_frame=True),
-    "happyhorse-1.0-r2v": VideoCapabilities(text_to_video=False, first_frame=False, max_reference_images=9),
-    "wan2.7-t2v": VideoCapabilities(text_to_video=True, first_frame=False, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS),
-    "wan2.7-i2v": VideoCapabilities(text_to_video=False, first_frame=True, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS),
+    "happyhorse-1.1-t2v": VideoCapabilities(
+        text_to_video=True, first_frame=False, supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS
+    ),
+    "happyhorse-1.1-i2v": VideoCapabilities(
+        text_to_video=False,
+        first_frame=True,
+        supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS,
+    ),
+    "happyhorse-1.1-r2v": VideoCapabilities(
+        text_to_video=False,
+        first_frame=False,
+        max_reference_images=9,
+        supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS,
+    ),
+    "happyhorse-1.0-t2v": VideoCapabilities(
+        text_to_video=True, first_frame=False, supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS
+    ),
+    "happyhorse-1.0-i2v": VideoCapabilities(
+        text_to_video=False,
+        first_frame=True,
+        supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS,
+    ),
+    "happyhorse-1.0-r2v": VideoCapabilities(
+        text_to_video=False,
+        first_frame=False,
+        max_reference_images=9,
+        supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS,
+    ),
+    "wan2.7-t2v": VideoCapabilities(
+        text_to_video=True,
+        first_frame=False,
+        max_prompt_chars=_WAN27_MAX_PROMPT_CHARS,
+        supported_aspect_ratios=_WAN_ASPECT_RATIOS,
+    ),
+    "wan2.7-i2v": VideoCapabilities(
+        text_to_video=False,
+        first_frame=True,
+        max_prompt_chars=_WAN27_MAX_PROMPT_CHARS,
+        supported_aspect_ratios=_WAN_ASPECT_RATIOS,
+    ),
     # 带首帧的参考生视频是 wan2.7-r2v 的官方形态；参考视频须先上传到临时 OSS，
     # _build_media 只接收已解析的 oss:// 地址，不把本地视频编码为 data URI。
     "wan2.7-r2v": VideoCapabilities(
@@ -366,6 +400,7 @@ _MODEL_PROFILES: dict[str, VideoCapabilities] = {
         max_reference_audio_count=_WAN3_MAX_REFERENCE_AUDIO,
         max_reference_audio_total_seconds=_WAN3_MAX_REFERENCE_AUDIO_TOTAL_SECONDS,
         max_prompt_chars=_WAN3_MAX_PROMPT_CHARS,
+        supported_aspect_ratios=_WAN_ASPECT_RATIOS,
     ),
 }
 
@@ -573,12 +608,9 @@ class DashScopeVideoBackend(ProviderJobIdPersistenceMixin):
             provided = [r for r in (request.reference_images or []) if r]
             provided_videos = [r for r in (request.reference_videos or []) if r]
             if not provided and not provided_videos and not _is_wan3(self._model):
-                code = (
-                    "video_reference_media_required"
-                    if caps.max_reference_videos > 0
-                    else "video_reference_images_required"
-                )
-                raise VideoCapabilityError(code, model=self._model)
+                if caps.max_reference_videos > 0:
+                    raise VideoCapabilityError("video_reference_media_required", model=self._model)
+                raise VideoCapabilityError("video_reference_images_required", model=self._model)
             data_uris: list[str] = []
             unreadable: list[str] = []
             for r in provided:

@@ -53,7 +53,10 @@ class GrokVideoBackend:
         保持 backend 为单一真相源。参考图上限取自第三方来源，官方文档未明确列出，
         不硬编当既成事实。
         """
-        return VideoCapabilities(max_reference_images=7)
+        return VideoCapabilities(
+            max_reference_images=7,
+            supported_aspect_ratios=("16:9", "9:16", "1:1"),
+        )
 
     @property
     def video_capabilities(self) -> VideoCapabilities:

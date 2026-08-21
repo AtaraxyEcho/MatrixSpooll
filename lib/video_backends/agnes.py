@@ -282,6 +282,7 @@ class AgnesVideoBackend(ProviderJobIdPersistenceMixin):
             first_frame=True,
             last_frame=True,
             max_reference_images=_MAX_REFERENCE_IMAGES,
+            supported_aspect_ratios=("16:9", "9:16", "1:1", "4:3", "3:4"),
         )
 
     @property

@@ -221,7 +221,7 @@ Do not paste complete logs directly into a public issue. Remove the following be
 1. Read the [CHANGELOG](https://github.com/MockMine/MatrixSpooll/blob/main/CHANGELOG.md) and the target release notes;
 2. Check for breaking changes;
 3. Back up the database and project directory;
-4. Record the current image version;
+4. Record the current source commit;
 5. Perform the upgrade during an acceptable maintenance window.
 
 ### 5.2 Upgrade the Default Deployment {#upgrade-sqlite-deployment}
@@ -230,7 +230,7 @@ From `deploy/`:
 
 ```bash
 # Back up first; see below
-docker compose pull
+docker compose build arcreel
 docker compose up -d
 
 docker compose ps
@@ -244,7 +244,7 @@ From `deploy/production/`:
 
 ```bash
 # Back up the database and projects/ first
-docker compose pull
+docker compose build arcreel
 docker compose up -d
 
 docker compose ps
@@ -275,17 +275,14 @@ One class of migration first copies the whole project next to its directory, rew
 
 If a project migration fails, preserve the files and inspect the startup logs. Do not manually change the schema version or delete backup files. Repair the damaged project references or permissions, then restart the service.
 
-### 5.5 Pin a Version {#pin-version}
+### 5.5 Build Locally {#local-build}
 
-`latest` is suitable for a quick evaluation, but pinning a release tag is a better choice for production.
+The production Compose file builds the application image from the repository root and does not depend on a public image registry. Rebuild the application service after updating the source:
 
-Change the image in Compose to:
-
-```yaml
-image: ghcr.io/arcreel/arcreel:vX.Y.Z
+```bash
+docker compose build arcreel
+docker compose up -d
 ```
-
-Explicitly changing the version when upgrading reduces the risk of unintentionally pulling a new version.
 
 ## 6. Backup and Restore {#backup-and-restore}
 

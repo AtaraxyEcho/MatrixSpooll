@@ -8,6 +8,7 @@ TestClient 范式，同源侧沿用 test_custom_provider_loader.py 的真 repo �
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Generator
+from dataclasses import asdict
 from unittest.mock import patch
 
 import pytest
@@ -134,17 +135,9 @@ class TestModelListExposesCapabilities:
         pid = _create_provider(client, [_video_model()])
 
         models = client.get(f"/api/v1/custom-providers/{pid}").json()["models"]
-        assert models[0]["system_capabilities"] == {
-            "first_frame": True,
-            "last_frame": False,
-            "max_reference_images": 1,
-            "reference_audio_mode": "none",
-            "max_reference_audio_count": 0,
-            "max_reference_audio_total_seconds": None,
-            "reference_audio_per_image": False,
-            "max_prompt_chars": None,
-            "first_frame_ratio_adaptive_only": False,
-        }
+        expected = asdict(system_video_capabilities(endpoint=VIDEO_ENDPOINT, model_id=VIDEO_MODEL))
+        expected["reference_audio_mode"] = expected["reference_audio_mode"].value
+        assert models[0]["system_capabilities"] == expected
         assert models[0]["capability_overrides"] is None
 
     @pytest.mark.integration
@@ -154,17 +147,9 @@ class TestModelListExposesCapabilities:
 
         models = client.get(f"/api/v1/custom-providers/{pid}").json()["models"]
         expected = system_video_capabilities(endpoint=VIDEO_ENDPOINT, model_id=VIDEO_MODEL)
-        assert models[0]["system_capabilities"] == {
-            "first_frame": expected.first_frame,
-            "last_frame": expected.last_frame,
-            "max_reference_images": expected.max_reference_images,
-            "reference_audio_mode": expected.reference_audio_mode.value,
-            "max_reference_audio_count": expected.max_reference_audio_count,
-            "max_reference_audio_total_seconds": expected.max_reference_audio_total_seconds,
-            "reference_audio_per_image": expected.reference_audio_per_image,
-            "max_prompt_chars": expected.max_prompt_chars,
-            "first_frame_ratio_adaptive_only": expected.first_frame_ratio_adaptive_only,
-        }
+        expected_payload = asdict(expected)
+        expected_payload["reference_audio_mode"] = expected.reference_audio_mode.value
+        assert models[0]["system_capabilities"] == expected_payload
 
     @pytest.mark.integration
     def test_non_video_model_has_no_system_capabilities(self, client: TestClient):
@@ -927,6 +912,10 @@ class TestResolverReturnsEffectiveCapabilities:
         assert caps["source"] == "registry"
         assert caps["first_frame"] is backend_caps.first_frame
         assert caps["last_frame"] is backend_caps.last_frame
+        assert caps["max_reference_videos"] == backend_caps.max_reference_videos
+        assert caps["min_reference_video_seconds"] == backend_caps.min_reference_video_seconds
+        assert caps["max_reference_video_seconds"] == backend_caps.max_reference_video_seconds
+        assert caps["max_reference_video_total_seconds"] == backend_caps.max_reference_video_total_seconds
 
 
 class TestBuiltinBackendsDeclareCapabilityFunction:

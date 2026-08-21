@@ -111,6 +111,8 @@ def gate_video_request(
     end_image: Path | None = None,
     reference_images: "list[Path] | None" = None,
     reference_videos: "list[Path] | None" = None,
+    reference_video_durations: tuple[float, ...] | None = None,
+    reference_video_total_seconds: float | None = None,
     reference_audio_files: "list[Path] | None" = None,
     reference_audio_total_seconds: float | None = None,
 ) -> None:
@@ -187,6 +189,35 @@ def gate_video_request(
                 limit=total_limit,
                 count=total_count,
             )
+        video_duration_limit = None if caps is None else caps.max_reference_video_total_seconds
+        if (
+            video_duration_limit is not None
+            and reference_video_total_seconds is not None
+            and reference_video_total_seconds > video_duration_limit
+        ):
+            raise VideoCapabilityError(
+                "video_reference_videos_duration_exceeded",
+                provider=provider,
+                model=model,
+                limit=video_duration_limit,
+                total=reference_video_total_seconds,
+            )
+        min_duration = None if caps is None else caps.min_reference_video_seconds
+        max_duration = None if caps is None else caps.max_reference_video_seconds
+        if reference_video_durations is not None and (min_duration is not None or max_duration is not None):
+            for index, duration in enumerate(reference_video_durations, start=1):
+                if (min_duration is not None and duration < min_duration) or (
+                    max_duration is not None and duration > max_duration
+                ):
+                    raise VideoCapabilityError(
+                        "video_reference_video_duration_unsupported",
+                        provider=provider,
+                        model=model,
+                        index=index,
+                        duration=duration,
+                        min=min_duration if min_duration is not None else 0,
+                        max=max_duration if max_duration is not None else 0,
+                    )
 
     if reference_audio_files:
         # 不支持音色输入的模型收到音频不静默丢弃：静默丢弃会生成一段音色随机的视频并照常

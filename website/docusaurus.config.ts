@@ -1,12 +1,14 @@
 import type * as Preset from "@docusaurus/preset-classic";
 import type { Config } from "@docusaurus/types";
 
+const docsSiteUrl = process.env.DOCS_SITE_URL ?? "http://localhost:3000";
+
 const config: Config = {
   title: "MatrixSpooll 文档中心",
   tagline: "开源、自托管的 AI 视频创作平台",
   favicon: "img/logo.jpg",
 
-  url: "https://docs.arc-reel.com",
+  url: docsSiteUrl,
   baseUrl: "/",
 
   organizationName: "MatrixSpooll",
@@ -92,12 +94,13 @@ const config: Config = {
         {
           title: "资源",
           items: [
-            { label: "MatrixSpooll 官网", href: "https://arc-reel.com" },
             { label: "GitHub 仓库", href: "https://github.com/MockMine/MatrixSpooll" },
+            { label: "许可证", href: "https://github.com/MockMine/MatrixSpooll/blob/main/LICENSE" },
+            { label: "NOTICE", href: "https://github.com/MockMine/MatrixSpooll/blob/main/NOTICE" },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} MatrixSpooll. Licensed under AGPL-3.0.`,
+      copyright: `Powered by ArcReel — https://github.com/ArcReel/ArcReel · ArcReel Copyright © 2026 Pollo3470 and ArcReel contributors · MatrixSpooll modifications licensed under AGPL-3.0.`,
     },
   } satisfies Preset.ThemeConfig,
 };

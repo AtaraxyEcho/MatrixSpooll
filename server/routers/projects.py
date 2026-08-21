@@ -210,7 +210,7 @@ class CreateProjectRequest(BaseModel):
         return value.strip().replace("：", ":")
 
     @model_validator(mode="after")
-    def validate_generation_mode_for_content(self) -> "CreateProjectRequest":
+    def validate_generation_mode_for_content(self) -> CreateProjectRequest:
         content_mode = self.content_mode or "narration"
         if content_mode == "free":
             if self.generation_mode is not None:
@@ -574,6 +574,7 @@ async def list_projects():
                             "style": project.get("style", ""),
                             "style_template_id": project.get("style_template_id"),
                             "style_image": project.get("style_image"),
+                            "content_mode": project.get("content_mode"),
                             "thumbnail": thumbnail,
                             "status": status,
                         }
@@ -585,6 +586,7 @@ async def list_projects():
                             "name": name,
                             "title": "",
                             "style": "",
+                            "content_mode": None,
                             "thumbnail": None,
                             "status": {},
                         }
@@ -592,7 +594,9 @@ async def list_projects():
             except Exception as e:
                 # 出错时返回基本信息
                 logger.warning("加载项目 '%s' 元数据失败: %s", name, e)
-                projects.append({"name": name, "title": "", "style": "", "thumbnail": None, "status": {}})
+                projects.append(
+                    {"name": name, "title": "", "style": "", "content_mode": None, "thumbnail": None, "status": {}}
+                )
 
         return {"projects": projects}
 

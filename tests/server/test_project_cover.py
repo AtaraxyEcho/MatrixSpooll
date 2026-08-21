@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,6 +24,68 @@ def _mk_manager(scripts_by_file: dict[str, dict]) -> MagicMock:
 
     mgr.load_script.side_effect = _load_script
     return mgr
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_free_creation_prefers_latest_generated_video_cover(tmp_path: Path):
+    manager = _mk_manager({})
+    manager.get_project_path.return_value = tmp_path
+    _write_json(
+        tmp_path / "creations" / "c_image.json",
+        {
+            "creation_id": "c_image",
+            "status": "succeeded",
+            "output_type": "image",
+            "media_type": "image",
+            "media_path": "creations/c_image.png",
+        },
+    )
+    _write_json(
+        tmp_path / "creations" / "c_video.json",
+        {
+            "creation_id": "c_video",
+            "status": "succeeded",
+            "output_type": "video",
+            "media_type": "video",
+            "media_path": "creations/c_video.mp4",
+            "cover_path": "free_creation/covers/c_video.jpg",
+        },
+    )
+
+    assert resolve_project_cover(manager, "proj", {"content_mode": "free"}) == (
+        "/api/v1/files/proj/free_creation/covers/c_video.jpg"
+    )
+
+
+def test_free_creation_falls_back_to_first_uploaded_image(tmp_path: Path):
+    manager = _mk_manager({})
+    manager.get_project_path.return_value = tmp_path
+    _write_json(
+        tmp_path / "free_creation" / "references" / "r_second.json",
+        {
+            "reference_id": "r_second",
+            "media_type": "image",
+            "path": "uploads/free_creation/r_second.png",
+            "created_at": "2026-01-02T00:00:00+00:00",
+        },
+    )
+    _write_json(
+        tmp_path / "free_creation" / "references" / "r_first.json",
+        {
+            "reference_id": "r_first",
+            "media_type": "image",
+            "path": "uploads/free_creation/r_first.png",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+
+    assert resolve_project_cover(manager, "proj", {"content_mode": "free"}) == (
+        "/api/v1/files/proj/uploads/free_creation/r_first.png"
+    )
 
 
 def test_returns_video_thumbnail_when_present_in_reference_mode():

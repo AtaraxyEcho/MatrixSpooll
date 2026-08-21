@@ -5,7 +5,7 @@
   },
   "link.item.label.MatrixSpooll 官网": {
     "message": "MatrixSpooll Website",
-    "description": "The label of footer link with label=MatrixSpooll 官网 linking to https://arc-reel.com"
+    "description": "The label of the MatrixSpooll GitHub repository footer link"
   },
   "link.item.label.GitHub 仓库": {
     "message": "GitHub Repository",

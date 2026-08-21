@@ -108,7 +108,11 @@ class GeminiVideoBackend(ProviderJobIdPersistenceMixin):
         列为并列模式，带参考图时 durationSeconds 必须为 8。全系模型共用这份能力声明，不按
         model_id 分支；instance property 委托至此，保持 backend 为单一真相源。
         """
-        return VideoCapabilities(last_frame=True, max_reference_images=3)
+        return VideoCapabilities(
+            last_frame=True,
+            max_reference_images=3,
+            supported_aspect_ratios=("16:9", "9:16"),
+        )
 
     @property
     def video_capabilities(self) -> VideoCapabilities:

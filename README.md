@@ -25,7 +25,6 @@
   <a href="https://github.com/MockMine/MatrixSpooll/releases/latest"><img src="https://img.shields.io/github/v/release/MockMine/MatrixSpooll?style=flat-square&label=release" alt="Release"></a>
   <a href="https://github.com/MockMine/MatrixSpooll/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/MockMine/MatrixSpooll/test.yml?style=flat-square&label=tests" alt="Tests"></a>
   <a href="https://codecov.io/gh/MockMine/MatrixSpooll"><img src="https://img.shields.io/codecov/c/github/MockMine/MatrixSpooll?style=flat-square&label=coverage" alt="Coverage"></a>
-  <a href="https://github.com/MockMine/MatrixSpooll/pkgs/container/arcreel"><img src="https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-2ea44f?style=flat-square" alt="License"></a>
   <a href="https://github.com/MockMine/MatrixSpooll"><img src="https://img.shields.io/github/stars/MockMine/MatrixSpooll?style=flat-square" alt="Stars"></a>
 </p>
@@ -33,9 +32,9 @@
 <p align="center">
   <a href="#快速开始"><strong>快速开始</strong></a>
   ·
-  <a href="https://docs.arc-reel.com/guide/getting-started">入门教程</a>
+  <a href="website/docs/guide/getting-started.md">入门教程</a>
   ·
-  <a href="https://docs.arc-reel.com/">完整文档</a>
+  <a href="website/docs/index.mdx">完整文档</a>
   ·
   <a href="#交流群">加入社区</a>
 </p>
@@ -47,6 +46,8 @@
 ## MatrixSpooll 是什么
 
 MatrixSpooll 是面向 AI 漫剧与小说改编、说书与旁白短视频、广告与带货短片及自由创作的开源自托管工作台。它把内容分析、资产管理、分镜、媒体生成、费用追踪和导出组织成可审核、可中断恢复的生产流程，同时支持不经过固定工作流的直接图片与视频生成。
+
+MatrixSpooll 是 ArcReel 的修改版本，当前修改版本日期为 2026-08-21。主要修改包括 MatrixSpooll 品牌、自由创作项目模式、首页创作输入框、模型能力联动、无限画布和供应商错误提示；详细变化见 [CHANGELOG](CHANGELOG.md)。
 
 - **统一生产链路**：小说、成品剧本或商品素材都能逐步转化为角色、场景、道具、分镜、视频片段和最终成片。
 - **视觉一致、人工可控**：跨镜头复用参考资产，关键阶段可审核，单个素材可重做，历史版本可回滚。
@@ -66,7 +67,7 @@ flowchart LR
     F --> H["剪映草稿导出"]
 ```
 
-每个阶段都可以由 AI 助手编排，也可以由用户在工作台中审核、调整或重新生成。详细模式选择见 [创作流程与模式](https://docs.arc-reel.com/guide/workflows)。
+每个阶段都可以由 AI 助手编排，也可以由用户在工作台中审核、调整或重新生成。详细模式选择见 [创作流程与模式](website/docs/guide/workflows.md)。
 
 ## 快速开始
 
@@ -82,36 +83,26 @@ docker compose up -d
 
 访问 <http://localhost:1241>。默认用户名为 `admin`；`AUTH_PASSWORD` 留空时，首次启动会自动生成密码并回写到 `deploy/.env`。
 
-> 默认 Compose 会将 `1241` 端口发布到宿主机所有网络接口。请勿将服务直接暴露到公网；远程访问前请配置认证，并使用 HTTPS、VPN 或安全隧道，详见 [反向代理与 HTTPS](https://docs.arc-reel.com/ops/deployment#reverse-proxy-and-https)。
+> 默认 Compose 会将 `1241` 端口发布到宿主机所有网络接口。请勿将服务直接暴露到公网；远程访问前请配置认证，并使用 HTTPS、VPN 或安全隧道，详见[反向代理与 HTTPS](website/docs/ops/deployment.md)。
 
 登录后进入 **设置** 页面，配置 MatrixSpooll AI 助手以及文本、图像、视频等生成能力，再创建项目开始制作。
 
-完整的首次使用流程见 [完整入门教程](https://docs.arc-reel.com/guide/getting-started)；生产部署、升级、备份和反向代理见 [部署与运维](https://docs.arc-reel.com/ops/deployment)。
+完整的首次使用流程见[完整入门教程](website/docs/guide/getting-started.md)；生产部署、升级、备份和反向代理见[部署与运维](website/docs/ops/deployment.md)。
 
 ## 文档
 
 | 页面 | 内容 |
 |---|---|
-| [文档首页](https://docs.arc-reel.com/) | 按使用者、运维者和开发者进入文档 |
-| [完整入门教程](https://docs.arc-reel.com/guide/getting-started) | 从首次部署到生成第一条视频 |
-| [创作流程与模式](https://docs.arc-reel.com/guide/workflows) | 固定工作流内容模式、自由创作以及两种视频生成路线 |
-| [供应商与模型配置](https://docs.arc-reel.com/guide/providers) | Agent、文本、图像、视频、TTS 供应商的选择和配置 |
-| [剪映草稿导出](https://docs.arc-reel.com/guide/jianying-export) | 将 MatrixSpooll 生成结果交给剪映继续编辑 |
-| [常见问题](https://docs.arc-reel.com/guide/faq) | 部署、费用、模型、数据和许可证问题 |
-| [部署与运维](https://docs.arc-reel.com/ops/deployment) | SQLite、PostgreSQL、升级、备份和反向代理 |
-| [从 SQLite 迁移到 PostgreSQL](https://docs.arc-reel.com/ops/migrate-to-postgres) | 数据迁移、验证与回滚流程 |
-| [架构说明](https://docs.arc-reel.com/dev/architecture) | Agent Runtime、任务队列、供应商抽象和数据层 |
-| [贡献指南](https://docs.arc-reel.com/dev/contributing) | 本地开发、测试、代码规范和 PR 流程 |
-
-## 交流群
-
-扫码加入飞书交流群，获取使用帮助、版本动态和创作经验：
-
-<p align="center">
-  <img src="docs/assets/feishu-qr.png" alt="MatrixSpooll 飞书交流群二维码" width="280">
-</p>
-
-遇到可以复现的 Bug 或明确的功能需求，也可以直接提交 [GitHub Issue](https://github.com/MockMine/MatrixSpooll/issues)。
+| [文档首页](website/docs/index.mdx) | 按使用者、运维者和开发者进入文档 |
+| [完整入门教程](website/docs/guide/getting-started.md) | 从首次部署到生成第一条视频 |
+| [创作流程与模式](website/docs/guide/workflows.md) | 固定工作流内容模式、自由创作以及两种视频生成路线 |
+| [供应商与模型配置](website/docs/guide/providers.md) | Agent、文本、图像、视频、TTS 供应商的选择和配置 |
+| [剪映草稿导出](website/docs/guide/jianying-export.md) | 将 MatrixSpooll 生成结果交给剪映继续编辑 |
+| [常见问题](website/docs/guide/faq.md) | 部署、费用、模型、数据和许可证问题 |
+| [部署与运维](website/docs/ops/deployment.md) | SQLite、PostgreSQL、升级、备份和反向代理 |
+| [从 SQLite 迁移到 PostgreSQL](website/docs/ops/migrate-to-postgres.md) | 数据迁移、验证与回滚流程 |
+| [架构说明](website/docs/dev/architecture.md) | Agent Runtime、任务队列、供应商抽象和数据层 |
+| [贡献指南](website/docs/dev/contributing.md) | 本地开发、测试、代码规范和 PR 流程 |
 
 ## 贡献
 
@@ -123,18 +114,16 @@ docker compose up -d
 uv run pre-commit install
 ```
 
-## 许可证与商业使用
+## 许可证与来源
 
-MatrixSpooll 采用 [GNU Affero General Public License v3.0](LICENSE)，附加条款见 [NOTICE](NOTICE)。
+MatrixSpooll 是 ArcReel 的修改版本，当前修改版本日期为 2026-08-21。
 
-如果你的组织无法采用 AGPL-3.0，或者希望在不承担 AGPL 开源义务的情况下进行商业部署、白标或再分发，请联系：
+Powered by ArcReel — https://github.com/ArcReel/ArcReel
 
-**support@arc-reel.com**
+本项目整体按 [GNU Affero General Public License v3.0](LICENSE) 发布，附加署名和修改声明要求见 [NOTICE](NOTICE)。软件不提供任何担保；用户可以依照 AGPL-3.0 使用、修改和再分发本项目。
 
-Copyright © 2026 Pollo3470 and MatrixSpooll contributors
+当前版本源码：<https://github.com/MockMine/MatrixSpooll>
 
----
+ArcReel Copyright © 2026 Pollo3470 and ArcReel contributors.
 
-<p align="center">
-  如果 MatrixSpooll 对你有帮助，欢迎点亮一个 ⭐ Star。
-</p>
+MatrixSpooll modifications Copyright © 2026 MatrixSpooll contributors.

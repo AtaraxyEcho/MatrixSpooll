@@ -276,3 +276,22 @@ async def probe_reference_audio_total_seconds(paths: list[Path]) -> float | None
             return None
         total += duration
     return total
+
+
+async def probe_reference_video_durations(paths: list[Path]) -> tuple[float, ...] | None:
+    """探测每段参考视频时长，供单段与聚合时长限制共同使用。"""
+
+    durations: list[float] = []
+    for path in paths:
+        duration = await probe_existing_video_duration_seconds(path)
+        if duration is None:
+            return None
+        durations.append(duration)
+    return tuple(durations)
+
+
+async def probe_reference_video_total_seconds(paths: list[Path]) -> float | None:
+    """探测多段参考视频总时长，供视频模型的聚合时长限制使用。"""
+
+    durations = await probe_reference_video_durations(paths)
+    return None if durations is None else sum(durations)
