@@ -15,7 +15,7 @@ class AgentSession(TimestampMixin, UserOwnedMixin, Base):
     sdk_session_id: Mapped[str] = mapped_column(String, unique=True)
     project_id: Mapped[str | None] = mapped_column(
         String,
-        ForeignKey("project_registry.id", ondelete="SET NULL"),
+        ForeignKey("project_registry.id", ondelete="CASCADE"),
         nullable=True,
     )
     project_name: Mapped[str] = mapped_column(String, nullable=False)

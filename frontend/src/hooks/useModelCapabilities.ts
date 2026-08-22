@@ -51,6 +51,7 @@ export interface DurationContext {
 export interface ModelCapabilitiesInput extends DurationContext {
   /** 项目名；缺省（如创建向导，项目尚不存在）时不查服务端，仅走目录。 */
   projectName?: string | null;
+  projectId?: string | null;
   /**
    * 视频后端 "provider/model"；空表示跟随全局默认，由服务端解析。
    *
@@ -110,6 +111,7 @@ export interface GenerationCapabilitiesInput {
   model?: string | null;
   referenceKind?: "none" | "frame" | "image" | "video" | "audio";
   projectName?: string | null;
+  projectId?: string | null;
   /** Strict mode validates that the selected reference kind can generate. */
   strictMode?: boolean;
   enabled?: boolean;
@@ -131,12 +133,13 @@ export function useGenerationCapabilities({
   model,
   referenceKind = "none",
   projectName,
+  projectId,
   strictMode = true,
   enabled = true,
 }: GenerationCapabilitiesInput): GenerationCapabilitiesState {
   const revision = useCapabilitiesStore((state) => state.revision);
   const key = enabled
-    ? JSON.stringify([revision, strictMode, outputType, model ?? "", referenceKind, projectName ?? ""])
+    ? JSON.stringify([revision, strictMode, outputType, model ?? "", referenceKind, projectId ?? projectName ?? ""])
     : null;
   const [result, setResult] = useState<{
     key: string;
@@ -153,12 +156,14 @@ export function useGenerationCapabilities({
           model: model || undefined,
           referenceKind,
           projectName: projectName || undefined,
+          projectId: projectId || undefined,
           signal: controller.signal,
         })
       : API.getModelCapabilities({
           outputType,
           model: model || undefined,
           projectName: projectName || undefined,
+          projectId: projectId || undefined,
           signal: controller.signal,
         });
     request
@@ -172,7 +177,7 @@ export function useGenerationCapabilities({
       });
 
     return () => controller.abort();
-  }, [key, model, outputType, projectName, referenceKind, strictMode]);
+  }, [key, model, outputType, projectId, projectName, referenceKind, strictMode]);
 
   const settled = key !== null && result?.key === key;
   return {

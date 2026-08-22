@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from lib.agent_session_store.models import AgentSessionEntry, AgentSessionSummary
 from lib.db.base import DEFAULT_USER_ID, utc_now
+from lib.db.models.session import AgentSession
 
 logger = logging.getLogger("arcreel.session_store")
 
@@ -108,6 +109,7 @@ class DbSessionStore:
     ) -> None:
         now_dt = utc_now()
         async with self._session_factory() as session:
+            project_id = await session.scalar(select(AgentSession.project_id).where(AgentSession.id == session_id))
             seq_start_row = await session.execute(
                 select(func.coalesce(func.max(AgentSessionEntry.seq), -1) + 1).where(
                     AgentSessionEntry.project_key == project_key,
@@ -119,6 +121,7 @@ class DbSessionStore:
 
             rows = [
                 {
+                    "project_id": project_id,
                     "project_key": project_key,
                     "session_id": session_id,
                     "subpath": subpath,
@@ -139,7 +142,7 @@ class DbSessionStore:
             # Maintain per-session summary for list_session_summaries fast path.
             # Per SDK protocol: skip for subagent transcripts (subpath != "").
             if subpath == "":
-                await self._fold_summary_locked(session, project_key, session_id, entries, now_ms, now_dt)
+                await self._fold_summary_locked(session, project_key, session_id, entries, now_ms, now_dt, project_id)
 
             await session.commit()
 
@@ -159,6 +162,7 @@ class DbSessionStore:
         entries: list[dict],
         now_ms: int,
         now_dt,
+        project_id: str | None,
     ) -> None:
         """Read-fold-write the per-session summary inside the active transaction.
 
@@ -194,6 +198,7 @@ class DbSessionStore:
         if prev_row is None:
             session.add(
                 AgentSessionSummary(
+                    project_id=project_id,
                     project_key=project_key,
                     session_id=session_id,
                     mtime_ms=now_ms,

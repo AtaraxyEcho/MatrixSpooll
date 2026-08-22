@@ -16,7 +16,7 @@ from lib.db import get_async_session
 from lib.generation_queue import get_generation_queue
 from lib.i18n import Translator
 from lib.task_failure import parse_failure, render_failure
-from server.auth import CurrentUser, database_auth_initialized, is_auth_enabled
+from server.auth import CurrentUser, database_auth_initialized, is_auth_enabled, is_testing
 from server.services.project_access import list_accessible_projects, resolve_project_access
 
 router = APIRouter()
@@ -35,8 +35,8 @@ async def _visible_project_names(
         access = await resolve_project_access(project_name, user, session, required_role="viewer")
         return [access.project_name]
     if not is_auth_enabled() or not database_auth_initialized():
-        return None
-    projects = await list_accessible_projects(user.id, session)
+        return None if is_testing() else []
+    projects = await list_accessible_projects(user.id, session, include_all=user.role == "admin")
     return [project.name for project in projects]
 
 
@@ -54,7 +54,9 @@ async def _authorize_task_project(
     """
     get_task = getattr(queue, "get_task", None)
     if not callable(get_task):
-        return None
+        if is_testing():
+            return None
+        raise BadRequestError("task_not_found", id=task_id)
     task = await cast(Callable[[str], Awaitable[dict[str, Any] | None]], get_task)(task_id)
     if not task:
         raise BadRequestError("task_not_found", id=task_id)

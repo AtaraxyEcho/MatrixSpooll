@@ -9,7 +9,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -81,6 +81,7 @@ from server.services.generation_context import (
     VideoLaneRequest,
     resolve_generation_context,
 )
+from server.services.media_delivery import serve_media_file
 from server.services.project_access import register_project, remove_project_registration
 
 router = APIRouter()
@@ -889,6 +890,7 @@ async def _get_generation_capabilities(
 ):
     """Build the normalized model capability response shared by settings and generation."""
 
+    from lib.aspect_size import IMAGE_ASPECT_RATIO_PRESETS
     from lib.config.resolver import ConfigResolver
 
     payload: dict[str, Any] = {}
@@ -1045,7 +1047,7 @@ async def _get_generation_capabilities(
         return {
             "output_type": "image",
             "model": f"{resolved.provider_id}/{resolved.model_id}",
-            "ratios": [],
+            "ratios": list(IMAGE_ASPECT_RATIO_PRESETS),
             "resolutions": list(info.resolutions) if info is not None else [],
             "durations": [],
             "max_reference_images": None,
@@ -2009,7 +2011,12 @@ async def restore_free_creation(project_name: str, creation_id: CreationId):
 
 
 @self_auth_router.get("/projects/{project_name}/creations/{creation_id}/media")
-async def get_free_creation_media(project_name: str, creation_id: CreationId, _user: CurrentUserFlexible):
+async def get_free_creation_media(
+    project_name: str,
+    creation_id: CreationId,
+    request: Request,
+    _user: CurrentUserFlexible,
+):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
     creation = await asyncio.to_thread(load_creation_metadata, project_path, creation_id)
     if creation is None or creation.get("deleted_at"):
@@ -2030,7 +2037,12 @@ async def get_free_creation_media(project_name: str, creation_id: CreationId, _u
         if creation.get("media_type") == "audio" or creation.get("output_type") == "audio"
         else "image/png"
     )
-    return FileResponse(path, media_type=media_type)
+    return serve_media_file(
+        path,
+        request,
+        media_type=media_type,
+        immutable=bool(request.query_params.get("v")),
+    )
 
 
 @router.post("/projects/{project_name}/creations/{creation_id}/cancel")

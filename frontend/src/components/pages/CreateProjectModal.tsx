@@ -308,7 +308,7 @@ export function CreateProjectModal() {
             : {}),
         });
         setShowCreateModal(false);
-        navigate(`/app/projects/${resp.name}`);
+        navigate(`/app/projects/${resp.project_id ?? resp.id ?? resp.name}`);
         return;
       }
       // resolution 的 model_settings key 用执行模型：后端按执行模型查这张表，向导只暴露默认层，
@@ -361,7 +361,7 @@ export function CreateProjectModal() {
       }
 
       setShowCreateModal(false);
-      navigate(`/app/projects/${resp.name}`);
+      navigate(`/app/projects/${resp.project_id ?? resp.id ?? resp.name}`);
     } catch (err) {
       useAppStore.getState().pushToast(
         `${t("dashboard:create_project_failed")}${errMsg(err)}`,

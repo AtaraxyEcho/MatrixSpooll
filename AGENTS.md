@@ -44,7 +44,7 @@ pnpm build       # 双 locale 构建，须先 pnpm sync-contributing
 - `characters.py` / `scenes.py` / `props.py` 路由由 `_asset_router_factory.build_asset_router()` 统一生成，按 `lib/asset_types.ASSET_SPECS` 驱动；新增资产类型时只需在 spec 注册
 - `resume_executor.py` 是 worker `_process_resume_task` 入口，不经由常规视频流水线，仅复用 finalize helpers 写回资产
 - 图片指令式编辑（`image_edit_tasks.py`）的设计见 `docs/adr/0050`
-- 数据库：开发 SQLite（`projects/.arcreel.db`），生产 PostgreSQL（`asyncpg`）
+- 数据库：开发与生产统一使用 PostgreSQL（`asyncpg`）；SQLite 仅用于 `TESTING=true` 的隔离测试
 
 ### Agent Runtime（Claude Agent SDK 集成）
 

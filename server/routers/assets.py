@@ -38,7 +38,7 @@ from lib.i18n import Translator
 from lib.project_manager import ProjectManager, get_project_manager
 from server.auth import CurrentUser
 from server.routers._asset_router_factory import localize_project_asset_name_conflict
-from server.services.project_access import resolve_project_access
+from server.services.project_access import resolve_project_access, resolve_project_access_by_id
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,14 @@ def _serialize(asset, owner: User | None = None) -> dict:
         ),
         "updated_at": asset.updated_at.isoformat() if asset.updated_at else None,
     }
+
+
+def _require_asset_owner(asset, user: CurrentUser, _t: Translator) -> None:
+    """Allow global asset mutations only to the creator or an administrator."""
+
+    if user.role == "admin" or asset.owner_user_id == user.id:
+        return
+    raise HTTPException(status_code=403, detail=_t("asset_owner_required"))
 
 
 async def _load_asset_owner(owner_user_id: str | None) -> User | None:
@@ -209,6 +217,7 @@ class UpdateAssetRequest(BaseModel):
 async def update_asset(
     asset_id: str,
     req: UpdateAssetRequest,
+    user: CurrentUser,
     _t: Translator,
 ):
     patch = {k: v for k, v in req.model_dump().items() if v is not None}
@@ -219,6 +228,7 @@ async def update_asset(
         a = await repo.get_by_id(asset_id)
         if not a:
             raise HTTPException(status_code=404, detail=_t("asset_not_found", name=asset_id))
+        _require_asset_owner(a, user, _t)
         if "name" in patch and patch["name"] != a.name:
             if await repo.exists(a.type, patch["name"]):
                 raise HTTPException(status_code=409, detail=_t("asset_already_exists", name=patch["name"]))
@@ -234,11 +244,12 @@ async def update_asset(
 
 
 @router.delete("/{asset_id}", status_code=204)
-async def delete_asset(asset_id: str, _t: Translator):
+async def delete_asset(asset_id: str, user: CurrentUser, _t: Translator):
     async with async_session_factory() as s:
         repo = AssetRepository(s)
         a = await repo.get_by_id(asset_id)
         if a:
+            _require_asset_owner(a, user, _t)
             if a.image_path:
                 _delete_global_asset_file(a.image_path)
             if a.audio_path:
@@ -251,6 +262,7 @@ async def delete_asset(asset_id: str, _t: Translator):
 @router.post("/{asset_id}/image")
 async def replace_image(
     asset_id: str,
+    user: CurrentUser,
     _t: Translator,
     image: UploadFile = File(...),
 ):
@@ -260,6 +272,7 @@ async def replace_image(
         a = await repo.get_by_id(asset_id)
         if not a:
             raise HTTPException(status_code=404, detail=_t("asset_not_found", name=asset_id))
+        _require_asset_owner(a, user, _t)
         old_path = a.image_path
         asset_type = a.type
 
@@ -300,7 +313,7 @@ async def from_project(
     user: CurrentUser,
     session: AsyncSession = Depends(get_async_session),
 ):
-    await resolve_project_access(req.project_name, user, session, required_role="viewer")
+    await resolve_project_access(req.project_name, user, session, required_role="editor")
 
     # 1) 类型合法性
     if req.resource_type not in GLOBAL_LIBRARY_ASSET_TYPES:
@@ -385,6 +398,8 @@ async def from_project(
                 "existing": _serialize(existing),
             },
         )
+    if existing is not None:
+        _require_asset_owner(existing, user, _t)
 
     # 5) 拷贝源 sheet / 参考音频到 _global_assets/{type}/{uuid}.{ext}
     # 两次拷贝共用一个失败边界：任一失败都清理已落盘的另一个文件，不留孤儿。
@@ -479,28 +494,41 @@ async def from_project(
 
 class ApplyToProjectRequest(BaseModel):
     asset_ids: list[str]
-    target_project: str
+    target_project: str | None = None
+    target_project_id: str | None = None
     conflict_policy: str = "skip"  # 'skip' | 'overwrite' | 'rename'
 
 
 @router.post("/apply-to-project")
 async def apply_to_project(
     req: ApplyToProjectRequest,
+    user: CurrentUser,
     _t: Translator,
+    session: AsyncSession = Depends(get_async_session),
 ):
     # 1) 校验冲突策略（400 先于其它检查）
     if req.conflict_policy not in {"skip", "overwrite", "rename"}:
         raise HTTPException(status_code=400, detail=_t("asset_invalid_conflict_policy"))
     asset_ids = list(dict.fromkeys(req.asset_ids))
 
+    if not req.target_project and not req.target_project_id:
+        raise HTTPException(status_code=422, detail="target_project or target_project_id is required")
+    if req.target_project_id:
+        access = await resolve_project_access_by_id(req.target_project_id, user, session, required_role="editor")
+    else:
+        access = await resolve_project_access(req.target_project or "", user, session, required_role="editor")
+    if req.conflict_policy == "overwrite" and access.role != "owner":
+        raise HTTPException(status_code=403, detail=_t("project_access_denied", name=access.project_name))
+    target_project = access.project_name
+
     # 2) 校验目标项目存在
     project_manager = get_project_manager()
     try:
-        project = project_manager.load_project(req.target_project)
+        project = project_manager.load_project(target_project)
     except ProjectAssetNameConflictError as exc:
         raise HTTPException(status_code=409, detail=localize_project_asset_name_conflict(exc, _t)) from exc
     except FileNotFoundError as exc:
-        raise NotFoundError("asset_target_project_not_found", project=req.target_project) from exc
+        raise NotFoundError("asset_target_project_not_found", project=target_project) from exc
 
     succeeded: list[dict] = []
     skipped: list[dict] = []
@@ -516,7 +544,7 @@ async def apply_to_project(
 
     # 4) 先在内存里算好每条 asset 的目标名 + 是否需要拷贝文件，
     #    再一次性执行文件拷贝和 project.json 写回
-    project_dir = project_manager.get_project_path(req.target_project)
+    project_dir = project_manager.get_project_path(target_project)
     # 四类资产共用一份名称占用表；owner 用于区分同类 overwrite 与不可覆盖的跨类型冲突。
     occupied: dict[str, tuple[str, str]] = {}
     for asset_type, bucket_key in BUCKET_KEY.items():
@@ -702,7 +730,7 @@ async def apply_to_project(
         try:
             await asyncio.to_thread(
                 project_manager.update_project_with_file_copies,
-                req.target_project,
+                target_project,
                 _apply_all,
                 file_copies,
                 on_commit=_register_imported_sheet_claims,

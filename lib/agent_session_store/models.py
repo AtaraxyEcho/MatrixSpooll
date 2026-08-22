@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, BigInteger, Index, PrimaryKeyConstraint, String, text
+from sqlalchemy import JSON, BigInteger, ForeignKey, Index, PrimaryKeyConstraint, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lib.db.base import Base, TimestampMixin, UserOwnedMixin
@@ -13,6 +13,12 @@ class AgentSessionEntry(TimestampMixin, UserOwnedMixin, Base):
 
     __tablename__ = "agent_session_entries"
 
+    project_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("project_registry.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     project_key: Mapped[str] = mapped_column(String, nullable=False)
     session_id: Mapped[str] = mapped_column(String, nullable=False)
     subpath: Mapped[str] = mapped_column(String, nullable=False, server_default="")
@@ -48,6 +54,12 @@ class AgentSessionSummary(TimestampMixin, UserOwnedMixin, Base):
 
     __tablename__ = "agent_session_summaries"
 
+    project_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("project_registry.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     project_key: Mapped[str] = mapped_column(String, primary_key=True)
     session_id: Mapped[str] = mapped_column(String, primary_key=True)
     mtime_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)

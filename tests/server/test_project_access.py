@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from lib.api_errors import ForbiddenError, NotFoundError
 from lib.db.base import Base, utc_now
+from lib.db.models.asset import Asset
 from lib.db.models.project import ProjectMember, ProjectRegistry
 from lib.db.models.user import User
 from server.auth import CurrentUserInfo, get_current_user
@@ -322,5 +323,79 @@ async def test_project_owner_cannot_be_deactivated_before_transfer():
 
             owner = await session.get(User, "editor")
             assert owner is not None and owner.is_active
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_global_asset_mutations_require_creator_or_admin(monkeypatch):
+    factory, engine = await _make_database()
+    try:
+        await _seed_project(factory)
+        async with factory() as session:
+            async with session.begin():
+                session.add(
+                    Asset(
+                        id="asset-1",
+                        type="character",
+                        name="Hero",
+                        description="",
+                        voice_style="",
+                        owner_user_id="editor",
+                    )
+                )
+        monkeypatch.setattr(assets, "async_session_factory", factory)
+
+        def translate(key, **_kwargs):
+            return key
+
+        with pytest.raises(HTTPException) as denied:
+            await assets.update_asset(
+                "asset-1",
+                assets.UpdateAssetRequest(description="changed"),
+                CurrentUserInfo(id="viewer", sub="viewer", role="member"),
+                translate,
+            )
+        assert denied.value.status_code == 403
+        assert denied.value.detail == "asset_owner_required"
+
+        updated = await assets.update_asset(
+            "asset-1",
+            assets.UpdateAssetRequest(description="owned"),
+            CurrentUserInfo(id="editor", sub="editor", role="member"),
+            translate,
+        )
+        assert updated["asset"]["description"] == "owned"
+
+        await assets.delete_asset(
+            "asset-1",
+            CurrentUserInfo(id="default", sub="admin", role="admin"),
+            translate,
+        )
+        async with factory() as session:
+            assert await session.get(Asset, "asset-1") is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_viewer_cannot_export_project_asset_to_global_library(tmp_path, monkeypatch):
+    factory, engine = await _make_database()
+    try:
+        (tmp_path / "shared-project").mkdir()
+        monkeypatch.setattr(project_access, "get_project_manager", lambda: _ProjectManager(tmp_path))
+        await _seed_project(factory)
+        async with factory() as session:
+            with pytest.raises(ForbiddenError):
+                await assets.from_project(
+                    assets.FromProjectRequest(
+                        project_name="shared-project",
+                        resource_type="character",
+                        resource_id="hero",
+                    ),
+                    lambda key, **_kwargs: key,
+                    CurrentUserInfo(id="viewer", sub="viewer", role="member"),
+                    session,
+                )
     finally:
         await engine.dispose()

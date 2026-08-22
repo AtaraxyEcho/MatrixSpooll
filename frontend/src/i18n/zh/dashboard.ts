@@ -119,6 +119,7 @@ export default {
   'free_creation_action_busy': '请等待当前操作完成',
   'free_creation_storyboard_prompt_required': '请先输入脚本或创意，再规划分镜',
   'free_creation_result_count': '共 {{count}} 个作品',
+  'free_creation_capabilities_unavailable': '当前模型能力未配置，请先在系统设置中配置可用模型',
   'free_creation_reference_role_label': '{{name}} 的引用类型',
   'free_creation_reference_role_choose': '选择用途',
   'free_creation_reference_role_incompatible': '当前不可用',

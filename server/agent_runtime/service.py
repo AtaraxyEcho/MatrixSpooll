@@ -157,12 +157,19 @@ class AssistantService:
     async def list_sessions(
         self,
         project_name: str | None = None,
+        actor_user_id: str | None = None,
         status: SessionStatus | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[SessionMeta]:
         """List sessions, injecting SDK summary as title when available."""
-        sessions = await self.meta_store.list(project_name=project_name, status=status, limit=limit, offset=offset)
+        sessions = await self.meta_store.list(
+            project_name=project_name,
+            actor_user_id=actor_user_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
         if not sessions or not project_name:
             return sessions
 
@@ -286,7 +293,7 @@ class AssistantService:
             meta = await self.meta_store.get(session_id)
             if meta is None:
                 raise FileNotFoundError(f"session not found: {session_id}")
-            if meta.project_name != project_name:
+            if meta.project_name != project_name or meta.actor_user_id != actor_user_id:
                 raise FileNotFoundError(f"session not found: {session_id}")
             # Build prompt
             text, sdk_prompt, echo_blocks = self._prepare_prompt(content, images)
@@ -317,16 +324,17 @@ class AssistantService:
                     actor_user_id,
                 )
 
-            existing = await self._find_accepted_new_session(client_key, project_name)
+            existing = await self._find_accepted_new_session(client_key, project_name, actor_user_id)
             if existing is not None:
                 return existing
 
             # 同一 client_key 的并发请求在此串行化：send_new_session 在途期间
             # 后来者等锁而非各自建会话，避免重复执行同一 prompt。
-            lock = self._new_session_locks.lock_for(client_key)
+            mapping_key = self._new_session_mapping_key(client_key, actor_user_id)
+            lock = self._new_session_locks.lock_for(mapping_key)
             async with lock:
                 # 双重检查：等锁期间先行者可能已完成同一 client_key 的建会话。
-                existing = await self._find_accepted_new_session(client_key, project_name)
+                existing = await self._find_accepted_new_session(client_key, project_name, actor_user_id)
                 if existing is not None:
                     return existing
                 result = await self._create_new_session(
@@ -337,19 +345,23 @@ class AssistantService:
                     client_key,
                     actor_user_id,
                 )
-                self._record_new_session_client_key(client_key, result["session_id"])
+                self._record_new_session_client_key(mapping_key, result["session_id"])
                 return result
 
-    async def _find_accepted_new_session(self, client_key: str, project_name: str) -> dict[str, Any] | None:
+    async def _find_accepted_new_session(
+        self,
+        client_key: str,
+        project_name: str,
+        actor_user_id: str = DEFAULT_USER_ID,
+    ) -> dict[str, Any] | None:
         """按幂等键定位已受理的新会话：进程内映射为快路径，事件日志跨会话
         查询兜底——进程重启 / LRU 淘汰后映射丢失，受理已落库的重试仍须命中
         既有会话而非重复建会话（重复执行同一 prompt、重复计费）。
 
-        命中会话的项目归属须与调用方 ``project_name`` 一致：不一致则视为未命中
-        （返回 None，由调用方在当前项目新建会话），不抛错——用户未指名任何
-        会话，跨项目复用同一 client_key 时新会话意图应落在当前项目。两条查找
-        路径口径一致，均在返回前做归属校验。"""
-        mapped_session_id = self._new_session_client_keys.get(client_key)
+        命中会话必须同时属于调用方的项目和账号；任一不一致都视为未命中，
+        由调用方新建会话。同一 client_key 因此只能在同一用户范围内去重。"""
+        mapping_key = self._new_session_mapping_key(client_key, actor_user_id)
+        mapped_session_id = self._new_session_client_keys.get(mapping_key)
         if mapped_session_id is not None:
             # 幂等重试：首次受理已建会话并投递，返回同一会话的权威条目。
             entry = await self.event_log_store.find_by_client_key(mapped_session_id, client_key)
@@ -361,16 +373,21 @@ class AssistantService:
                 # 值仍是本次读到的旧值时才清，避免清掉并发写入的新映射（DB 兜底
                 # 查询本身按 client_key 定位一定命中同一权威会话，误删只是白跑
                 # 一次查询，但仍以精确条件避免这层不必要的抖动）。
-                if self._new_session_client_keys.get(client_key) == mapped_session_id:
-                    self._new_session_client_keys.pop(client_key, None)
-            elif await self._new_session_matches_project(mapped_session_id, project_name):
+                if self._new_session_client_keys.get(mapping_key) == mapped_session_id:
+                    self._new_session_client_keys.pop(mapping_key, None)
+            elif await self._new_session_matches_owner(
+                mapped_session_id,
+                project_name,
+                actor_user_id,
+                allow_missing_meta=True,
+            ):
                 # 命中即刷新 LRU 位置：否则被频繁重试命中的 key 仍按插入
                 # 顺序（而非访问顺序）淘汰，退化成 FIFO。上一行 await 期间
                 # 该 key 可能已被其他并发请求的淘汰逻辑移除，直接
                 # move_to_end 对不存在的键会抛 KeyError；复用
                 # _record_new_session_client_key 的赋值语义（不存在则插入，
                 # 存在则原地更新）再显式挪到最近使用端，两种情形都安全。
-                self._record_new_session_client_key(client_key, mapped_session_id)
+                self._record_new_session_client_key(mapping_key, mapped_session_id)
                 return {"status": "accepted", "session_id": mapped_session_id, "entry": entry}
             # else：映射命中的会话属于其他项目 → 视为未命中，落到 DB 兜底 / 新建
             # 路径。不清映射：它对原项目仍有效；后续在当前项目新建会话时由
@@ -379,28 +396,41 @@ class AssistantService:
         if recovered is None:
             return None
         session_id, entry = recovered
-        if not await self._new_session_matches_project(session_id, project_name):
+        if not await self._new_session_matches_owner(session_id, project_name, actor_user_id):
             # 兜底命中的会话属于其他项目 → 视为未命中，走当前项目新建路径。
             return None
         # 上一行 await 期间该 key 可能已被其他并发请求记入新映射；仅当当前
         # 无映射或已是同一 session_id 时才写入，避免用本次查到的（较旧）
         # session_id 覆盖并发写入的映射。
-        if self._new_session_client_keys.get(client_key) in (None, session_id):
-            self._record_new_session_client_key(client_key, session_id)
+        if self._new_session_client_keys.get(mapping_key) in (None, session_id):
+            self._record_new_session_client_key(mapping_key, session_id)
         return {"status": "accepted", "session_id": session_id, "entry": entry}
 
-    async def _new_session_matches_project(self, session_id: str, project_name: str) -> bool:
-        """幂等命中的新会话是否属于当前调用项目。校验依据为会话 meta 的
-        ``project_name``；meta 不存在（异常 / 已删）时不阻断命中，保持既有幂等
-        语义——跨项目串号的前提是命中会话 meta 存在且项目不同。"""
+    async def _new_session_matches_owner(
+        self,
+        session_id: str,
+        project_name: str,
+        actor_user_id: str,
+        *,
+        allow_missing_meta: bool = False,
+    ) -> bool:
+        """Return whether an idempotency hit belongs to the same project and user."""
         meta = await self.meta_store.get(session_id)
-        return meta is None or meta.project_name == project_name
+        if meta is None:
+            return allow_missing_meta
+        return meta is not None and meta.project_name == project_name and meta.actor_user_id == actor_user_id
 
     def _record_new_session_client_key(self, client_key: str, session_id: str) -> None:
         self._new_session_client_keys[client_key] = session_id
         self._new_session_client_keys.move_to_end(client_key)
         while len(self._new_session_client_keys) > self._new_session_client_keys_max:
             self._new_session_client_keys.popitem(last=False)
+
+    @staticmethod
+    def _new_session_mapping_key(client_key: str, actor_user_id: str) -> str:
+        """Scope the in-memory idempotency index without rewriting legacy default-user keys."""
+
+        return client_key if actor_user_id == DEFAULT_USER_ID else f"{actor_user_id}\0{client_key}"
 
     async def _create_new_session(
         self,
@@ -495,7 +525,7 @@ class AssistantService:
         actor_user_id: str,
     ) -> dict[str, Any]:
         meta = await self.meta_store.get(session_id)
-        if meta is None or meta.project_name != project_name:
+        if meta is None or meta.project_name != project_name or meta.actor_user_id != actor_user_id:
             raise FileNotFoundError(f"session not found: {session_id}")
 
         if self._session_store is None:

@@ -73,6 +73,7 @@ class SessionRepository(BaseRepository):
         self,
         *,
         project_name: str | None = None,
+        actor_user_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -81,6 +82,8 @@ class SessionRepository(BaseRepository):
         stmt = select(AgentSession).where(AgentSession.superseded_by.is_(None))
         if project_name:
             stmt = stmt.where(AgentSession.project_name == project_name)
+        if actor_user_id:
+            stmt = stmt.where(AgentSession.user_id == actor_user_id)
         if status:
             stmt = stmt.where(AgentSession.status == status)
         stmt = stmt.order_by(AgentSession.updated_at.desc())

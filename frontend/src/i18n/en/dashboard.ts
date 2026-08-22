@@ -118,6 +118,7 @@ export default {
   'free_creation_action_busy': 'Wait for the current operation to finish',
   'free_creation_storyboard_prompt_required': 'Enter a script or creative prompt before planning a storyboard',
   'free_creation_result_count': '{{count}} creations',
+  'free_creation_capabilities_unavailable': 'Model capabilities are unavailable. Configure a model in System Settings first.',
   'free_creation_reference_role_label': 'Reference type for {{name}}',
   'free_creation_reference_role_choose': 'Choose purpose',
   'free_creation_reference_role_incompatible': 'Unavailable',

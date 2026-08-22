@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 
 from lib.db import safe_session_factory
 from lib.db.base import DEFAULT_USER_ID, utc_now
+from lib.db.models.session import AgentSession
 from lib.db.models.session_event import AgentSessionEventLogEntry
 from lib.db.models.session_message_link import AgentSessionUserMessageLink
 from server.agent_runtime.failure_observation import build_turn_failure_observation
@@ -623,6 +624,7 @@ class EventLogStore:
     ) -> list[dict[str, Any]]:
         now_dt = utc_now()
         async with self._session_factory() as session:
+            project_id = await session.scalar(select(AgentSession.project_id).where(AgentSession.id == session_id))
             seq_start_row = await session.execute(
                 select(func.coalesce(func.max(AgentSessionEventLogEntry.seq), -1) + 1).where(
                     AgentSessionEventLogEntry.session_id == session_id,
@@ -634,6 +636,7 @@ class EventLogStore:
                 seq = seq_start + i
                 session.add(
                     AgentSessionEventLogEntry(
+                        project_id=project_id,
                         session_id=session_id,
                         seq=seq,
                         entry_type=str(entry.get("type") or ""),
@@ -757,8 +760,10 @@ class EventLogStore:
         now_dt = utc_now()
         try:
             async with self._session_factory() as session:
+                project_id = await session.scalar(select(AgentSession.project_id).where(AgentSession.id == session_id))
                 session.add(
                     AgentSessionUserMessageLink(
+                        project_id=project_id,
                         session_id=session_id,
                         user_entry_uuid=user_entry_uuid,
                         sdk_entry_uuid=sdk_entry_uuid,

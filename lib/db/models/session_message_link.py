@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import PrimaryKeyConstraint, String
+from sqlalchemy import ForeignKey, Index, PrimaryKeyConstraint, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lib.db.base import Base, TimestampMixin, UserOwnedMixin
@@ -21,10 +21,18 @@ class AgentSessionUserMessageLink(TimestampMixin, UserOwnedMixin, Base):
 
     __tablename__ = "agent_session_user_message_links"
 
+    project_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("project_registry.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     session_id: Mapped[str] = mapped_column(String, nullable=False)
     # 事件日志用户条目 payload 里的 uuid（形如 user-<hex>）。
     user_entry_uuid: Mapped[str] = mapped_column(String, nullable=False)
     # agent_session_entries.uuid：该用户消息在 SDK transcript 中的 entry 身份。
     sdk_entry_uuid: Mapped[str] = mapped_column(String, nullable=False)
 
-    __table_args__ = (PrimaryKeyConstraint("session_id", "user_entry_uuid"),)
+    __table_args__ = (
+        PrimaryKeyConstraint("session_id", "user_entry_uuid"),
+        Index("idx_agent_message_links_project_id", "project_id"),
+    )

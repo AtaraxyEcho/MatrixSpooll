@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from lib.app_data_dir import app_data_dir
+from lib.db.engine import get_database_url
 from lib.logging_config import resolve_log_dir
 from lib.logging_utils import _redact_value
 
@@ -63,7 +64,7 @@ _SENSITIVE_QUERY_KEYS = frozenset({"password", "passwd", "pwd", "token", "secret
 
 
 def _db_url() -> str:
-    raw = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./projects/.arcreel.db")
+    raw = get_database_url()
     try:
         parsed = urlparse(raw)
         netloc = parsed.netloc

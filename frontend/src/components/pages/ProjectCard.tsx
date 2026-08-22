@@ -485,7 +485,7 @@ export function ProjectCard(props: ProjectCardProps) {
         </span>
       ) : null}
       <Link
-        href={`/app/projects/${project.name}`}
+        href={`/app/projects/${project.project_id ?? project.id ?? project.name}`}
         className="block w-full text-left text-text no-underline outline-none"
         aria-label={linkLabel}
       >

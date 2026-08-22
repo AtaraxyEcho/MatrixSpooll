@@ -67,6 +67,7 @@ from server.routers._script_edits import (
 from server.routers._validators import validate_backend_value
 from server.services import workflow_planner as workflow_plan_service
 from server.services.project_access import (
+    find_project_registration,
     list_accessible_projects,
     register_project,
     remove_project_registration,
@@ -578,10 +579,23 @@ async def list_projects(
     """列出所有项目"""
 
     if is_auth_enabled() and database_auth_initialized():
-        accessible = await list_accessible_projects(user.id, session)
+        if user.role == "admin":
+            accessible = await list_accessible_projects(user.id, session, include_all=True)
+            # The project API exposes project roles only; administrators have
+            # owner-equivalent access without changing the persisted member role.
+            role_by_project_id = {row.id: "owner" for row in accessible}
+        else:
+            accessible = await list_accessible_projects(user.id, session)
+            member_rows = await session.execute(
+                select(ProjectMember.project_id, ProjectMember.role).where(ProjectMember.user_id == user.id)
+            )
+            role_by_project_id = {project_id: role for project_id, role in member_rows.all()}
         project_names = [row.name for row in accessible]
+        registry_by_name = {row.name: row for row in accessible}
     else:
         project_names = get_project_manager().list_projects()
+        registry_by_name = {}
+        role_by_project_id = {}
 
     def _sync():
         manager = get_project_manager()
@@ -627,6 +641,11 @@ async def list_projects(
                     raw_title = project.get("title")
                     projects.append(
                         {
+                            "project_id": registry_by_name[name].id if name in registry_by_name else None,
+                            "id": registry_by_name[name].id if name in registry_by_name else None,
+                            "current_role": (
+                                role_by_project_id.get(registry_by_name[name].id) if name in registry_by_name else None
+                            ),
                             "name": name,
                             # title 缺失/为 None/类型异常时统一归一为空串,前端 i18n
                             # 兜底显示「未命名项目」,确保接口契约始终返回 str。
@@ -643,6 +662,11 @@ async def list_projects(
                     # 没有 project.json 的项目
                     projects.append(
                         {
+                            "project_id": registry_by_name[name].id if name in registry_by_name else None,
+                            "id": registry_by_name[name].id if name in registry_by_name else None,
+                            "current_role": (
+                                role_by_project_id.get(registry_by_name[name].id) if name in registry_by_name else None
+                            ),
                             "name": name,
                             "title": "",
                             "style": "",
@@ -655,7 +679,19 @@ async def list_projects(
                 # 出错时返回基本信息
                 logger.warning("加载项目 '%s' 元数据失败: %s", name, e)
                 projects.append(
-                    {"name": name, "title": "", "style": "", "content_mode": None, "thumbnail": None, "status": {}}
+                    {
+                        "project_id": registry_by_name[name].id if name in registry_by_name else None,
+                        "id": registry_by_name[name].id if name in registry_by_name else None,
+                        "current_role": (
+                            role_by_project_id.get(registry_by_name[name].id) if name in registry_by_name else None
+                        ),
+                        "name": name,
+                        "title": "",
+                        "style": "",
+                        "content_mode": None,
+                        "thumbnail": None,
+                        "status": {},
+                    }
                 )
 
         return {"projects": projects}
@@ -753,14 +789,16 @@ async def create_project(
             return {"success": True, "name": project_name, "project": project}
 
         result = await asyncio.to_thread(_sync)
+        project_id: str | None = None
         if database_auth_initialized():
             try:
                 async with session.begin():
-                    await register_project(session, result["name"], user.id)
+                    registry = await register_project(session, result["name"], user.id)
+                    project_id = registry.id
             except Exception:
                 await asyncio.to_thread(get_project_manager().delete_project_directory, result["name"])
                 raise
-        return result
+        return {**result, "project_id": project_id, "id": project_id}
     except ValueError as e:
         # 项目名 / source_kind / duration / brief 等配置校验失败，str(e) 只进日志
         logger.warning("创建项目参数错误: name=%s (%s)", req.name or req.title, e)
@@ -848,19 +886,23 @@ async def get_workflow_plan(name: str, request: WorkflowPlanRequest):
 async def get_project(
     name: str,
     _t: Translator,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
 ):
     """获取项目详情（含实时计算字段）"""
     try:
+        access = await resolve_project_access(name, user, session, required_role="viewer")
+        project_name = access.project_name
 
         def _sync():
             manager = get_project_manager()
-            if not manager.project_exists(name):
-                raise HTTPException(status_code=404, detail=_t("project_not_found", name=name))
+            if not manager.project_exists(project_name):
+                raise HTTPException(status_code=404, detail=_t("project_not_found", name=project_name))
 
-            project = manager.load_project(name)
+            project = manager.load_project(project_name)
 
             # 阶段、产物计数与每集明细一律来自项目摘要投影（读时计算，不写入 JSON）
-            summary = get_workflow_state_service().get_project_summary(name)
+            summary = get_workflow_state_service().get_project_summary(project_name)
             project = _merge_episode_summaries(project, summary)
             project["status"] = _project_status_payload(summary)
 
@@ -869,7 +911,7 @@ async def get_project(
                 script_file = ep.get("script_file", "")
                 if script_file:
                     try:
-                        script = manager.load_script(name, script_file)
+                        script = manager.load_script(project_name, script_file)
                         key = (
                             script_file.replace("scripts/", "", 1)
                             if script_file.startswith("scripts/")
@@ -877,13 +919,17 @@ async def get_project(
                         )
                         scripts[key] = script
                     except FileNotFoundError:
-                        logger.debug("剧本文件不存在，跳过: %s/%s", name, script_file)
+                        logger.debug("剧本文件不存在，跳过: %s/%s", project_name, script_file)
 
             # 计算媒体文件指纹（用于前端内容寻址缓存）
-            project_path = manager.get_project_path(name)
+            project_path = manager.get_project_path(project_name)
             fingerprints = compute_asset_fingerprints(project_path)
 
             return {
+                "project_id": access.project_id,
+                "id": access.project_id,
+                "name": access.project_name,
+                "current_role": access.role,
                 "project": project,
                 "scripts": scripts,
                 "asset_fingerprints": fingerprints,
@@ -1263,16 +1309,31 @@ async def delete_project(
 ):
     """删除项目"""
     try:
+        manager = get_project_manager()
+        registry = await find_project_registration(session, name) if database_auth_initialized() else None
+        canonical_name = registry.name if registry is not None else name
+        registry_id = registry.id if registry is not None else None
+        original_dir, staged_dir = await asyncio.to_thread(
+            manager.stage_project_deletion,
+            canonical_name,
+            registry_id,
+        )
+        try:
+            if registry is not None:
+                await remove_project_registration(session, registry_id or name)
+                await session.commit()
+        except BaseException:
+            await session.rollback()
+            await asyncio.to_thread(manager.restore_staged_project_deletion, original_dir, staged_dir)
+            if registry_id is not None:
+                manager.register_project_id_alias(registry_id, canonical_name)
+            raise
 
-        def _sync():
-            get_project_manager().delete_project_directory(name)
-            return {"success": True, "message": _t("project_deleted", name=name)}
-
-        result = await asyncio.to_thread(_sync)
-        if database_auth_initialized():
-            async with session.begin():
-                await remove_project_registration(session, name)
-        return result
+        try:
+            await asyncio.to_thread(manager.finalize_staged_project_deletion, staged_dir)
+        except OSError:
+            logger.exception("staged project cleanup deferred project=%s path=%s", canonical_name, staged_dir)
+        return {"success": True, "message": _t("project_deleted", name=canonical_name)}
     except FileNotFoundError as exc:
         raise NotFoundError("project_not_found", name=name) from exc
     except HTTPException:

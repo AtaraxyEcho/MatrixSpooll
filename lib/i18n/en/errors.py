@@ -5,6 +5,7 @@ MESSAGES = {
     "admin_last_admin": "The last active administrator cannot be disabled or demoted",
     "admin_project_owner_deactivate_forbidden": "Transfer ownership of project '{project}' before disabling this user",
     "admin_required": "Administrator permission is required",
+    "asset_owner_required": "Only the asset creator or an administrator can modify this global asset",
     "admin_superadmin_protected": "The environment administrator cannot be modified",
     "avatar_too_large": "Avatar file is too large (max 2MB)",
     "session_invalid": "Your login session is no longer valid. Please sign in again",

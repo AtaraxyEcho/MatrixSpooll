@@ -123,6 +123,20 @@ class _FakePM:
     def delete_project_directory(self, name):
         shutil.rmtree(self.get_project_path(name))
 
+    def stage_project_deletion(self, name, _project_id):
+        original = self.get_project_path(name)
+        staged = self.base / f".deleting-{name}"
+        original.replace(staged)
+        return original, staged
+
+    @staticmethod
+    def restore_staged_project_deletion(original, staged):
+        staged.replace(original)
+
+    @staticmethod
+    def finalize_staged_project_deletion(staged):
+        shutil.rmtree(staged)
+
     def get_project_status(self, name):
         return {"current_stage": "source_ready"}
 

@@ -5,6 +5,7 @@ MESSAGES = {
     "admin_last_admin": "Không thể vô hiệu hóa hoặc hạ quyền quản trị viên cuối cùng",
     "admin_project_owner_deactivate_forbidden": "Hãy chuyển quyền sở hữu dự án '{project}' trước khi vô hiệu hóa người dùng này",
     "admin_required": "Yêu cầu quyền quản trị viên",
+    "asset_owner_required": "Chỉ người tạo tài nguyên hoặc quản trị viên mới có thể sửa tài nguyên dùng chung này",
     "admin_superadmin_protected": "Không thể thay đổi quản trị viên siêu cấp được cấu hình từ môi trường",
     "avatar_too_large": "Tệp ảnh đại diện quá lớn (tối đa 2MB)",
     "session_invalid": "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại",

@@ -62,10 +62,7 @@ export type AgentGenerationPreference = "image" | "video";
 type ModelOptions = { image: string[]; video: string[] };
 type ModelTooltipState = { label: string; left: number; top: number; below: boolean; width: number };
 const EMPTY_MODEL_OPTIONS: ModelOptions = { image: [], video: [] };
-const IMAGE_RESOLUTIONS = ["1.5k", "2k", "4k"] as const;
-export const DEFAULT_VIDEO_RESOLUTIONS = ["480p", "720p", "1080p"] as const;
-export const DEFAULT_VIDEO_DURATIONS = Array.from({ length: 12 }, (_, index) => index + 4);
-const IMAGE_RESOLUTION_PIXELS: Record<(typeof IMAGE_RESOLUTIONS)[number], number> = {
+const IMAGE_RESOLUTION_PIXELS: Record<string, number> = {
   "1.5k": 1536,
   "2k": 2048,
   "4k": 4096,
@@ -99,7 +96,7 @@ export function videoDurationsForModel(model: string, durations: readonly number
 }
 
 function dimensionsForPreset(resolution: string, ratio: string) {
-  const edge = IMAGE_RESOLUTION_PIXELS[resolution as (typeof IMAGE_RESOLUTIONS)[number]] ?? 1536;
+  const edge = IMAGE_RESOLUTION_PIXELS[resolution] ?? 1536;
   const [ratioWidth = 1, ratioHeight = 1] = ratio.split(":").map(Number);
   if (!Number.isFinite(ratioWidth) || !Number.isFinite(ratioHeight) || ratioWidth <= 0 || ratioHeight <= 0) {
     return { width: edge, height: edge };
@@ -1329,7 +1326,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
     if (referenceFiles.some((item) => item.role === "reference_image")) return "image";
     return "none";
   }, [outputType, referenceFiles, referenceMode]);
-  const { capabilities, error: capabilityError } = useGenerationCapabilities({
+  const { capabilities, error: capabilityError, loading: capabilitiesLoading } = useGenerationCapabilities({
     outputType,
     model: selectedModel === "auto" ? null : selectedModel,
     referenceKind,
@@ -1337,9 +1334,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const ratioValues = useMemo(
     () => capabilities?.output_type === outputType && capabilities.ratios.length
       ? capabilities.ratios
-      : outputType === "image"
-        ? ASPECT_RATIO_OPTIONS.map(({ value }) => value)
-        : [],
+      : [],
     [capabilities, outputType],
   );
   const ratioOptions = useMemo(() => ratioValues.map((value) => {
@@ -1349,36 +1344,36 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const imageResolutionOptions = useMemo(
     () => capabilities?.output_type === "image" && capabilities.resolutions.length
       ? capabilities.resolutions
-      : [...IMAGE_RESOLUTIONS],
+      : [],
     [capabilities],
   );
   const videoResolutionOptions = useMemo(
     () => {
       if (selectedModel !== "auto" && capabilities?.output_type !== "video") return [];
-      if (capabilities?.output_type !== "video") return [...DEFAULT_VIDEO_RESOLUTIONS];
+      if (capabilities?.output_type !== "video") return [];
       const declared = capabilities.resolutions.filter((value) => value !== "auto");
-      return declared.length || selectedModel !== "auto" ? declared : [...DEFAULT_VIDEO_RESOLUTIONS];
+      return declared;
     },
     [capabilities, selectedModel],
   );
-  const generationCapabilitiesReady = outputType !== "video"
-    ? referenceKind !== "image" || capabilities?.output_type === "image"
-    : capabilities?.output_type === "video" && capabilities.ratios.length > 0 && capabilities.durations.length > 0;
-  const effectiveVideoAspectRatio = ratioValues.includes(videoAspectRatio) ? videoAspectRatio : ratioValues[0] ?? "16:9";
-  const effectiveImageAspectRatio = ratioValues.includes(imageAspectRatio) ? imageAspectRatio : ratioValues[0] ?? "16:9";
+  const generationCapabilitiesReady = capabilities?.output_type === outputType
+    && ratioValues.length > 0
+    && (outputType === "image"
+      ? imageResolutionOptions.length > 0
+      : videoResolutionOptions.length > 0 && capabilities.durations.length > 0);
+  const effectiveVideoAspectRatio = ratioValues.includes(videoAspectRatio) ? videoAspectRatio : ratioValues[0] ?? "";
+  const effectiveImageAspectRatio = ratioValues.includes(imageAspectRatio) ? imageAspectRatio : ratioValues[0] ?? "";
   const effectiveVideoResolution = videoResolutionOptions.includes(videoResolution)
     ? videoResolution
-    : videoResolutionOptions[0] ?? "auto";
+    : videoResolutionOptions[0] ?? "";
   const effectiveImageResolution = imageResolutionOptions.includes(imageResolution)
     ? imageResolution
-    : imageResolutionOptions[0] ?? "1.5k";
+    : imageResolutionOptions[0] ?? "";
   const videoDurations = videoDurationsForModel(
     selectedModel,
-    capabilities?.output_type === "video" && capabilities.durations.length
-      ? capabilities.durations
-      : DEFAULT_VIDEO_DURATIONS,
+      capabilities?.output_type === "video" ? capabilities.durations : [],
   );
-  const effectiveDuration = videoDurations.includes(duration) ? duration : videoDurations[0] ?? 4;
+  const effectiveDuration = videoDurations.includes(duration) ? duration : videoDurations[0] ?? 0;
   const aspectRatio = outputType === "image" ? effectiveImageAspectRatio : effectiveVideoAspectRatio;
   const referenceIssue = composerMode === "agent" ? null : referenceCompatibilityIssue(
     referenceFiles.map((item) => ({ mediaType: referenceMediaTypeForFile(item.file), role: item.role })),
@@ -1391,6 +1386,11 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       : referenceIssue
         ? t("free_creation_reference_roles_incompatible")
         : null;
+  const capabilityMessage = capabilityError ?? (
+    !capabilitiesLoading && !generationCapabilitiesReady
+      ? t("free_creation_capabilities_unavailable")
+      : null
+  );
   const agentRatioOptions = useMemo(() => ASPECT_RATIO_OPTIONS.map(({ value, labelKey }) => ({
     value,
     label: t(labelKey),
@@ -1553,7 +1553,8 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
 
       if (composerMode === "agent") {
         const project = await createProjectShell(agentAspectRatio);
-        await uploadReferences(project.name);
+        const projectRef = project.name;
+        await uploadReferences(projectRef);
         const preferenceLabel = agentPreference === "image"
           ? t("free_creation_agent_preference_image")
           : t("free_creation_agent_preference_video");
@@ -1565,7 +1566,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
           ? `\n${t("free_creation_agent_reference_context", { files: referenceFiles.map((item) => item.file.name).join(", ") })}`
           : "";
         useAssistantStore.getState().queueHandoff({
-          projectName: project.name,
+          projectName: projectRef,
           content: cleanPrompt,
           context: `${agentContext}${referenceContext}`,
         });
@@ -1590,8 +1591,9 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       const project = referenceFiles.length
         ? await (async () => {
             const created = await createProjectShell(aspectRatio);
-            const references = await uploadReferences(created.name);
-            await API.createFreeCreation(created.name, { ...payload, references });
+            const projectRef = created.name;
+            const references = await uploadReferences(projectRef);
+            await API.createFreeCreation(projectRef, { ...payload, references });
             return created;
           })()
         : await API.createFreeProject({ title: shortProjectTitle(cleanPrompt), creation: payload });
@@ -1818,7 +1820,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
 
         <div className="mt-3 flex flex-col gap-3 border-t border-hairline-soft pt-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-h-5 text-[11px] text-danger-2" role="status" aria-live="polite">
-            {error ?? (composerMode === "agent" ? null : referenceIssueMessage ?? capabilityError)}
+            {error ?? (composerMode === "agent" ? null : referenceIssueMessage ?? capabilityMessage)}
           </div>
           <button
             type="button"

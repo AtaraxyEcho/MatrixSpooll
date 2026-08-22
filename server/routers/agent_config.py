@@ -21,6 +21,7 @@ from lib.db import get_async_session
 from lib.db.base import dt_to_iso
 from lib.db.repositories.agent_credential_repo import AgentCredentialRepository
 from lib.i18n import Translator
+from server.auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ def _cred_to_response(cred) -> CredentialResponse:
 # ── Credential endpoints ───────────────────────────────────────────
 
 
-@router.get("/credentials", response_model=CredentialListResponse)
+@router.get("/credentials", response_model=CredentialListResponse, dependencies=[Depends(require_admin)])
 async def list_credentials(
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
@@ -156,7 +157,7 @@ async def list_credentials(
     return CredentialListResponse(credentials=[_cred_to_response(c) for c in creds])
 
 
-@router.post("/credentials", response_model=CredentialResponse, status_code=201)
+@router.post("/credentials", response_model=CredentialResponse, status_code=201, dependencies=[Depends(require_admin)])
 async def create_credential(
     body: CreateCredentialRequest,
     _t: Translator,
@@ -201,7 +202,7 @@ async def create_credential(
     return _cred_to_response(cred)
 
 
-@router.patch("/credentials/{cred_id}", response_model=CredentialResponse)
+@router.patch("/credentials/{cred_id}", response_model=CredentialResponse, dependencies=[Depends(require_admin)])
 async def update_credential(
     cred_id: int,
     body: UpdateCredentialRequest,
@@ -224,7 +225,7 @@ async def update_credential(
     return _cred_to_response(cred)
 
 
-@router.delete("/credentials/{cred_id}", status_code=204)
+@router.delete("/credentials/{cred_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_credential(
     cred_id: int,
     _t: Translator,
@@ -247,7 +248,7 @@ class ActivateResponse(BaseModel):
     active_id: int
 
 
-@router.post("/credentials/{cred_id}/activate", response_model=ActivateResponse)
+@router.post("/credentials/{cred_id}/activate", response_model=ActivateResponse, dependencies=[Depends(require_admin)])
 async def activate_credential(
     cred_id: int,
     _t: Translator,
@@ -329,7 +330,7 @@ async def _run_and_serialize(
     return _serialize_test_response(result)
 
 
-@router.post("/test-connection", response_model=TestConnectionResponseModel)
+@router.post("/test-connection", response_model=TestConnectionResponseModel, dependencies=[Depends(require_admin)])
 async def test_connection_draft(
     body: TestConnectionRequest,
     _t: Translator,
@@ -343,7 +344,9 @@ async def test_connection_draft(
     )
 
 
-@router.post("/credentials/{cred_id}/test", response_model=TestConnectionResponseModel)
+@router.post(
+    "/credentials/{cred_id}/test", response_model=TestConnectionResponseModel, dependencies=[Depends(require_admin)]
+)
 async def test_credential(
     cred_id: int,
     _t: Translator,

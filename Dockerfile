@@ -87,7 +87,7 @@ EXPOSE 1241
 
 # 健康检查（沿用 curl）
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:1241/health \
+    CMD curl -f http://localhost:1241/health/ready \
       && ffmpeg -version >/dev/null 2>&1 \
       && ffprobe -version >/dev/null 2>&1 || exit 1
 

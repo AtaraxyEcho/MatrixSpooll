@@ -47,7 +47,7 @@ describe("FreeCreationWorkspace", () => {
     vi.spyOn(API, "getFreeCreationCapabilities").mockImplementation(async ({ outputType }) => ({
       output_type: outputType,
       model: outputType === "video" ? "ark/video-model" : "ark/image-model",
-      ratios: outputType === "video" ? ["16:9", "9:16"] : [],
+      ratios: ["16:9", "9:16"],
       resolutions: outputType === "video" ? ["720p", "1080p"] : ["1.5k", "2k"],
       durations: outputType === "video" ? [4, 8, 12] : [],
       max_reference_images: outputType === "video" ? 9 : null,
@@ -79,7 +79,9 @@ describe("FreeCreationWorkspace", () => {
     const imageModel = await screen.findByRole("button", { name: t("free_creation_model") });
     fireEvent.click(imageModel);
     fireEvent.click(await screen.findByRole("option", { name: "image-model" }));
-    fireEvent.change(screen.getByLabelText(t("free_creation_resolution")), {
+    const resolution = screen.getByLabelText(t("free_creation_resolution"));
+    await waitFor(() => expect(resolution).toHaveTextContent("2k"));
+    fireEvent.change(resolution, {
       target: { value: "2k" },
     });
     expect(screen.getByLabelText("W")).toHaveValue(2048);

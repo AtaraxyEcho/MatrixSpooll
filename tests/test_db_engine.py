@@ -23,6 +23,12 @@ class TestGetDatabaseUrl:
             url = get_database_url()
             assert url == "postgresql+asyncpg://localhost/test"
 
+    def test_missing_url_rejected_outside_testing(self):
+        with patch.dict(os.environ, {"TESTING": "false"}, clear=False):
+            os.environ.pop("DATABASE_URL", None)
+            with pytest.raises(RuntimeError, match="DATABASE_URL is required"):
+                get_database_url()
+
 
 class TestIsSqliteBackend:
     def test_sqlite(self):

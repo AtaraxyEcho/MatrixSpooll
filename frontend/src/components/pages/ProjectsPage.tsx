@@ -269,7 +269,7 @@ function _NowEditingCard({ project, styleLabel, phaseLabels, t }: NowEditingCard
         <div className="flex-1" />
         <div className="relative mt-4 flex justify-end">
           <Link
-            href={`/app/projects/${project.name}`}
+            href={`/app/projects/${project.project_id ?? project.id ?? project.name}`}
             className="inline-flex items-center gap-2 rounded-[7px] px-4 py-2.5 text-[12px] font-semibold no-underline transition-transform motion-safe:hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             style={ACCENT_BUTTON_STYLE}
           >

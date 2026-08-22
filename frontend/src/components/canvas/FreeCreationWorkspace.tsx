@@ -48,8 +48,6 @@ import {
   AgentParameterControl,
   type AgentGenerationPreference,
   DurationControl,
-  DEFAULT_VIDEO_DURATIONS,
-  DEFAULT_VIDEO_RESOLUTIONS,
   handleComposerStripWheel,
   HomeMenu,
   ImageParameterControl,
@@ -85,6 +83,7 @@ import type { Asset } from "@/types/asset";
 
 export interface FreeCreationWorkspaceProps {
   projectName: string;
+  projectId?: string | null;
   readOnly?: boolean;
   initialMode?: ComposerMode;
   initialAspectRatio?: string;
@@ -113,7 +112,6 @@ const IMAGE_RESOLUTION_PIXELS: Record<string, number> = {
   "2k": 2048,
   "4k": 4096,
 };
-const IMAGE_RESOLUTIONS = ["1.5k", "2k", "4k"] as const;
 
 function dimensionsFor(resolution: string, ratio: string): { width: number; height: number } {
   const edge = IMAGE_RESOLUTION_PIXELS[resolution] ?? 1536;
@@ -146,6 +144,7 @@ function uploadMediaTypeForFile(file: File): FreeCreationUpload["media_type"] {
 
 export function FreeCreationWorkspace({
   projectName,
+  projectId,
   readOnly = false,
   initialMode = "video",
   initialAspectRatio,
@@ -277,20 +276,19 @@ export function FreeCreationWorkspace({
     return "none";
   }, [effectiveMediaType, referenceMode, references, selectedParent]);
 
-  const { capabilities, error: rawCapabilityError } = useGenerationCapabilities({
+  const { capabilities, error: rawCapabilityError, loading: capabilitiesLoading } = useGenerationCapabilities({
     outputType: effectiveMediaType,
     model: selectedModel === "auto" ? null : selectedModel,
     referenceKind,
     projectName,
+    projectId,
   });
-  const capabilityError = effectiveMediaType === "video" ? rawCapabilityError : null;
+  const capabilityError = rawCapabilityError;
 
   const ratioOptions = useMemo(
     () => capabilities?.output_type === effectiveMediaType && capabilities.ratios.length
       ? capabilities.ratios
-      : effectiveMediaType === "image"
-        ? ASPECT_RATIO_OPTIONS.map((option) => option.value)
-        : [],
+      : [],
     [capabilities, effectiveMediaType],
   );
   const resolutionOptions = useMemo(
@@ -298,32 +296,37 @@ export function FreeCreationWorkspace({
       if (capabilities?.output_type === effectiveMediaType && capabilities.resolutions.length) {
         if (effectiveMediaType === "video") {
           const declared = capabilities.resolutions.filter((value) => value !== "auto");
-          return declared.length || selectedModel !== "auto" ? declared : [...DEFAULT_VIDEO_RESOLUTIONS];
+          return declared;
         }
         return capabilities.resolutions;
       }
-      if (effectiveMediaType === "video" && selectedModel !== "auto") return [];
-      return effectiveMediaType === "image" ? [...IMAGE_RESOLUTIONS] : [...DEFAULT_VIDEO_RESOLUTIONS];
+      return [];
     },
-    [capabilities, effectiveMediaType, selectedModel],
+    [capabilities, effectiveMediaType],
   );
   const durationOptions = useMemo(
     () => videoDurationsForModel(
       selectedModel,
-      capabilities?.output_type === "video" && capabilities.durations.length
-        ? capabilities.durations.filter((value) => Number.isInteger(value) && value > 0)
-        : DEFAULT_VIDEO_DURATIONS,
+        capabilities?.output_type === "video"
+          ? capabilities.durations.filter((value) => Number.isInteger(value) && value > 0)
+          : [],
     ),
     [capabilities, selectedModel],
   );
-  const effectiveAspectRatio = ratioOptions.includes(aspectRatio) ? aspectRatio : ratioOptions[0] ?? "16:9";
+  const effectiveAspectRatio = ratioOptions.includes(aspectRatio) ? aspectRatio : ratioOptions[0] ?? "";
   const selectedResolution = resolutionOptions.includes(resolution) ? resolution : resolutionOptions[0] ?? "";
   const safeDuration = durationOptions.reduce((closest, candidate) => (
     Math.abs(candidate - duration) < Math.abs(closest - duration) ? candidate : closest
-  ), durationOptions[0] ?? duration);
-  const capabilitiesReady = effectiveMediaType === "video"
-    ? capabilities?.output_type === "video" && ratioOptions.length > 0 && durationOptions.length > 0
-    : referenceKind !== "image" || capabilities?.output_type === "image";
+  ), durationOptions[0] ?? 0);
+  const capabilitiesReady = capabilities?.output_type === effectiveMediaType
+    && ratioOptions.length > 0
+    && resolutionOptions.length > 0
+    && (effectiveMediaType !== "video" || durationOptions.length > 0);
+  const capabilityMessage = capabilityError ?? (
+    !capabilitiesLoading && !capabilitiesReady
+      ? t("free_creation_capabilities_unavailable")
+      : null
+  );
 
   const parameterRatioOptions = useMemo(
     () => ratioOptions.map((value) => ({
@@ -971,9 +974,9 @@ export function FreeCreationWorkspace({
             <article key={upload.reference_id} className="overflow-hidden rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]" onDoubleClick={(event) => { event.preventDefault(); setPreviewTarget({ kind: "upload", upload }); }}>
               <div className="flex h-10 items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-3 text-xs"><span className="truncate font-medium">{upload.original_filename}</span><span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{t("free_creation_reference")}</span></div>
               <div role={upload.media_type === "audio" || upload.media_type === "video" ? undefined : "button"} tabIndex={upload.media_type === "audio" || upload.media_type === "video" ? undefined : 0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id }, upload.original_filename)} onKeyDown={upload.media_type === "audio" || upload.media_type === "video" ? undefined : (event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id }, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
-                {upload.media_type === "image" ? <img src={upload.url ?? API.getFileUrl(projectName, upload.path)} alt={upload.original_filename} className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
-                  <video src={upload.url ?? API.getFileUrl(projectName, upload.path)} className="h-full w-full object-contain" aria-label={upload.original_filename} controls onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id }, upload.original_filename)} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "upload", upload }); }} />
-                ) : upload.media_type === "audio" ? <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={upload.url ?? API.getFileUrl(projectName, upload.path)} className="w-full" aria-label={upload.original_filename} controls /></div> : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto pt-12 h-8 w-8 text-[var(--color-text-muted)]" aria-hidden />}
+                {upload.media_type === "image" ? <img src={upload.url ?? API.getFileUrl(projectName, upload.path)} alt={upload.original_filename} loading="lazy" decoding="async" className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
+                  <video src={upload.url ?? API.getFileUrl(projectName, upload.path)} preload="none" className="h-full w-full object-contain" aria-label={upload.original_filename} controls onClick={(event) => referenceFromShortcut(event, { type: "upload", reference_id: upload.reference_id }, upload.original_filename)} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "upload", upload }); }} />
+                ) : upload.media_type === "audio" ? <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={upload.url ?? API.getFileUrl(projectName, upload.path)} preload="none" className="w-full" aria-label={upload.original_filename} controls /></div> : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto pt-12 h-8 w-8 text-[var(--color-text-muted)]" aria-hidden />}
               </div>
               <div className="flex justify-end px-3 py-2"><button type="button" onClick={() => addReference({ type: "upload", reference_id: upload.reference_id }, upload.original_filename)} className="focus-ring inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button></div>
             </article>
@@ -985,8 +988,8 @@ export function FreeCreationWorkspace({
               <article key={creation.creation_id} className="overflow-hidden rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)]" onDoubleClick={(event) => { event.preventDefault(); if (creation.status === "succeeded" && creation.media_path) setPreviewTarget({ kind: "creation", creation }); }}>
                 <div className="flex h-10 items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-3 text-xs"><span className="font-medium">{t(`free_creation_${creation.output_type}`)}</span><span className="text-[10px] text-[var(--color-text-muted)]">{t(`free_creation_status_${creation.status}`)}</span></div>
                 {creation.status === "succeeded" && creation.media_path ? artifactType === "video" ? (
-                  <video src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} className="aspect-video w-full bg-black object-contain" aria-label={creation.prompt ?? creation.creation_id} controls onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_video" }, creation.prompt || t("free_creation"))} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "creation", creation }); }} />
-                ) : artifactType === "audio" ? <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 bg-black px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} className="w-full" aria-label={creation.prompt ?? creation.creation_id} controls /></div> : <div role="button" tabIndex={0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))} onKeyDown={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))}><img src={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} alt={creation.prompt ?? creation.creation_id} className="h-full w-full object-contain" /></div> : <div className="grid aspect-video place-items-center bg-black px-3 text-center text-xs leading-5 text-[var(--color-text-muted)]"><span className="line-clamp-5">{creation.status === "failed" ? creation.error || t("free_creation_failed") : t(`free_creation_status_${creation.status}`)}</span></div>}
+                  <video src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} preload="none" className="aspect-video w-full bg-black object-contain" aria-label={creation.prompt ?? creation.creation_id} controls onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_video" }, creation.prompt || t("free_creation"))} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); setPreviewTarget({ kind: "creation", creation }); }} />
+                ) : artifactType === "audio" ? <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 bg-black px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} preload="none" className="w-full" aria-label={creation.prompt ?? creation.creation_id} controls /></div> : <div role="button" tabIndex={0} className="aspect-video w-full bg-black" onClick={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))} onKeyDown={(event) => referenceFromShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: "reference_image" }, creation.prompt || t("free_creation"))}><img src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} alt={creation.prompt ?? creation.creation_id} loading="lazy" decoding="async" className="h-full w-full object-contain" /></div> : <div className="grid aspect-video place-items-center bg-black px-3 text-center text-xs leading-5 text-[var(--color-text-muted)]"><span className="line-clamp-5">{creation.status === "failed" ? creation.error || t("free_creation_failed") : t(`free_creation_status_${creation.status}`)}</span></div>}
                 <div className="px-3 py-2"><p className="line-clamp-2 text-xs leading-5 text-[var(--color-text-2)]">{creation.prompt || t("free_creation_prompt")}</p>{subtitleTracks.filter((track) => track.creation_id === creation.creation_id).length ? <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-[var(--color-accent-2)]"><Captions className="h-3 w-3" aria-hidden />{t("free_creation_subtitle_badge", { count: subtitleTracks.filter((track) => track.creation_id === creation.creation_id).length })}</span> : null}</div>
                 {creation.status === "succeeded" && creation.media_path ? <div className="flex justify-end gap-1 border-t border-[var(--color-hairline)] p-2"><button type="button" onClick={() => addReference({ type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation"))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_add_reference")}><Link2 className="h-4 w-4" aria-hidden /></button>{artifactType === "image" ? <button type="button" onClick={() => editFromCreation(creation.creation_id)} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_use_as_parent")}><Pencil className="h-4 w-4" aria-hidden /></button> : null}<a href={API.getFreeCreationMediaUrl(projectName, creation.creation_id)} download className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)]" aria-label={t("free_creation_download")}><Download className="h-4 w-4" aria-hidden /></a></div> : null}
               </article>
@@ -1205,10 +1208,10 @@ export function FreeCreationWorkspace({
 
         <div className="mt-2 flex items-center justify-between gap-3 border-t border-[var(--color-hairline)] pt-2">
           <p
-            className={`min-h-4 min-w-0 flex-1 truncate text-xs ${capabilityError || error ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"}`}
-            role={capabilityError || error ? "alert" : "status"}
+            className={`min-h-4 min-w-0 flex-1 truncate text-xs ${capabilityMessage || error ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"}`}
+            role={capabilityMessage || error ? "alert" : "status"}
           >
-            {capabilityError || error || referenceIssueMessage || t("free_creation_result_count", { count: totalCreations })}
+            {capabilityMessage || error || referenceIssueMessage || t("free_creation_result_count", { count: totalCreations })}
           </p>
           <button
             type="button"
