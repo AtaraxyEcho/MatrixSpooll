@@ -28,6 +28,9 @@ interface ProjectsState {
 
   // Current project detail
   currentProjectName: string | null;
+  /** Stable project id used by new routes and project-scoped requests. */
+  currentProjectId: string | null;
+  currentProjectRole: "owner" | "editor" | "viewer" | null;
   currentProjectData: ProjectData | null;
   currentScripts: Record<string, EpisodeScript>;
   projectDetailLoading: boolean;
@@ -62,6 +65,8 @@ interface ProjectsState {
     data: ProjectData | null,
     scripts?: Record<string, EpisodeScript>,
     fingerprints?: Record<string, number>,
+    projectId?: string | null,
+    currentRole?: "owner" | "editor" | "viewer" | null,
   ) => void;
   setProjectDetailLoading: (loading: boolean) => void;
   setShowCreateModal: (show: boolean) => void;
@@ -157,7 +162,14 @@ export const useProjectsStore = create<ProjectsState>((set, get) => {
         const isCurrentProject =
           currentProjectName === curName || (currentProjectName === null && !hasLoadedAnyProject);
         if (!supersededByOtherProject && !signal.aborted && isCurrentProject) {
-          get().setCurrentProject(curName, res.project, res.scripts ?? {}, res.asset_fingerprints);
+          get().setCurrentProject(
+            res.name ?? curName,
+            res.project,
+            res.scripts ?? {},
+            res.asset_fingerprints,
+            res.project_id ?? curName,
+            res.current_role ?? null,
+          );
           if (curKeys.length > 0) {
             useAppStore.getState().invalidateEntities(curKeys);
           }
@@ -203,6 +215,8 @@ export const useProjectsStore = create<ProjectsState>((set, get) => {
     projects: [],
     projectsLoading: false,
     currentProjectName: null,
+    currentProjectId: null,
+    currentProjectRole: null,
     currentProjectData: null,
     currentScripts: {},
     projectDetailLoading: false,
@@ -214,12 +228,14 @@ export const useProjectsStore = create<ProjectsState>((set, get) => {
 
     setProjects: (projects) => set({ projects }),
     setProjectsLoading: (loading) => set({ projectsLoading: loading }),
-    setCurrentProject: (name, data, scripts, fingerprints) => {
+    setCurrentProject: (name, data, scripts, fingerprints, projectId, currentRole) => {
       // 当前项目易主即轮换取消域。这是全部切换路径（路由 effect 及其 cleanup、演示工作台
       // 接管）的必经之处，因此不必让各调用方各自传播取消——它们保持原样即受此保护。
       if (name !== get().currentProjectName) rotateProjectScope();
       set((s) => ({
         currentProjectName: name,
+        currentProjectId: name === null ? null : projectId ?? name,
+        currentProjectRole: name === null ? null : currentRole ?? null,
         currentProjectData: data,
         currentScripts: scripts ?? {},
         projectSnapshotRevisions:

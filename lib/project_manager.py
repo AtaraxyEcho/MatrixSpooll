@@ -279,6 +279,8 @@ class ProjectManager:
 
     # 项目元数据文件名
     PROJECT_FILE = "project.json"
+    DELETION_MARKER_FILE = ".matrixspooll-deletion.json"
+    DELETION_STAGING_PREFIX = "._matrixspooll-deleting-"
 
     @staticmethod
     def normalize_project_name(name: str) -> str:
@@ -343,6 +345,24 @@ class ProjectManager:
 
         self.projects_root = Path(projects_root)
         self.projects_root.mkdir(parents=True, exist_ok=True)
+        # Stable database IDs are public project locators, while legacy
+        # projects may still live in name-based directories. The server
+        # registers this process-local adapter during auth/bootstrap.
+        self._project_id_aliases: dict[str, str] = {}
+
+    def register_project_id_alias(self, project_id: str, project_name: str) -> None:
+        """Map an immutable project ID to its file-backed directory name."""
+
+        normalized_id = str(project_id).strip()
+        normalized_name = self.normalize_project_name(project_name)
+        if not normalized_id:
+            raise ValueError("project id cannot be empty")
+        self._project_id_aliases[normalized_id] = normalized_name
+
+    def remove_project_id_alias(self, project_id: str) -> None:
+        """Forget an ID mapping after a project is permanently removed."""
+
+        self._project_id_aliases.pop(str(project_id).strip(), None)
 
     def list_projects(self) -> list[str]:
         """列出所有项目"""
@@ -418,6 +438,59 @@ class ProjectManager:
                 if exc.errno not in self._DELETE_RETRYABLE_ERRNOS or attempt == attempts - 1:
                     raise
                 time.sleep(0.05)
+
+    def stage_project_deletion(self, name: str, project_id: str | None) -> tuple[Path, Path]:
+        """Atomically hide a project while its database registration is removed."""
+
+        project_dir = self.get_project_path(name)
+        marker_path = project_dir / self.DELETION_MARKER_FILE
+        staged_dir = self.projects_root / f"{self.DELETION_STAGING_PREFIX}{secrets.token_hex(12)}"
+        atomic_write_json(
+            marker_path,
+            {
+                "project_id": str(project_id).strip() if project_id else None,
+                "project_name": project_dir.name,
+            },
+        )
+        try:
+            os.replace(project_dir, staged_dir)
+        except BaseException:
+            marker_path.unlink(missing_ok=True)
+            raise
+        return project_dir, staged_dir
+
+    def restore_staged_project_deletion(self, original_dir: Path, staged_dir: Path) -> None:
+        """Restore a staged directory after the database transaction fails."""
+
+        if original_dir.exists():
+            raise FileExistsError(f"cannot restore project because {original_dir} already exists")
+        os.replace(staged_dir, original_dir)
+        (original_dir / self.DELETION_MARKER_FILE).unlink(missing_ok=True)
+
+    def finalize_staged_project_deletion(self, staged_dir: Path) -> None:
+        """Permanently remove a staged project directory."""
+
+        if staged_dir.parent.resolve() != self.projects_root.resolve():
+            raise ValueError("staged project directory is outside the projects root")
+        if not staged_dir.name.startswith(self.DELETION_STAGING_PREFIX):
+            raise ValueError("invalid staged project directory")
+        shutil.rmtree(staged_dir)
+
+    def list_staged_project_deletions(self) -> list[tuple[Path, str, str | None]]:
+        """Return valid staged deletions for startup reconciliation."""
+
+        staged: list[tuple[Path, str, str | None]] = []
+        for staged_dir in self.projects_root.iterdir():
+            if not staged_dir.is_dir() or not staged_dir.name.startswith(self.DELETION_STAGING_PREFIX):
+                continue
+            marker = load_json_or_none(staged_dir / self.DELETION_MARKER_FILE)
+            if not isinstance(marker, dict):
+                raise ValueError(f"staged project deletion has no valid marker: {staged_dir}")
+            project_name = self.normalize_project_name(str(marker.get("project_name", "")))
+            raw_project_id = marker.get("project_id")
+            project_id = str(raw_project_id).strip() if raw_project_id else None
+            staged.append((staged_dir, project_name, project_id))
+        return staged
 
     def sync_agent_profile(
         self,
@@ -559,6 +632,7 @@ class ProjectManager:
     def get_project_path(self, name: str) -> Path:
         """获取项目路径（含路径遍历防护）"""
         name = self.normalize_project_name(name)
+        name = self._project_id_aliases.get(name, name)
         try:
             project_dir = safe_join(self.projects_root, name)
         except PathTraversalError as exc:

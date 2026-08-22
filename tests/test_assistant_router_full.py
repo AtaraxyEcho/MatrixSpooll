@@ -22,6 +22,7 @@ class _FakeService:
         self.sessions = {
             "session-1": make_session_meta(id="session-1", project_name=PROJECT),
             "bad": make_session_meta(id="bad", project_name=PROJECT),
+            "other-user": make_session_meta(id="other-user", project_name=PROJECT, actor_user_id="other-user"),
         }
 
     async def send_or_create(
@@ -144,6 +145,9 @@ class TestAssistantRouterFull:
 
             get_missing = client.get(f"{PREFIX}/sessions/missing")
             assert get_missing.status_code == 404
+
+            get_other_user = client.get(f"{PREFIX}/sessions/other-user")
+            assert get_other_user.status_code == 404
 
             delete_ok = client.delete(f"{PREFIX}/sessions/session-1")
             assert delete_ok.status_code == 200

@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
+
+# Database tests may opt into isolated SQLite fixtures. Runtime processes
+# must provide DATABASE_URL explicitly; this flag is deliberately test-only
+# and must be set before importing any module that creates the engine.
+os.environ.setdefault("TESTING", "true")
 
 
 def make_translator(locale: str = "zh") -> Callable[..., str]:
@@ -15,7 +21,6 @@ def make_translator(locale: str = "zh") -> Callable[..., str]:
     return translate
 
 
-import os
 import subprocess
 import wave
 from io import BytesIO

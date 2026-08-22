@@ -32,6 +32,7 @@ from lib.db.repositories.credential_repository import CredentialRepository
 from lib.gemini_shared import VERTEX_SCOPES
 from lib.i18n import Translator
 from lib.video_backends.registry import video_capabilities_for_model as builtin_video_capabilities_for_model
+from server.auth import require_admin
 from server.dependencies import get_config_service
 
 if TYPE_CHECKING:
@@ -408,7 +409,7 @@ async def list_providers(
     return ProvidersListResponse(providers=providers)
 
 
-@router.get("/{provider_id}/config", response_model=ProviderConfigResponse)
+@router.get("/{provider_id}/config", response_model=ProviderConfigResponse, dependencies=[Depends(require_admin)])
 async def get_provider_config(
     provider_id: str,
     _t: Translator,
@@ -464,7 +465,7 @@ async def get_provider_config(
     )
 
 
-@router.patch("/{provider_id}/config", status_code=204)
+@router.patch("/{provider_id}/config", status_code=204, dependencies=[Depends(require_admin)])
 async def patch_provider_config(
     provider_id: str,
     body: dict[str, str | None],
@@ -503,7 +504,7 @@ async def patch_provider_config(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{provider_id}/credentials", response_model=CredentialListResponse)
+@router.get("/{provider_id}/credentials", response_model=CredentialListResponse, dependencies=[Depends(require_admin)])
 async def list_credentials(
     provider_id: str,
     _t: Translator,
@@ -515,7 +516,12 @@ async def list_credentials(
     return CredentialListResponse(credentials=[_cred_to_response(c) for c in creds])
 
 
-@router.post("/{provider_id}/credentials", status_code=201, response_model=CredentialResponse)
+@router.post(
+    "/{provider_id}/credentials",
+    status_code=201,
+    response_model=CredentialResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def create_credential(
     provider_id: str,
     body: CreateCredentialRequest,
@@ -540,7 +546,7 @@ async def create_credential(
     return _cred_to_response(cred)
 
 
-@router.patch("/{provider_id}/credentials/{cred_id}", status_code=204)
+@router.patch("/{provider_id}/credentials/{cred_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def update_credential(
     provider_id: str,
     cred_id: int,
@@ -583,7 +589,7 @@ async def update_credential(
     return Response(status_code=204)
 
 
-@router.delete("/{provider_id}/credentials/{cred_id}", status_code=204)
+@router.delete("/{provider_id}/credentials/{cred_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_credential(
     provider_id: str,
     cred_id: int,
@@ -610,7 +616,7 @@ async def delete_credential(
     return Response(status_code=204)
 
 
-@router.post("/{provider_id}/credentials/{cred_id}/activate", status_code=204)
+@router.post("/{provider_id}/credentials/{cred_id}/activate", status_code=204, dependencies=[Depends(require_admin)])
 async def activate_credential(
     provider_id: str,
     cred_id: int,
@@ -627,7 +633,12 @@ async def activate_credential(
     return Response(status_code=204)
 
 
-@router.post("/gemini-vertex/credentials/upload", status_code=201, response_model=CredentialResponse)
+@router.post(
+    "/gemini-vertex/credentials/upload",
+    status_code=201,
+    response_model=CredentialResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def upload_vertex_credential(
     request: Request,
     _t: Translator,
@@ -946,7 +957,7 @@ _TEST_DISPATCH: dict[str, Callable[[dict[str, str], Any], ConnectionTestResponse
 }
 
 
-@router.post("/{provider_id}/test", response_model=ConnectionTestResponse)
+@router.post("/{provider_id}/test", response_model=ConnectionTestResponse, dependencies=[Depends(require_admin)])
 async def test_provider_connection(
     provider_id: str,
     _t: Translator,

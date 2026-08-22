@@ -6,7 +6,9 @@ sidebar_position: 2
 
 # Migrate from SQLite to PostgreSQL {#migrate-to-postgres}
 
-This guide is for MatrixSpooll deployments currently using the default Docker + SQLite configuration that need to switch to the PostgreSQL deployment under `deploy/production/`. Run every command below from the root of the MatrixSpooll repository.
+This guide applies only to legacy MatrixSpooll deployments that used Docker with SQLite. The current release supports PostgreSQL as its only runtime database; this procedure migrates legacy data once into `deploy/production/`. Run every command below from the repository root.
+
+Preserve the legacy source, image, and Compose file before migrating. The current repository no longer contains `deploy/docker-compose.yml` and cannot run SQLite as a rollback target.
 
 Before migrating, distinguish the three types of data involved:
 
@@ -22,7 +24,8 @@ The commands below consistently use the shell variable `source_projects` for the
 
 - Docker and Docker Compose are installed
 - The `sqlite3` command-line tool is installed; run `sqlite3 --version` to confirm
-- MatrixSpooll currently uses the default SQLite deployment, with the database at `deploy/projects/.arcreel.db`
+- The legacy MatrixSpooll deployment uses SQLite, with the database at `deploy/projects/.arcreel.db`
+- You preserved the Compose file actually used by that deployment and can use it to stop the legacy service
 - `deploy/production/pgdata/` and `deploy/production/projects/` do not contain production data that must be preserved
 
 ## Migration Steps {#migration-steps}
@@ -34,13 +37,19 @@ cd "$(git rev-parse --show-toplevel)"
 
 source_projects="$(cd deploy/projects && pwd)"
 # Custom data directory example: source_projects="/srv/arcreel/projects"
+legacy_compose="/path/to/legacy/docker-compose.yml"
 
 if [ ! -f "${source_projects}/.arcreel.db" ]; then
   echo "Error: ${source_projects}/.arcreel.db does not exist" >&2
   exit 1
 fi
 
-docker compose -f deploy/docker-compose.yml down
+if [ ! -f "${legacy_compose}" ]; then
+  echo "Error: legacy Compose file ${legacy_compose} does not exist" >&2
+  exit 1
+fi
+
+docker compose -f "${legacy_compose}" down
 ```
 
 Do not restart the default deployment until migration verification is complete. Otherwise, the SQLite database and project assets may continue to receive writes.
@@ -152,7 +161,7 @@ Use pgloader inside the MatrixSpooll container to migrate the original SQLite da
 ```bash
 docker compose -f deploy/production/docker-compose.yml run --rm \
   -v "${source_projects}:/migration-source:ro" \
-  arcreel bash -c '
+  matrixspooll bash -c '
     apt-get update &&
     apt-get install -y --no-install-recommends pgloader &&
     pgloader sqlite:///migration-source/.arcreel.db \
@@ -202,16 +211,16 @@ sqlite3 "${source_projects}/.arcreel.db" "
 ```bash
 docker compose -f deploy/production/docker-compose.yml up -d
 docker compose -f deploy/production/docker-compose.yml ps
-curl -f http://localhost:1241/health
+curl -f http://localhost:1241/health/ready
 ```
 
 Visit `http://<your-ip>:1241` and verify that the service is working.
 
 ---
 
-## Roll Back to SQLite {#rollback-to-sqlite}
+## Roll Back with the Archived Legacy Release {#rollback-to-sqlite}
 
-The migration procedure above does not modify the source data directory referenced by `source_projects` or `deploy/.env`. A normal rollback therefore restarts the original SQLite deployment instead of changing the production `.env`. If you roll back from a new shell, first set `source_projects` again as described in step 1:
+The migration procedure above does not modify the source data directory referenced by `source_projects` or `deploy/.env`. A short-term rollback must use the legacy source, image, and Compose file archived before migration; the current release refuses to start without `DATABASE_URL`. If you roll back from a new shell, first set both `source_projects` and `legacy_compose` again as described in step 1:
 
 1. Stop the PostgreSQL production deployment:
 
@@ -237,11 +246,11 @@ The migration procedure above does not modify the source data directory referenc
 
    This moves the old source directory out of the way before creating an empty directory and extracting the archive, so files absent from the archive cannot remain. It restores `.env` only after extraction succeeds. Do not overwrite only the main SQLite file while leaving mismatched `-wal` or `-shm` files behind. Keep `${preserved}` until rollback verification is complete.
 
-3. Restart the default SQLite deployment:
+3. Restart the SQLite deployment with the archived legacy release:
 
    ```bash
-   docker compose -f deploy/docker-compose.yml up -d
-   docker compose -f deploy/docker-compose.yml ps
+   docker compose -f "${legacy_compose}" up -d
+   docker compose -f "${legacy_compose}" ps
    curl -f http://localhost:1241/health
    ```
 
@@ -249,4 +258,4 @@ The migration procedure above does not modify the source data directory referenc
 
 5. Keep `deploy/production/pgdata/`, `deploy/production/projects/`, and the migration backups until rollback verification is complete. Do not delete them. `POSTGRES_PASSWORD` is stored in the separate `deploy/production/.env` and does not need to be removed from `deploy/.env`.
 
-If the original deployment used custom Compose configuration or a custom data mount, also restore or unset `DATABASE_URL` so it selects SQLite, confirm that `ARCREEL_DATA_DIR` still points to the original directory inside the container, and verify that the mount maps it to `${source_projects}` on the host before restarting MatrixSpooll.
+If the original deployment used custom Compose configuration or a custom data mount, restore its original SQLite URL or unset `DATABASE_URL`, confirm that `ARCREEL_DATA_DIR` still points to the original directory inside the legacy container, and verify that the mount maps it to `${source_projects}` on the host. Return to the current PostgreSQL release after resolving the migration issue; do not keep the legacy SQLite release as a long-term deployment.

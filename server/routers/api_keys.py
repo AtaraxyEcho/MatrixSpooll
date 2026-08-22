@@ -8,7 +8,7 @@ import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -21,6 +21,7 @@ from server.auth import (
     CurrentUserInfo,
     _hash_api_key,
     invalidate_api_key_cache,
+    require_admin,
 )
 
 router = APIRouter()
@@ -68,7 +69,7 @@ class ApiKeyInfo(BaseModel):
     last_used_at: str | None
 
 
-@router.post("/api-keys", status_code=201)
+@router.post("/api-keys", status_code=201, dependencies=[Depends(require_admin)])
 async def create_api_key(
     body: CreateApiKeyRequest,
     user: CurrentUser,
@@ -110,7 +111,7 @@ async def create_api_key(
     )
 
 
-@router.get("/api-keys")
+@router.get("/api-keys", dependencies=[Depends(require_admin)])
 async def list_api_keys(
     user: CurrentUser,
     _t: Translator,
@@ -125,7 +126,7 @@ async def list_api_keys(
     return [ApiKeyInfo(**row) for row in rows]
 
 
-@router.delete("/api-keys/{key_id}", status_code=204)
+@router.delete("/api-keys/{key_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_api_key(
     key_id: int,
     user: CurrentUser,

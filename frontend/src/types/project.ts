@@ -197,6 +197,9 @@ export interface ProjectData {
  * has no project.json or encounters an error during loading.
  */
 export interface ProjectSummary {
+  /** Stable database identity. The legacy name remains display-only. */
+  project_id?: string | null;
+  id?: string | null;
   name: string;
   title: string;
   style: string;
@@ -205,7 +208,18 @@ export interface ProjectSummary {
   content_mode?: "drama" | "narration" | "ad" | "free" | null;
   thumbnail: string | null;
   status: ProjectStatus | Record<string, never>;
+  /** Role for the authenticated user in this project. */
+  current_role?: "owner" | "editor" | "viewer" | null;
 }
+
+/** Stable project reference accepted by the API adapter during migration. */
+export interface ProjectIdentity {
+  project_id: string;
+  name: string;
+  current_role?: "owner" | "editor" | "viewer" | null;
+}
+
+export type ProjectRef = string | ProjectIdentity;
 
 export type ImportConflictPolicy = "prompt" | "rename" | "overwrite";
 

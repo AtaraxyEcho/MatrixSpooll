@@ -115,7 +115,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
 function StudioWorkspace() {
   const params = useParams<{ projectName: string }>();
-  const projectName = params.projectName ?? null;
+  const projectRouteRef = params.projectName ?? null;
   const [, navigate] = useLocation();
   const handoffMode = (() => {
     const params = new URLSearchParams(window.location.search);
@@ -126,6 +126,7 @@ function StudioWorkspace() {
   })();
   const {
     currentProjectName,
+    currentProjectId,
     currentProjectData,
     projectDetailLoading,
     setCurrentProject,
@@ -141,11 +142,11 @@ function StudioWorkspace() {
   }, [t]);
 
   const loadProject = useCallback(() => {
-    if (!projectName || isDemoProject(projectName)) return;
+    if (!projectRouteRef || isDemoProject(projectRouteRef)) return;
     setProjectDetailLoading(true);
     void useProjectsStore
       .getState()
-      .refreshProject(projectName, {
+      .refreshProject(projectRouteRef, {
         onError: (err) => {
           const message = errMsg(err);
           setLoadError(message);
@@ -161,12 +162,12 @@ function StudioWorkspace() {
         if (result === "cancelled") return;
         setProjectDetailLoading(false);
       });
-  }, [projectName, setProjectDetailLoading]);
+  }, [projectRouteRef, setProjectDetailLoading]);
 
   // 项目生命周期：清空上一个项目的 assistant 状态，再按项目类型取数据。
   // 依赖里不含 `t`，切换语言不应重跑真实项目加载或清空助手会话。
   useEffect(() => {
-    if (!projectName) return;
+    if (!projectRouteRef) return;
 
     const assistantState = useAssistantStore.getState();
     assistantState.setSessions([]);
@@ -175,7 +176,7 @@ function StudioWorkspace() {
     assistantState.setSessionStatus(null);
     assistantState.setIsDraftSession(false);
 
-    if (isDemoProject(projectName)) {
+    if (isDemoProject(projectRouteRef)) {
       setApiReadOnly(true);
       setProjectDetailLoading(false);
       return () => {
@@ -186,24 +187,24 @@ function StudioWorkspace() {
 
     setApiReadOnly(false);
     // refreshProject 只接受当前项目的响应，因此先写入项目身份并清空旧详情。
-    setCurrentProject(projectName, null);
+    setCurrentProject(projectRouteRef, null, undefined, undefined, projectRouteRef);
     loadProject();
 
     return () => {
       setCurrentProject(null, null);
     };
-  }, [loadProject, projectName, setCurrentProject, setProjectDetailLoading]);
+  }, [loadProject, projectRouteRef, setCurrentProject, setProjectDetailLoading]);
 
   const workspaceLoading =
-    !projectName ||
-    currentProjectName !== projectName ||
+    !projectRouteRef ||
+    (currentProjectId !== projectRouteRef && currentProjectName !== projectRouteRef) ||
     projectDetailLoading;
 
   // 演示数据随界面语言走：`t` 换身份时重灌一遍常量，只影响演示项目
   useEffect(() => {
-    if (!projectName || !isDemoProject(projectName)) return;
-    setCurrentProject(projectName, buildDemoProjectData(t), buildDemoScripts(t));
-  }, [projectName, setCurrentProject, t]);
+    if (!projectRouteRef || !isDemoProject(projectRouteRef)) return;
+    setCurrentProject(projectRouteRef, buildDemoProjectData(t), buildDemoScripts(t));
+  }, [projectRouteRef, setCurrentProject, t]);
 
   if (workspaceLoading) {
     return (
@@ -256,7 +257,7 @@ function StudioWorkspace() {
     );
   }
 
-  if (currentProjectData.content_mode === "free" && projectName) {
+  if (currentProjectData.content_mode === "free" && currentProjectName) {
     const projectAspectRatio = typeof currentProjectData.aspect_ratio === "string"
       ? currentProjectData.aspect_ratio
       : currentProjectData.aspect_ratio?.video ?? currentProjectData.aspect_ratio?.storyboard;
@@ -265,10 +266,11 @@ function StudioWorkspace() {
       currentProjectData.video_backend ?? "",
     );
     return (
-      <FreeCreationLayout key={`free-${projectName}`}>
+      <FreeCreationLayout key={`free-${currentProjectId ?? currentProjectName}`}>
         <FreeCreationWorkspace
-          projectName={projectName}
-          readOnly={isDemoProject(projectName)}
+          projectName={currentProjectName}
+          projectId={currentProjectId}
+          readOnly={isDemoProject(currentProjectName)}
           initialMode={handoffMode}
           initialAspectRatio={projectAspectRatio}
           initialResolution={projectResolution ?? undefined}
@@ -278,7 +280,7 @@ function StudioWorkspace() {
   }
 
   return (
-    <StudioLayout key={`studio-${projectName}`}>
+    <StudioLayout key={`studio-${currentProjectId ?? currentProjectName}`}>
       <StudioCanvasRouter />
     </StudioLayout>
   );

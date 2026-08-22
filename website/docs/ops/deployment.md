@@ -7,79 +7,25 @@ update_docs: engine-b
 
 # 部署与运维 {#deployment}
 
-本文档说明 MatrixSpooll 的默认部署、PostgreSQL 生产部署、环境变量、数据持久化、升级、备份、恢复、反向代理和故障排查。正式支持边界见 [安全政策](https://github.com/MockMine/MatrixSpooll/blob/main/SECURITY.md)，完整信任边界见 [安全威胁模型](https://github.com/MockMine/MatrixSpooll/blob/main/docs/security/threat-model.md)。
+本文档说明 MatrixSpooll 的 PostgreSQL 单库部署、环境变量、数据持久化、升级、备份、恢复、反向代理和故障排查。正式支持边界见 [安全政策](https://github.com/MockMine/MatrixSpooll/blob/main/SECURITY.md)，完整信任边界见 [安全威胁模型](https://github.com/MockMine/MatrixSpooll/blob/main/docs/security/threat-model.md)。
 
 ## 部署方式选择 {#choose-deployment-mode}
 
 | 场景 | 推荐方式 | 数据库 | 说明 |
 |---|---|---|---|
-| 首次体验、个人轻量使用 | `deploy/` | SQLite | 配置最少，启动最快 |
-| 长期运行、并发访问、正式服务 | `deploy/production/` | PostgreSQL | 更适合并发、备份和运维，但不提供用户隔离 |
-| 本地开发 | 源码启动 | SQLite 或 PostgreSQL | 见[贡献指南](../dev/contributing.md) |
+| Docker 本地构建 | `deploy/production/docker-compose.yml` | PostgreSQL | 从当前源码构建完整镜像 |
+| Docker 镜像部署 | `deploy/production/docker-compose-img.yml` | PostgreSQL | 拉取已发布的完整镜像 |
+| 本地开发 | 源码启动 | PostgreSQL | 必须显式配置 `DATABASE_URL`，见[贡献指南](../dev/contributing.md) |
 
 无论选择哪种方式，项目图片、视频和其他生成资产都需要持久化保存。
 
-MatrixSpooll 当前按单一可信操作员设计，不支持互不信任的用户共享实例。PostgreSQL 生产部署不会增加租户隔离、角色权限或按用户划分的项目授权。
+MatrixSpooll 支持管理员、成员与项目 owner/editor/viewer 角色，但仍是单实例、单租户部署，不提供跨组织租户隔离。
 
-## 1. 默认部署：SQLite {#sqlite-deployment}
+运行模式不再提供 SQLite 回退。除显式 `TESTING=true` 的隔离测试外，缺少 `DATABASE_URL` 会直接阻止服务启动，避免本地环境和 Docker 环境连接到不同数据库。
 
-### 1.1 启动 {#sqlite-start}
+## 1. 部署：PostgreSQL {#postgresql-deployment}
 
-```bash
-git clone https://github.com/MockMine/MatrixSpooll.git
-cd MatrixSpooll/deploy
-
-cp .env.example .env
-```
-
-编辑 `.env`：
-
-```dotenv
-AUTH_USERNAME=admin
-AUTH_PASSWORD=请设置强密码
-AUTH_TOKEN_SECRET=请设置长期固定的随机密钥
-# LOG_LEVEL=INFO
-```
-
-生成随机密钥：
-
-```bash
-openssl rand -hex 32
-```
-
-启动：
-
-```bash
-docker compose up -d --build
-```
-
-验证：
-
-```bash
-docker compose ps
-docker compose logs --tail=100 matrixspooll
-curl http://localhost:1241/health
-```
-
-### 1.2 持久化目录 {#sqlite-volumes}
-
-默认 Compose 会挂载：
-
-| 宿主机路径 | 容器路径 | 内容 |
-|---|---|---|
-| `deploy/.env` | `/app/.env` | 认证和运行配置 |
-| `deploy/projects/` | `/app/projects` | 项目数据、生成资产和默认 SQLite 数据库 |
-| `deploy/logs/` | `/app/logs` | 应用日志 |
-| `deploy/vertex_keys/` | `/app/vertex_keys` | Google Vertex AI 凭据文件 |
-| `deploy/claude_data/` | `/root/.claude` | Agent 运行时相关数据 |
-
-默认 SQLite 数据库位于应用数据目录下的 `.arcreel.db`，在 Docker 默认部署中会随 `projects/` 一起持久化。
-
-> 不要只备份数据库而忽略 `projects/`。数据库保存任务、配置和索引信息，项目目录保存原始素材和生成文件，两者需要保持一致。
-
-## 2. 生产部署：PostgreSQL {#postgresql-deployment}
-
-### 2.1 启动 {#postgresql-start}
+### 1.1 启动 {#postgresql-start}
 
 ```bash
 cd "$(git rev-parse --show-toplevel)/deploy/production"
@@ -125,7 +71,7 @@ docker compose -f docker-compose.yml up -d --build
 docker compose ps
 docker compose logs --tail=100 postgres
 docker compose logs --tail=100 matrixspooll
-curl http://localhost:1241/health
+curl -f http://localhost:1241/health/ready
 ```
 
 如需避免服务器安装 Python/Node 依赖，先在开发机或 CI 构建完整 Linux 镜像并推送：
@@ -157,7 +103,7 @@ docker compose -f docker-compose-img.yml up -d
 
 `pgdata/` 只保存 PostgreSQL 集群数据，`projects/` 保存项目元数据和媒体资产，两者都必须持久化且配套备份。生产部署通过 `DATABASE_URL` 使用 PostgreSQL，不会使用 `deploy/production/projects/.arcreel.db`；不要把 SQLite 文件复制进 `pgdata/`，也不要把两个目录当成可相互替代的数据库备份。
 
-### 2.3 数据库迁移 {#database-migrations}
+### 1.3 数据库迁移 {#database-migrations}
 
 MatrixSpooll 在应用启动时运行 Alembic 迁移，将数据库结构升级到当前版本。
 
@@ -173,9 +119,9 @@ MatrixSpooll 在应用启动时运行 Alembic 迁移，将数据库结构升级�
 | `AUTH_PASSWORD` | 空 | 正式部署必须显式设置强密码 |
 | `AUTH_TOKEN_SECRET` | 空 | 正式部署必须设置长期固定随机值 |
 | `LOG_LEVEL` | `INFO` | 排障时临时改为 `DEBUG`，完成后恢复 |
-| `POSTGRES_PASSWORD` | 无 | 仅生产部署需要，必须设置 |
+| `POSTGRES_PASSWORD` | 无 | Docker 部署必须设置 |
 | `TZ` | `Asia/Shanghai` | 可在 Compose 环境中覆盖 |
-| `DATABASE_URL` | SQLite 默认路径 | 生产 Compose 自动设置 PostgreSQL URL |
+| `DATABASE_URL` | 无 | 源码运行必须显式设置 PostgreSQL URL；Compose 自动注入 |
 | `ARCREEL_DATA_DIR` | `projects` | 需要自定义应用数据根目录时使用 |
 
 注意：
@@ -201,23 +147,23 @@ MatrixSpooll 的沙箱要求父进程环境中不保留供应商密钥。以下�
 Compose 使用：
 
 ```text
-GET /health
+GET /health/ready
 ```
 
 手动检查：
 
 ```bash
-curl -f http://localhost:1241/health
+curl -f http://localhost:1241/health/ready
 ```
 
 ### 4.2 查看日志 {#view-logs}
 
 ```bash
 # 最近 200 行
-docker compose logs --tail=200 arcreel
+docker compose logs --tail=200 matrixspooll
 
 # 持续跟踪
-docker compose logs -f arcreel
+docker compose logs -f matrixspooll
 
 # 生产数据库日志
 docker compose logs -f postgres
@@ -241,21 +187,7 @@ docker compose logs -f postgres
 4. 记录当前源码 commit；
 5. 在可接受的维护窗口执行升级。
 
-### 5.2 默认部署升级 {#upgrade-sqlite-deployment}
-
-在 `deploy/` 中：
-
-```bash
-# 先备份，见后文
-docker compose build matrixspooll
-docker compose up -d
-
-docker compose ps
-docker compose logs --tail=100 matrixspooll
-curl -f http://localhost:1241/health
-```
-
-### 5.3 生产部署升级 {#upgrade-postgresql-deployment}
+### 5.2 部署升级 {#upgrade-postgresql-deployment}
 
 在 `deploy/production/` 中：
 
@@ -267,12 +199,12 @@ docker compose up -d
 docker compose ps
 docker compose logs --tail=100 postgres
 docker compose logs --tail=200 matrixspooll
-curl -f http://localhost:1241/health
+curl -f http://localhost:1241/health/ready
 ```
 
 应用启动时会执行数据库迁移。不要在没有备份的情况下跳过多个版本直接升级。
 
-### 5.4 项目结构迁移 {#project-schema-migrations}
+### 5.3 项目结构迁移 {#project-schema-migrations}
 
 应用启动时除数据库迁移外，也会逐个升级 `projects/` 下的项目结构。升级到启用产物状态记录的版本时，MatrixSpooll 会先完整校验项目和正式剧本，再一次性写入项目的产物记录，最后才更新 `project.json` 的 schema 版本。
 
@@ -292,7 +224,7 @@ curl -f http://localhost:1241/health
 
 如果某个项目迁移失败，先保留现场并查看启动日志，不要手工修改 schema 版本或删除备份文件。修复损坏的项目引用或权限后再重启服务。
 
-### 5.5 本地构建 {#local-build}
+### 5.4 本地构建 {#local-build}
 
 `docker-compose.yml` 使用仓库根目录构建应用镜像。首次构建仍需下载 Linux 基础镜像和锁文件中的依赖；Dockerfile 的 BuildKit 缓存会复用后续构建所需的软件包。升级代码后重新构建应用服务：
 
@@ -305,51 +237,7 @@ docker compose up -d
 
 ## 6. 备份与恢复 {#backup-and-restore}
 
-### 6.1 SQLite 部署备份 {#backup-sqlite}
-
-先确认宿主机上的实际数据根目录，再停止写入。默认 Compose 使用 `deploy/projects/`；如果通过 `ARCREEL_DATA_DIR` 和自定义挂载改变了容器内路径，请把 `data_dir` 改为该挂载对应的宿主机绝对路径：
-
-```bash
-cd deploy
-
-data_dir="$(cd projects && pwd)"
-# 自定义数据目录示例：data_dir="/srv/arcreel/projects"
-
-docker compose stop arcreel
-```
-
-备份：
-
-```bash
-backup_stamp="$(date +%Y%m%d-%H%M%S)"
-umask 077
-mkdir -p backups
-chmod 700 backups
-
-tar -czf "backups/arcreel-config-${backup_stamp}.tar.gz" \
-  .env vertex_keys claude_data
-
-tar -czf "backups/arcreel-projects-${backup_stamp}.tar.gz" \
-  -C "${data_dir}" .
-```
-
-服务停止后再归档整个 `data_dir`，可以让 `.arcreel.db` 与项目资产保持在同一时点。配置归档与数据归档必须使用相同时间标签并配套保存；`umask 077` 与备份目录模式 `0700` 会限制其中凭据和项目资产的读取权限。不要在 MatrixSpooll 写入时只复制 `.arcreel.db`：WAL 模式下，已提交交易可能仍在 `.arcreel.db-wal` 中，丢失或错配 WAL 文件会造成数据丢失甚至损坏。如果无法停服，应使用 SQLite Online Backup API（例如 `sqlite3` 的 `.backup`）或 `VACUUM INTO` 生成一致快照，而不是直接 `cp` 主数据库文件。
-
-恢复服务：
-
-```bash
-docker compose start arcreel
-```
-
-恢复时：
-
-1. 停止 MatrixSpooll；
-2. 备份当前目录，避免覆盖后无法回退；
-3. 将配置归档中的 `.env`、`vertex_keys/` 和 `claude_data/` 恢复到原位置，并将配套数据归档完整解压到空的 `data_dir`；
-4. 启动并检查 `/health`；
-5. 打开几个项目验证图片、视频和版本历史。
-
-### 6.2 PostgreSQL 部署备份 {#backup-postgresql}
+### 6.1 PostgreSQL 部署备份 {#backup-postgresql}
 
 先停止 MatrixSpooll 应用，保留 PostgreSQL 运行，避免备份数据库和项目文件期间继续产生写入：
 
@@ -358,7 +246,7 @@ cd "$(git rev-parse --show-toplevel)/deploy/production"
 umask 077
 mkdir -p backups
 chmod 700 backups
-docker compose stop arcreel
+docker compose stop matrixspooll
 
 backup_stamp="$(date +%Y%m%d-%H%M%S)"
 
@@ -369,7 +257,7 @@ docker compose exec -T postgres sh -c \
 tar -czf "backups/arcreel-files-${backup_stamp}.tar.gz" \
   .env docker-compose.yml projects vertex_keys claude_data
 
-docker compose start arcreel
+docker compose start matrixspooll
 ```
 
 数据库备份和文件备份使用同一时间标签，必须配套保存和恢复。文件备份包含当前 `docker-compose.yml`，因此特殊字符密码所需的 `DATABASE_URL` 定制也会随 `.env` 一起恢复。`umask 077` 与备份目录模式 `0700` 会让宿主机重定向生成的 SQL 文件和文件归档仅对当前用户可读写。
@@ -378,13 +266,13 @@ docker compose start arcreel
 
 如果 `tar` 报 `Permission denied`，说明挂载目录中存在由容器内 root 用户创建、宿主机当前用户不可读的文件。可用 `sudo` 重新执行对应的 `tar` 命令，并在完成后限制备份文件的读取权限。
 
-### 6.3 PostgreSQL 恢复 {#restore-postgresql}
+### 6.2 PostgreSQL 恢复 {#restore-postgresql}
 
 恢复前停止 MatrixSpooll，保留 PostgreSQL：
 
 ```bash
 cd "$(git rev-parse --show-toplevel)/deploy/production"
-docker compose stop arcreel
+docker compose stop matrixspooll
 
 backup_stamp=YYYYMMDD-HHMMSS
 tar -xzf "backups/arcreel-files-${backup_stamp}.tar.gz"
@@ -408,8 +296,8 @@ cat "backups/arcreel-db-${backup_stamp}.sql" | \
 数据库导入成功后，重新启动：
 
 ```bash
-docker compose start arcreel
-curl -f http://localhost:1241/health
+docker compose start matrixspooll
+curl -f http://localhost:1241/health/ready
 ```
 
 > 恢复策略取决于是否覆盖现有数据库、是否跨版本以及备份时服务是否仍有写入。生产环境应定期做真实恢复演练，而不只是确认备份文件存在。
@@ -424,7 +312,7 @@ MatrixSpooll 当前不支持直接暴露到公网。私有远程部署必须启�
 - 保留 SSE 长连接；
 - 设置足够的上传大小和读取超时。
 
-官方 Compose 文件默认使用 `1241:1241`，会把后端端口发布到宿主机的所有网络接口；仅添加反向代理不会关闭这条直连路径。反向代理运行在同一宿主机时，启动前将 `arcreel` 服务的端口映射改为仅监听 loopback：
+官方 Compose 文件默认使用 `1241:1241`，会把后端端口发布到宿主机的所有网络接口；仅添加反向代理不会关闭这条直连路径。反向代理运行在同一宿主机时，启动前将 `matrixspooll` 服务的端口映射改为仅监听 loopback：
 
 ```yaml
 ports:
@@ -500,7 +388,7 @@ Docker 镜像虽然已包含 `bwrap` 和 `socat`，宿主机的 user namespace �
 
 最低限度应监控：
 
-- `/health` 是否可用；
+- `/health/ready` 是否可用；
 - 容器是否频繁重启；
 - 磁盘剩余空间；
 - `projects/` 增长速度；
@@ -517,7 +405,7 @@ Docker 镜像虽然已包含 `bwrap` 和 `socat`，宿主机的 user namespace �
 
 ```bash
 docker compose ps
-docker compose logs --tail=300 arcreel
+docker compose logs --tail=300 matrixspooll
 ```
 
 检查：
@@ -531,8 +419,8 @@ docker compose logs --tail=300 arcreel
 ### 健康检查失败 {#health-check-fails}
 
 ```bash
-curl -v http://localhost:1241/health
-docker compose logs --tail=300 arcreel
+curl -v http://localhost:1241/health/ready
+docker compose logs --tail=300 matrixspooll
 ```
 
 如果容器刚启动，先确认是否仍在执行数据库迁移。

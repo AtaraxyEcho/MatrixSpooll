@@ -7,7 +7,9 @@ update_docs: engine-b
 
 # 从 SQLite 迁移到 PostgreSQL {#migrate-to-postgres}
 
-本文档适用于已使用默认 Docker + SQLite 部署 MatrixSpooll、希望切换到 `deploy/production/` PostgreSQL 部署的场景。以下命令都从 MatrixSpooll 仓库根目录执行。
+本文档仅适用于旧版本中使用 Docker + SQLite 的 MatrixSpooll 部署。当前版本只支持 PostgreSQL 运行；以下流程用于把旧数据一次性迁移到 `deploy/production/`，命令均从仓库根目录执行。
+
+迁移前请保留旧版本的源码、镜像和 Compose 文件。当前仓库已经移除旧的 `deploy/docker-compose.yml`，不能用当前版本回滚运行 SQLite。
 
 迁移前先区分三类数据：
 
@@ -23,7 +25,8 @@ update_docs: engine-b
 
 - 已安装 Docker 和 Docker Compose
 - 已安装 `sqlite3` 命令行工具（先运行 `sqlite3 --version` 确认）
-- MatrixSpooll 当前使用默认 SQLite 部署，数据库位于 `deploy/projects/.arcreel.db`
+- MatrixSpooll 旧部署使用 SQLite，数据库位于 `deploy/projects/.arcreel.db`
+- 已保存旧部署实际使用的 Compose 文件路径，且能用它停止旧服务
 - `deploy/production/pgdata/` 与 `deploy/production/projects/` 尚未存放需要保留的生产数据
 
 ## 迁移步骤 {#migration-steps}
@@ -35,13 +38,19 @@ cd "$(git rev-parse --show-toplevel)"
 
 source_projects="$(cd deploy/projects && pwd)"
 # 自定义数据目录示例：source_projects="/srv/arcreel/projects"
+legacy_compose="/path/to/legacy/docker-compose.yml"
 
 if [ ! -f "${source_projects}/.arcreel.db" ]; then
   echo "错误：${source_projects}/.arcreel.db 不存在" >&2
   exit 1
 fi
 
-docker compose -f deploy/docker-compose.yml down
+if [ ! -f "${legacy_compose}" ]; then
+  echo "错误：找不到旧部署 Compose 文件 ${legacy_compose}" >&2
+  exit 1
+fi
+
+docker compose -f "${legacy_compose}" down
 ```
 
 从此到迁移验证完成前，不要重新启动默认部署，以免 SQLite 数据库与项目资产继续发生写入。
@@ -153,7 +162,7 @@ docker compose -f deploy/production/docker-compose.yml ps
 ```bash
 docker compose -f deploy/production/docker-compose.yml run --rm \
   -v "${source_projects}:/migration-source:ro" \
-  arcreel bash -c '
+  matrixspooll bash -c '
     apt-get update &&
     apt-get install -y --no-install-recommends pgloader &&
     pgloader sqlite:///migration-source/.arcreel.db \
@@ -203,16 +212,16 @@ sqlite3 "${source_projects}/.arcreel.db" "
 ```bash
 docker compose -f deploy/production/docker-compose.yml up -d
 docker compose -f deploy/production/docker-compose.yml ps
-curl -f http://localhost:1241/health
+curl -f http://localhost:1241/health/ready
 ```
 
 访问 `http://<你的IP>:1241` 验证服务正常。
 
 ---
 
-## 回滚到 SQLite {#rollback-to-sqlite}
+## 使用归档旧版本回滚 {#rollback-to-sqlite}
 
-以上迁移流程不会改写 `source_projects` 指向的源数据目录和 `deploy/.env`，因此正常回滚应重新启动原 SQLite 部署，而不是修改生产 `.env`。如果在新的 shell 中回滚，先按第 1 步重新设置 `source_projects`：
+以上迁移流程不会改写 `source_projects` 指向的源数据目录和 `deploy/.env`。如需短期回滚，只能使用迁移前归档的旧版本源码、镜像和 Compose 文件重新启动原 SQLite 部署；当前版本缺少 `DATABASE_URL` 时会拒绝启动。如果在新的 shell 中回滚，先按第 1 步重新设置 `source_projects` 与 `legacy_compose`：
 
 1. 停止 PostgreSQL 生产部署：
 
@@ -238,11 +247,11 @@ curl -f http://localhost:1241/health
 
    这会先完整移走旧源目录，再创建空目录并解压，避免保留归档中不存在的旧文件。只有解压成功后才恢复 `.env`；不要只覆盖主 SQLite 文件而留下不匹配的 `-wal` 或 `-shm` 文件。保留 `${preserved}` 直到回滚验证完成。
 
-3. 重新启动 SQLite 默认部署：
+3. 使用归档的旧版本重新启动 SQLite 部署：
 
    ```bash
-   docker compose -f deploy/docker-compose.yml up -d
-   docker compose -f deploy/docker-compose.yml ps
+   docker compose -f "${legacy_compose}" up -d
+   docker compose -f "${legacy_compose}" ps
    curl -f http://localhost:1241/health
    ```
 
@@ -250,4 +259,4 @@ curl -f http://localhost:1241/health
 
 5. 在回滚验证完成前，保留 `deploy/production/pgdata/`、`deploy/production/projects/` 和迁移备份以便排查，不要删除。`POSTGRES_PASSWORD` 位于独立的 `deploy/production/.env`，无需从 `deploy/.env` 移除。
 
-如果原来使用自定义 Compose 或数据挂载，还需将启动环境中的 `DATABASE_URL` 恢复为 SQLite URL 或取消设置，确认 `ARCREEL_DATA_DIR` 仍指向容器内原数据目录，并确认该挂载对应宿主机上的 `${source_projects}` 后再启动。
+如果原来使用自定义 Compose 或数据挂载，需按旧版本原有配置恢复 SQLite URL 或取消 `DATABASE_URL`，确认 `ARCREEL_DATA_DIR` 仍指向容器内原数据目录，并确认该挂载对应宿主机上的 `${source_projects}` 后再启动。完成排障后应重新切回当前 PostgreSQL 版本；不要把旧版 SQLite 作为长期运行方案。

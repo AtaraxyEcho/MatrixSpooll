@@ -55,8 +55,9 @@ from lib.source_loader import (
     SourceLoader,
     UnsupportedFormatError,
 )
-from server.auth import CurrentUserInfo, database_auth_initialized, get_current_user_flexible
+from server.auth import CurrentUserInfo, database_auth_initialized, get_current_user_flexible, is_testing
 from server.routers._script_review_errors import raise_review_error
+from server.services.media_delivery import serve_media_file
 from server.services.project_access import resolve_project_access
 from server.services.script_review import ScriptReviewError, ScriptReviewService
 
@@ -74,7 +75,7 @@ async def _get_project_file_user(request: Request) -> CurrentUserInfo:
     bearer = authorization[7:].strip() if authorization.lower().startswith("bearer ") else None
     query_token = request.query_params.get("token")
     cookie_token = request.cookies.get("arcreel_auth_token")
-    if not bearer and not query_token and not cookie_token and not database_auth_initialized():
+    if not bearer and not query_token and not cookie_token and not database_auth_initialized() and is_testing():
         return CurrentUserInfo(id="default", sub="testuser", role="admin")
     return await get_current_user_flexible(token=bearer, query_token=query_token, cookie_token=cookie_token)
 
@@ -242,12 +243,11 @@ async def serve_project_file(
 
         file_path = await asyncio.to_thread(_sync)
 
-        # 内容寻址缓存：带 ?v= 参数或 versions/ 路径时设 immutable
-        headers = {}
-        if request.query_params.get("v") or path.startswith("versions/"):
-            headers["Cache-Control"] = "public, max-age=31536000, immutable"
-
-        return FileResponse(file_path, headers=headers)
+        return serve_media_file(
+            file_path,
+            request,
+            immutable=bool(request.query_params.get("v") or path.startswith("versions/")),
+        )
     except FileNotFoundError as exc:
         raise NotFoundError("project_not_found", name=project_name) from exc
 

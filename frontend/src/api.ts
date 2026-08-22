@@ -76,6 +76,7 @@ import type {
   FreeStoryboardBatchResult,
   FreeSubtitleTrack,
   FreeSubtitleCue,
+  ProjectRef,
 } from "@/types";
 import type { GenerationRoute } from "@/utils/generation-mode";
 import type { GridCapability, GridGeneration } from "@/types/grid";
@@ -110,6 +111,26 @@ const ASSET_TYPE_PATH: Record<ProjectAssetType, string> = {
   prop: "props",
   product: "products",
 };
+
+/**
+ * Project identity adapter.
+ *
+ * New callers pass a ProjectIdentity and use its immutable id in the URL.
+ * Existing callers can continue passing the legacy project name until the
+ * server compatibility route is removed.
+ */
+export function projectPathSegment(project: ProjectRef): string {
+  return encodeURIComponent(typeof project === "string" ? project : project.project_id);
+}
+
+export function projectDisplayName(project: ProjectRef): string {
+  return typeof project === "string" ? project : project.name;
+}
+
+function projectIdentityQuery(project: ProjectRef): { project_id?: string; project_name?: string } {
+  if (typeof project === "string") return { project_name: project };
+  return { project_id: project.project_id, project_name: project.name };
+}
 
 function referenceRequestQuery(
   options: ReferenceRequestOptions,
@@ -339,7 +360,9 @@ export interface ShotUploadResult {
 }
 
 export interface ProjectEventStreamOptions {
-  projectName: string;
+  project?: ProjectRef;
+  /** @deprecated use project; kept for old callers during the migration. */
+  projectName?: string;
   onSnapshot?: (payload: ProjectEventSnapshotPayload, event: MessageEvent) => void;
   onChanges?: (payload: ProjectChangeBatchPayload, event: MessageEvent) => void;
   /** 项目目录被删除后收到一次，随后流正常结束（浏览器会紧接着触发一次 onError）。 */
@@ -350,6 +373,7 @@ export interface ProjectEventStreamOptions {
 /** Filters for {@link API.listTasks} and {@link API.listProjectTasks}. */
 export interface TaskListFilters {
   projectName?: string;
+  projectId?: string;
   status?: string;
   taskType?: string;
   source?: string;
@@ -360,12 +384,14 @@ export interface TaskListFilters {
 /** Filters for {@link API.getUsageStats} and {@link API.getUsageCalls}. */
 export interface UsageStatsFilters {
   projectName?: string;
+  projectId?: string;
   startDate?: string;
   endDate?: string;
 }
 
 export interface UsageCallsFilters {
   projectName?: string;
+  projectId?: string;
   callType?: string;
   status?: string;
   startDate?: string;
@@ -899,7 +925,7 @@ class API {
 
   static async createProject(
     payload: CreateProjectPayload,
-  ): Promise<{ success: boolean; name: string; project: ProjectData }> {
+  ): Promise<{ success: boolean; name: string; project_id?: string; id?: string; project: ProjectData }> {
     return this.request("/projects", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -907,14 +933,17 @@ class API {
   }
 
   static async getProject(
-    name: string,
+    project: ProjectRef,
     options: { signal?: AbortSignal } = {}
   ): Promise<{
+    project_id?: string;
+    name?: string;
+    current_role?: "owner" | "editor" | "viewer" | null;
     project: ProjectData;
     scripts: Record<string, EpisodeScript>;
     asset_fingerprints?: Record<string, number>;
   }> {
-    return this.request(`/projects/${encodeURIComponent(name)}`, { signal: options.signal });
+    return this.request(`/projects/${projectPathSegment(project)}`, { signal: options.signal });
   }
 
   static async updateProject(
@@ -947,31 +976,31 @@ class API {
   }
 
   static async listFreeCreations(
-    projectName: string,
+    project: ProjectRef,
     limit = 60,
     cursor?: string,
   ): Promise<{ creations: FreeCreation[]; next_cursor?: string | null; total?: number }> {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set("cursor", cursor);
     return this.request(
-      `/projects/${encodeURIComponent(projectName)}/creations?${params.toString()}`,
+      `/projects/${projectPathSegment(project)}/creations?${params.toString()}`,
     );
   }
 
   static async listFreeCreationRequests(
-    projectName: string,
+    project: ProjectRef,
     limit = 40,
     cursor?: string,
   ): Promise<{ requests: FreeCreationRequestSummary[]; next_cursor?: string | null; total?: number }> {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set("cursor", cursor);
     return this.request(
-      `/projects/${encodeURIComponent(projectName)}/free-creation-requests?${params.toString()}`,
+      `/projects/${projectPathSegment(project)}/free-creation-requests?${params.toString()}`,
     );
   }
 
   static async createFreeCreation(
-    projectName: string,
+    project: ProjectRef,
     payload: CreateFreeCreationRequest,
   ): Promise<{
     success: boolean;
@@ -980,7 +1009,7 @@ class API {
     task_id: string;
     creations?: Array<{ creation_id: string; task_id: string }>;
   }> {
-    return this.request(`/projects/${encodeURIComponent(projectName)}/creations`, {
+    return this.request(`/projects/${projectPathSegment(project)}/creations`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
@@ -1006,12 +1035,14 @@ class API {
     model?: string;
     referenceKind?: "none" | "frame" | "image" | "video" | "audio";
     projectName?: string;
+    projectId?: string;
     signal?: AbortSignal;
   }): Promise<FreeCreationCapabilities> {
     const params = new URLSearchParams({ output_type: options.outputType });
     if (options.model) params.set("model", options.model);
     if (options.referenceKind) params.set("reference_kind", options.referenceKind);
     if (options.projectName) params.set("project_name", options.projectName);
+    if (options.projectId) params.set("project_id", options.projectId);
     return this.request(`/free-creation-capabilities?${params.toString()}`, { signal: options.signal });
   }
 
@@ -1019,11 +1050,13 @@ class API {
     outputType: "image" | "video";
     model?: string;
     projectName?: string;
+    projectId?: string;
     signal?: AbortSignal;
   }): Promise<FreeCreationCapabilities> {
     const params = new URLSearchParams({ output_type: options.outputType });
     if (options.model) params.set("model", options.model);
     if (options.projectName) params.set("project_name", options.projectName);
+    if (options.projectId) params.set("project_id", options.projectId);
     return this.request(`/model-capabilities?${params.toString()}`, { signal: options.signal });
   }
 
@@ -1298,9 +1331,10 @@ class API {
     );
   }
 
-  static getFreeCreationMediaUrl(projectName: string, creationId: string): string {
-    const endpoint = `/projects/${encodeURIComponent(projectName)}/creations/${encodeURIComponent(creationId)}/media`;
-    return withAuthQuery(`${API_BASE}${endpoint}`);
+  static getFreeCreationMediaUrl(project: ProjectRef, creationId: string, version?: string | number | null): string {
+    const endpoint = `/projects/${projectPathSegment(project)}/creations/${encodeURIComponent(creationId)}/media`;
+    const withVersion = version == null || version === "" ? endpoint : `${endpoint}?v=${encodeURIComponent(String(version))}`;
+    return withAuthQuery(`${API_BASE}${withVersion}`);
   }
 
   /**
@@ -1313,14 +1347,14 @@ class API {
    * 与执行层同口径；不传只解析到项目级（设置页等无集号上下文的调用）。
    */
   static async getVideoCapabilities(
-    name: string,
+    project: ProjectRef,
     options: { signal?: AbortSignal; videoBackend?: string; episode?: number } = {}
   ): Promise<VideoCapabilities> {
     const params = new URLSearchParams();
     if (options.videoBackend) params.set("video_backend", options.videoBackend);
     if (options.episode !== undefined) params.set("episode", String(options.episode));
     const qs = params.size > 0 ? `?${params.toString()}` : "";
-    return this.request(`/projects/${encodeURIComponent(name)}/video-capabilities${qs}`, {
+    return this.request(`/projects/${projectPathSegment(project)}/video-capabilities${qs}`, {
       signal: options.signal,
     });
   }
@@ -1977,7 +2011,7 @@ class API {
   }
 
   static getFileUrl(
-    projectName: string,
+    project: ProjectRef,
     path: string,
     cacheBust?: number | string | null
   ): string {
@@ -1986,7 +2020,7 @@ class API {
     if (path.startsWith("data:")) {
       return path;
     }
-    const base = `${API_BASE}/files/${encodeURIComponent(projectName)}/${path}`;
+    const base = `${API_BASE}/files/${projectPathSegment(project)}/${path}`;
     if (cacheBust == null || cacheBust === "") {
       return base;
     }
@@ -2447,6 +2481,7 @@ class API {
   ): Promise<{ items: TaskItem[]; total: number; page: number; page_size: number }> {
     const params = new URLSearchParams();
     if (filters.projectName) params.append("project_name", filters.projectName);
+    if (filters.projectId) params.append("project_id", filters.projectId);
     if (filters.status) params.append("status", filters.status);
     if (filters.taskType) params.append("task_type", filters.taskType);
     if (filters.source) params.append("source", filters.source);
@@ -2457,7 +2492,7 @@ class API {
   }
 
   static async listProjectTasks(
-    projectName: string,
+    project: ProjectRef,
     filters: Omit<TaskListFilters, "projectName"> = {}
   ): Promise<{ items: TaskItem[]; total: number; page: number; page_size: number }> {
     const params = new URLSearchParams();
@@ -2468,15 +2503,19 @@ class API {
     if (filters.pageSize) params.append("page_size", String(filters.pageSize));
     const query = params.toString();
     return this.request(
-      `/projects/${encodeURIComponent(projectName)}/tasks${query ? "?" + query : ""}`
+      `/projects/${projectPathSegment(project)}/tasks${query ? "?" + query : ""}`
     );
   }
 
   static async getTaskStats(
-    projectName: string | null = null
+    project: ProjectRef | null = null
   ): Promise<{ stats: TaskStats }> {
     const params = new URLSearchParams();
-    if (projectName) params.append("project_name", projectName);
+    if (project) {
+      const identity = projectIdentityQuery(project);
+      if (identity.project_id) params.append("project_id", identity.project_id);
+      if (identity.project_name) params.append("project_name", identity.project_name);
+    }
     const query = params.toString();
     return this.request(`/tasks/stats${query ? "?" + query : ""}`);
   }
@@ -2505,25 +2544,27 @@ class API {
   }
 
   static async cancelAllPreview(
-    projectName: string
+    project: ProjectRef
   ): Promise<{ queued_count: number }> {
     return this.request(
-      `/projects/${encodeURIComponent(projectName)}/tasks/cancel-all-preview`
+      `/projects/${projectPathSegment(project)}/tasks/cancel-all-preview`
     );
   }
 
   static async cancelAllQueued(
-    projectName: string
+    project: ProjectRef
   ): Promise<{ cancelled_count: number; skipped_running_count: number }> {
     return this.request(
-      `/projects/${encodeURIComponent(projectName)}/tasks/cancel-all`,
+      `/projects/${projectPathSegment(project)}/tasks/cancel-all`,
       { method: "POST" }
     );
   }
 
   static openProjectEventStream(options: ProjectEventStreamOptions): EventSource {
+    const project = options.project ?? options.projectName;
+    if (!project) throw new Error("Project identity is required for event stream");
     const url = withAuthQuery(
-      `${API_BASE}/projects/${encodeURIComponent(options.projectName)}/events/stream`
+      `${API_BASE}/projects/${projectPathSegment(project)}/events/stream`
     );
     const source = new EventSource(url);
 

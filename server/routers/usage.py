@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from lib.db import async_session_factory
 from lib.db.repositories.usage_repo import UsageRepository
 from lib.providers import CallType
-from server.auth import CurrentUser, database_auth_initialized, is_auth_enabled
+from server.auth import CurrentUser, database_auth_initialized, is_auth_enabled, is_testing
 from server.services.project_access import list_accessible_projects, resolve_project_access
 
 router = APIRouter()
@@ -25,12 +25,12 @@ async def _visible_project_names(
 ) -> list[str] | None:
     if project_name:
         if not is_auth_enabled() or not database_auth_initialized():
-            return [project_name]
+            return [project_name] if is_testing() else []
         access = await resolve_project_access(project_name, user, session, required_role="viewer")
         return [access.project_name]
     if not is_auth_enabled() or not database_auth_initialized():
-        return None
-    projects = await list_accessible_projects(user.id, session)
+        return None if is_testing() else []
+    projects = await list_accessible_projects(user.id, session, include_all=user.role == "admin")
     return [project.name for project in projects]
 
 

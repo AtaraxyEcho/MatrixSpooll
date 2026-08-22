@@ -65,6 +65,7 @@ _ANONYMOUS_USER_SUB = "local"
 # 视为"关闭认证"的 env 取值。空串不在内 —— .env 误写 `AUTH_ENABLED=` 应回退到默认（开启），
 # 避免静默 fail-open。
 _AUTH_DISABLED_VALUES = frozenset({"false", "0", "no", "off"})
+_TESTING_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 def is_auth_enabled() -> bool:
@@ -73,6 +74,12 @@ def is_auth_enabled() -> bool:
     ``false`` / ``0`` / ``no`` / ``off`` 一律视为关闭（不区分大小写）。
     """
     return os.environ.get("AUTH_ENABLED", "true").strip().lower() not in _AUTH_DISABLED_VALUES
+
+
+def is_testing() -> bool:
+    """Return whether the process explicitly opted into test-only fallbacks."""
+
+    return os.environ.get("TESTING", "").strip().lower() in _TESTING_VALUES
 
 
 def _anonymous_user() -> "CurrentUserInfo":

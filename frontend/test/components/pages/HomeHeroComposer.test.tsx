@@ -18,7 +18,7 @@ describe("HomeHeroComposer", () => {
     vi.spyOn(API, "getFreeCreationCapabilities").mockImplementation(async ({ outputType }) => ({
       output_type: outputType,
       model: outputType === "video" ? "ark/video-model" : "ark/image-model",
-      ratios: outputType === "video" ? ["16:9", "9:16", "1:1"] : [],
+      ratios: ["16:9", "9:16", "1:1"],
       resolutions: outputType === "video" ? ["720p", "1080p"] : ["1.5k", "2k", "4k"],
       durations: outputType === "video" ? [4, 5, 6, 8, 10, 12, 15] : [],
       max_reference_images: outputType === "video" ? 9 : null,
@@ -45,12 +45,16 @@ describe("HomeHeroComposer", () => {
     );
   });
 
-  it("updates the image dimensions from the grouped ratio and resolution controls", () => {
+  it("updates the image dimensions from the grouped ratio and resolution controls", async () => {
     render(<HomeHeroComposer onCreated={vi.fn()} />);
 
     fireEvent.click(screen.getByRole("button", { name: t("free_creation_mode") }));
     fireEvent.click(screen.getByRole("option", { name: t("free_creation_mode_image") }));
+    await waitFor(() => expect(API.getFreeCreationCapabilities).toHaveBeenCalledWith(
+      expect.objectContaining({ outputType: "image" }),
+    ));
     fireEvent.click(screen.getByRole("button", { name: t("home_image_settings") }));
+    await screen.findByRole("button", { name: t("aspect_ratio_1_1") });
     fireEvent.click(screen.getByRole("button", { name: t("aspect_ratio_1_1") }));
     fireEvent.click(screen.getByRole("button", { name: "2K" }));
 

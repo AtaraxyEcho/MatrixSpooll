@@ -68,13 +68,17 @@ def agent_startup_failure_detail(
 
 
 async def _validate_session_ownership(
-    service: AssistantService, session_id: str, project_name: str, _t: Callable[..., str]
+    service: AssistantService,
+    session_id: str,
+    project_name: str,
+    actor_user_id: str,
+    _t: Callable[..., str],
 ) -> "SessionMeta":
-    """Validate session belongs to the specified project and return it."""
+    """Validate a session belongs to both the project and requesting user."""
     session = await service.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail=_t("session_not_found", session_id=session_id))
-    if session.project_name != project_name:
+    if session.project_name != project_name or session.actor_user_id != actor_user_id:
         raise HTTPException(status_code=404, detail=_t("session_not_found", session_id=session_id))
     return session
 
@@ -82,10 +86,11 @@ async def _validate_session_ownership(
 async def _assistant_service_for_stream(
     project_name: str,
     session_id: str,
+    user: CurrentUserFlexible,
     _t: Translator,
 ) -> tuple[AssistantService, SessionMeta]:
     service = get_assistant_service()
-    meta = await _validate_session_ownership(service, session_id, project_name, _t)
+    meta = await _validate_session_ownership(service, session_id, project_name, user.id, _t)
     return service, meta
 
 
@@ -151,6 +156,8 @@ async def send_message(
 ):
     try:
         service = get_assistant_service()
+        if req.session_id is not None:
+            await _validate_session_ownership(service, req.session_id, project_name, user.id, _t)
         result = await service.send_or_create(
             project_name,
             req.content,
@@ -205,6 +212,7 @@ async def rewrite_message(
     """
     try:
         service = get_assistant_service()
+        await _validate_session_ownership(service, session_id, project_name, user.id, _t)
         return await service.rewrite_message(
             project_name,
             session_id,
@@ -259,13 +267,18 @@ async def rewrite_message(
 async def list_sessions(
     project_name: str,
     _t: Translator,
+    user: CurrentUser,
     status: Literal["idle", "running", "completed", "error", "interrupted"] | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):
     try:
         sessions = await get_assistant_service().list_sessions(
-            project_name=project_name, status=status, limit=limit, offset=offset
+            project_name=project_name,
+            actor_user_id=user.id,
+            status=status,
+            limit=limit,
+            offset=offset,
         )
         return {"sessions": [s.model_dump() for s in sessions]}
     except HTTPException:
@@ -276,10 +289,10 @@ async def list_sessions(
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(project_name: str, session_id: str, _t: Translator):
+async def get_session(project_name: str, session_id: str, _t: Translator, user: CurrentUser):
     try:
         service = get_assistant_service()
-        session = await _validate_session_ownership(service, session_id, project_name, _t)
+        session = await _validate_session_ownership(service, session_id, project_name, user.id, _t)
         return session.model_dump()
     except HTTPException:
         raise
@@ -289,10 +302,10 @@ async def get_session(project_name: str, session_id: str, _t: Translator):
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(project_name: str, session_id: str, _t: Translator):
+async def delete_session(project_name: str, session_id: str, _t: Translator, user: CurrentUser):
     try:
         service = get_assistant_service()
-        await _validate_session_ownership(service, session_id, project_name, _t)
+        await _validate_session_ownership(service, session_id, project_name, user.id, _t)
         deleted = await service.delete_session(session_id)
         if not deleted:
             raise HTTPException(status_code=404, detail=_t("session_not_found", session_id=session_id))
@@ -325,12 +338,13 @@ async def list_entries(
     project_name: str,
     session_id: str,
     _t: Translator,
+    user: CurrentUser,
     after: int = Query(default=-1, ge=-1),
 ):
     """冷读会话事件日志（历史回放；``after`` 为 seq 游标）。"""
     try:
         service = get_assistant_service()
-        meta = await _validate_session_ownership(service, session_id, project_name, _t)
+        meta = await _validate_session_ownership(service, session_id, project_name, user.id, _t)
         return await service.list_session_entries(session_id, meta=meta, after_seq=after)
     except HTTPException:
         raise
@@ -384,10 +398,10 @@ async def stream_entries(
 
 
 @router.post("/sessions/{session_id}/interrupt")
-async def interrupt_session(project_name: str, session_id: str, _t: Translator):
+async def interrupt_session(project_name: str, session_id: str, _t: Translator, user: CurrentUser):
     try:
         service = get_assistant_service()
-        meta = await _validate_session_ownership(service, session_id, project_name, _t)
+        meta = await _validate_session_ownership(service, session_id, project_name, user.id, _t)
         result = await service.interrupt_session(session_id, meta=meta)
         return result
     except HTTPException:
@@ -409,12 +423,13 @@ async def answer_question(
     question_id: str,
     req: AnswerQuestionRequest,
     _t: Translator,
+    user: CurrentUser,
 ):
     if not req.answers:
         raise HTTPException(status_code=400, detail=_t("answers_required"))
     try:
         service = get_assistant_service()
-        meta = await _validate_session_ownership(service, session_id, project_name, _t)
+        meta = await _validate_session_ownership(service, session_id, project_name, user.id, _t)
         result = await service.answer_user_question(
             session_id=session_id,
             question_id=question_id,

@@ -44,6 +44,7 @@ from lib.db.repositories.custom_provider_repo import CustomProviderRepository
 from lib.i18n import Translator
 from lib.image_backends.base import ImageCapability
 from lib.video_backends.base import ReferenceAudioMode
+from server.auth import require_admin
 
 
 def _validate_endpoint(value: str) -> str:
@@ -600,7 +601,7 @@ async def list_endpoint_catalog() -> EndpointCatalogResponse:
     )
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[Depends(require_admin)])
 async def create_provider(
     body: CreateProviderRequest,
     request: Request,
@@ -646,7 +647,7 @@ async def get_provider(
     return _provider_to_response(provider, models, await _global_bucket_refs_for_provider(session, provider_id))
 
 
-@router.get("/{provider_id}/credentials", response_model=CredentialsResponse)
+@router.get("/{provider_id}/credentials", response_model=CredentialsResponse, dependencies=[Depends(require_admin)])
 async def get_provider_credentials(
     provider_id: int,
     _t: Translator,
@@ -667,7 +668,7 @@ async def get_provider_credentials(
     )
 
 
-@router.patch("/{provider_id}")
+@router.patch("/{provider_id}", dependencies=[Depends(require_admin)])
 async def update_provider(
     provider_id: int,
     body: UpdateProviderRequest,
@@ -699,7 +700,7 @@ async def update_provider(
     return _provider_to_response(provider, models, await _global_bucket_refs_for_provider(session, provider_id))
 
 
-@router.put("/{provider_id}")
+@router.put("/{provider_id}", dependencies=[Depends(require_admin)])
 async def full_update_provider(
     provider_id: int,
     body: FullUpdateProviderRequest,
@@ -734,7 +735,7 @@ async def full_update_provider(
     return _provider_to_response(provider, models, await _global_bucket_refs_for_provider(session, provider_id))
 
 
-@router.delete("/{provider_id}", status_code=204)
+@router.delete("/{provider_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_provider(
     provider_id: int,
     request: Request,
@@ -767,7 +768,7 @@ async def delete_provider(
 # ---------------------------------------------------------------------------
 
 
-@router.put("/{provider_id}/models")
+@router.put("/{provider_id}/models", dependencies=[Depends(require_admin)])
 async def replace_models(
     provider_id: int,
     body: ReplaceModelsRequest,
@@ -815,7 +816,7 @@ async def replace_models(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/discover")
+@router.post("/discover", dependencies=[Depends(require_admin)])
 async def discover_models_endpoint(
     body: ProviderConnectionRequest,
     _t: Translator,
@@ -824,7 +825,7 @@ async def discover_models_endpoint(
     return await _run_discover(body.discovery_format, body.base_url, body.api_key, _t)
 
 
-@router.post("/discover-anthropic", response_model=DiscoverResponse)
+@router.post("/discover-anthropic", response_model=DiscoverResponse, dependencies=[Depends(require_admin)])
 async def discover_anthropic_models_endpoint(
     body: DiscoverAnthropicRequest,
     _t: Translator,
@@ -853,7 +854,7 @@ async def discover_anthropic_models_endpoint(
     return await _run_discover("anthropic", base_url, api_key, _t)
 
 
-@router.post("/{provider_id}/discover")
+@router.post("/{provider_id}/discover", dependencies=[Depends(require_admin)])
 async def discover_models_by_id(
     provider_id: int,
     _t: Translator,
@@ -867,7 +868,7 @@ async def discover_models_by_id(
     return await _run_discover(provider.discovery_format, provider.base_url, provider.api_key, _t)
 
 
-@router.post("/test")
+@router.post("/test", dependencies=[Depends(require_admin)])
 async def test_connection(
     body: ProviderConnectionRequest,
     _t: Translator,
@@ -876,7 +877,7 @@ async def test_connection(
     return await _run_connection_test(body.discovery_format, body.base_url, body.api_key, _t)
 
 
-@router.post("/{provider_id}/test")
+@router.post("/{provider_id}/test", dependencies=[Depends(require_admin)])
 async def test_connection_by_id(provider_id: int, _t: Translator, session: AsyncSession = Depends(get_async_session)):
     """使用已存储凭证测试指定供应商的连通性。"""
     repo = CustomProviderRepository(session)

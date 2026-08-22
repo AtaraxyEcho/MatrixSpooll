@@ -67,6 +67,7 @@ class SessionMetaStore:
     async def list(
         self,
         project_name: str | None = None,
+        actor_user_id: str | None = None,
         status: SessionStatus | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -76,6 +77,7 @@ class SessionMetaStore:
             repo = SessionRepository(session)
             result = await repo.list(
                 project_name=project_name,
+                actor_user_id=actor_user_id,
                 status=status,
                 limit=limit,
                 offset=offset,

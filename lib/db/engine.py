@@ -24,11 +24,25 @@ from sqlalchemy.ext.asyncio import (
 logging.getLogger("sqlalchemy.pool.impl").setLevel(logging.CRITICAL)
 
 
+def _testing_mode_enabled() -> bool:
+    """Return whether the process explicitly allows an isolated SQLite test DB."""
+
+    return os.environ.get("TESTING", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def get_database_url() -> str:
-    """Resolve DATABASE_URL from environment or default to SQLite."""
+    """Resolve the database URL, allowing SQLite only in explicit test mode.
+
+    Production and development processes must provide ``DATABASE_URL`` so a
+    missing environment variable cannot silently create a second SQLite
+    database.  The test suite opts in with ``TESTING=true`` and may then use
+    the historical application-data SQLite path unless it supplies a URL.
+    """
     url = os.environ.get("DATABASE_URL", "").strip()
     if url:
         return url
+    if not _testing_mode_enabled():
+        raise RuntimeError("DATABASE_URL is required outside TESTING mode; implicit SQLite databases are disabled")
     from lib.app_data_dir import app_data_dir
 
     db_path = app_data_dir() / ".arcreel.db"

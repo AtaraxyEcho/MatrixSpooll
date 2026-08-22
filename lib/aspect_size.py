@@ -31,6 +31,11 @@ IMAGE_TIER_SHORT_EDGE: dict[str, int] = {"512px": 512, "1K": 1024, "2K": 1440, "
 # 视频：480p / 720p / 1080p / 4K。
 VIDEO_TIER_SHORT_EDGE: dict[str, int] = {"480p": 480, "720p": 720, "1080p": 1080, "4K": 2160}
 
+# Image backends accept these product-level presets unless a backend performs a
+# stricter request-time validation. Expose them from the API so clients do not
+# maintain a second capability fallback.
+IMAGE_ASPECT_RATIO_PRESETS: tuple[str, ...] = ("9:16", "16:9", "1:1", "4:3", "3:4", "21:9")
+
 # 默认比例：来源受控（项目固定竖屏短剧居多），无法解析时回退竖屏 9:16，最小惊讶。
 _DEFAULT_ASPECT: tuple[int, int] = (9, 16)
 

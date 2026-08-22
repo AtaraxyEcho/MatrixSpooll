@@ -21,7 +21,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.responses import Response
@@ -33,14 +33,21 @@ from lib.agent_session_store.import_local import migrate_local_transcripts_to_st
 from lib.agent_session_store.store import DbSessionStore
 from lib.app_data_dir import app_data_dir
 from lib.config.env_keys import PROVIDER_SECRET_KEYS
-from lib.db import async_session_factory, close_db, init_db
+from lib.db import async_session_factory, close_db, init_db, is_sqlite_backend
 from lib.generation_worker import GenerationWorker
 from lib.httpx_shared import shutdown_http_client, startup_http_client
 from lib.logging_config import attach_file_handler, migrate_legacy_log_dir, setup_logging
 from lib.path_safety import try_safe_join
 from lib.project_migrations import cleanup_stale_backups, run_project_migrations
 from lib.source_loader.migration import migrate_project_source_encoding
-from server.auth import ensure_auth_password, ensure_database_users, get_current_user
+from server.auth import (
+    database_auth_initialized,
+    ensure_auth_password,
+    ensure_database_users,
+    get_current_user,
+    is_auth_enabled,
+    is_testing,
+)
 from server.dependencies import require_project_migration_ok
 from server.error_handlers import register_error_handlers
 from server.routers import (
@@ -78,6 +85,7 @@ from server.routers import (
 from server.routers import auth as auth_router
 from server.services.project_access import (
     backfill_project_registry,
+    reconcile_staged_project_deletions,
     require_project_flexible_access,
     require_project_request_access,
 )
@@ -327,6 +335,7 @@ async def _migrate_source_encoding_on_startup(projects_root: Path) -> dict[str, 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    app.state.startup_complete = False
     # Startup
     # 安全红线检测：先父进程 env 净化，再 sandbox 工具可用性，再 docker 检测
     assert_no_provider_secrets_in_environ()
@@ -350,6 +359,9 @@ async def lifespan(app: FastAPI):
     # Run Alembic migrations (auto-creates tables on first start)
     await init_db()
     await ensure_database_users()
+
+    # Finish or roll back filesystem deletions before registry discovery.
+    await reconcile_staged_project_deletions()
 
     # Register file-backed projects before project authorization is enabled.
     # The backfill is idempotent and keeps project.json as the content source.
@@ -391,7 +403,7 @@ async def lifespan(app: FastAPI):
             await migrate_local_transcripts_to_store(
                 store,
                 projects_root=projects_root,
-                data_dir=projects_root,  # same place .arcreel.db lives, so docker volume catches it
+                data_dir=projects_root,  # persistent project volume also retains the migration marker
             )
         except Exception:
             logger.exception("session-store transcript migration failed (non-fatal)")
@@ -447,6 +459,7 @@ async def lifespan(app: FastAPI):
     await project_event_service.start()
     logger.info("ProjectEventService 已启动")
 
+    app.state.startup_complete = True
     yield
 
     # Shutdown
@@ -769,6 +782,55 @@ app.include_router(
 
 def create_generation_worker() -> GenerationWorker:
     return GenerationWorker()
+
+
+@app.get("/health/live", include_in_schema=False)
+async def health_live() -> dict[str, str]:
+    """Liveness probe: the process can serve HTTP requests."""
+    return {"status": "ok"}
+
+
+async def _readiness_report() -> tuple[bool, dict[str, object]]:
+    """Check dependencies required before accepting production traffic."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import text
+
+    report: dict[str, object] = {
+        "database": False,
+        "migration": False,
+        "auth": False,
+        "media": False,
+        "startup": bool(getattr(app.state, "startup_complete", False)),
+        "database_backend": "sqlite" if is_sqlite_backend() else "postgresql",
+    }
+    try:
+        async with async_session_factory() as session:
+            await session.execute(text("SELECT 1"))
+            row = (await session.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))).first()
+        report["database"] = True
+        cfg = Config()
+        cfg.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
+        head = ScriptDirectory.from_config(cfg).get_current_head()
+        report["migration"] = bool(row and head and row[0] == head)
+        report["migration_revision"] = row[0] if row else None
+        report["migration_head"] = head
+    except Exception as exc:
+        logger.warning("Readiness database check failed: %s", exc)
+
+    report["auth"] = database_auth_initialized() if is_auth_enabled() else is_testing()
+    media_root = app_data_dir()
+    report["media"] = media_root.is_dir() and os.access(media_root, os.R_OK | os.W_OK)
+    ready = all(bool(report[key]) for key in ("database", "migration", "auth", "media", "startup"))
+    return ready, report
+
+
+@app.get("/health/ready", include_in_schema=False)
+async def health_ready():
+    """Readiness probe for database, migrations, authentication, and storage."""
+    ready, report = await _readiness_report()
+    payload = {"status": "ok" if ready else "not_ready", "checks": report}
+    return JSONResponse(status_code=200 if ready else 503, content=payload)
 
 
 @app.get("/health")

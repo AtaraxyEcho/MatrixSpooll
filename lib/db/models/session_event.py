@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, BigInteger, Index, PrimaryKeyConstraint, String, text
+from sqlalchemy import JSON, BigInteger, ForeignKey, Index, PrimaryKeyConstraint, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lib.db.base import Base, TimestampMixin, UserOwnedMixin
@@ -17,6 +17,12 @@ class AgentSessionEventLogEntry(TimestampMixin, UserOwnedMixin, Base):
 
     __tablename__ = "agent_session_event_log"
 
+    project_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("project_registry.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     session_id: Mapped[str] = mapped_column(String, nullable=False)
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     entry_type: Mapped[str] = mapped_column(String, nullable=False)

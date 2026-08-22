@@ -43,7 +43,7 @@ class _FakeMetaStore:
     async def get(self, session_id):
         return self.metas.get(session_id)
 
-    async def list(self, project_name=None, status=None, limit=50, offset=0):
+    async def list(self, project_name=None, actor_user_id=None, status=None, limit=50, offset=0):
         return list(self.metas.values())
 
     async def delete(self, session_id):
@@ -317,7 +317,7 @@ class TestAssistantServiceMore:
         sm = _FakeSessionManager()
         service.pm = _FakePM(valid_project="demo")
         service.session_manager = sm
-        service.meta_store = _FakeMetaStore([])
+        service.meta_store = _FakeMetaStore([make_session_meta(id="sdk-prev", project_name="demo")])
         service.event_log = _FakeEventLogService()
         service.event_log_store = store
         assert service._new_session_client_keys == {}  # 重启后进程内映射为空
@@ -357,6 +357,7 @@ class TestAssistantServiceMore:
         async def send_new_session(project_name, prompt, *, user_entry=None, client_key=None, **kwargs):
             sid = f"sdk-{len(sm.new_sessions)}"
             sm.new_sessions.append((project_name, prompt))
+            service.meta_store.metas[sid] = make_session_meta(id=sid, project_name=project_name)
             if user_entry is not None:
                 await store.append_user_entry(sid, user_entry, client_key=client_key)
             return sid
@@ -387,13 +388,38 @@ class TestAssistantServiceMore:
         async def send_new_session(project_name, prompt, *, user_entry=None, client_key=None, **kwargs):
             sid = f"sdk-{len(sm.new_sessions)}"
             sm.new_sessions.append((project_name, prompt))
-            meta_store.metas[sid] = make_session_meta(id=sid, project_name=project_name)
+            meta_store.metas[sid] = make_session_meta(
+                id=sid,
+                project_name=project_name,
+                actor_user_id=kwargs.get("actor_user_id", "default"),
+            )
             if user_entry is not None:
                 await store.append_user_entry(sid, user_entry, client_key=client_key)
             return sid
 
         sm.send_new_session = send_new_session
         return service
+
+    @pytest.mark.asyncio
+    async def test_new_session_client_key_is_scoped_by_user(self, tmp_path):
+        from server.agent_runtime.event_log import EventLogStore
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        store = EventLogStore(session_factory=factory)
+        sm = _FakeSessionManager()
+        service = self._make_project_scoped_service(tmp_path, store, sm, _FakeMetaStore([]))
+
+        first = await service.send_or_create("proj_a", "one", client_key="shared", actor_user_id="user-a")
+        second = await service.send_or_create("proj_a", "two", client_key="shared", actor_user_id="user-b")
+        retry = await service.send_or_create("proj_a", "one", client_key="shared", actor_user_id="user-a")
+
+        assert first["session_id"] != second["session_id"]
+        assert retry["session_id"] == first["session_id"]
+        assert len(sm.new_sessions) == 2
+        await engine.dispose()
 
     @pytest.mark.asyncio
     async def test_new_session_client_key_project_scoped_via_map_hit(self, tmp_path):
@@ -511,6 +537,7 @@ class TestAssistantServiceMore:
         async def send_new_session(project_name, prompt, *, user_entry=None, client_key=None, **kwargs):
             sid = f"sdk-{len(sm.new_sessions)}"
             sm.new_sessions.append((project_name, prompt))
+            service.meta_store.metas[sid] = make_session_meta(id=sid, project_name=project_name)
             if user_entry is not None:
                 await store.append_user_entry(sid, user_entry, client_key=client_key)
             return sid
@@ -559,6 +586,7 @@ class TestAssistantServiceMore:
         async def send_new_session(project_name, prompt, *, user_entry=None, client_key=None, **kwargs):
             sid = f"sdk-{len(sm.new_sessions)}"
             sm.new_sessions.append((project_name, prompt))
+            service.meta_store.metas[sid] = make_session_meta(id=sid, project_name=project_name)
             if user_entry is not None:
                 await store.append_user_entry(sid, user_entry, client_key=client_key)
             return sid
@@ -657,7 +685,7 @@ class TestAssistantServiceMore:
         service = AssistantService(project_root=tmp_path)
         service.pm = _FakePM(valid_project="demo")
         service.session_manager = _FakeSessionManager()
-        service.meta_store = _FakeMetaStore([])
+        service.meta_store = _FakeMetaStore([make_session_meta(id="sdk-old", project_name="demo")])
         service.event_log = _FakeEventLogService()
 
         async def find_by_client_key(session_id, client_key):

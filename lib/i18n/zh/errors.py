@@ -5,6 +5,7 @@ MESSAGES = {
     "admin_last_admin": "不能禁用或降级最后一个有效管理员",
     "admin_project_owner_deactivate_forbidden": "请先转移项目「{project}」的所有权，再停用该用户",
     "admin_required": "需要管理员权限",
+    "asset_owner_required": "只有资产创建者或管理员可以修改该全局资产",
     "admin_superadmin_protected": "环境配置的超级管理员不可修改",
     "avatar_too_large": "头像文件过大，最大支持 2MB",
     "session_invalid": "登录会话已失效，请重新登录",

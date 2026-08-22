@@ -119,6 +119,7 @@ export default {
   'free_creation_action_busy': 'Hãy chờ thao tác hiện tại hoàn tất',
   'free_creation_storyboard_prompt_required': 'Nhập kịch bản hoặc ý tưởng trước khi lập storyboard',
   'free_creation_result_count': '{{count}} tác phẩm',
+  'free_creation_capabilities_unavailable': 'Chưa có khả năng mô hình. Vui lòng cấu hình mô hình trong Cài đặt hệ thống trước.',
   'free_creation_reference_role_label': 'Loại tham chiếu của {{name}}',
   'free_creation_reference_role_choose': 'Chọn mục đích',
   'free_creation_reference_role_incompatible': 'Không khả dụng',

@@ -2,7 +2,8 @@
 
 Supports async engines (aiosqlite / asyncpg) by using run_sync().
 The database URL is read from the DATABASE_URL environment variable via
-lib.db.engine.get_database_url(), falling back to SQLite in projects/.arcreel.db.
+lib.db.engine.get_database_url(). Runtime processes must provide PostgreSQL;
+SQLite is available only when TESTING=true for isolated migrations/tests.
 """
 
 import asyncio

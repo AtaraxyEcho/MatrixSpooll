@@ -67,7 +67,7 @@ describe("ProjectsPage", () => {
     vi.spyOn(API, "getFreeCreationCapabilities").mockImplementation(async ({ outputType }) => ({
       output_type: outputType,
       model: "ark/image-model",
-      ratios: [],
+      ratios: ["16:9", "9:16", "1:1"],
       resolutions: outputType === "image" ? ["1.5k", "2k", "4k"] : [],
       durations: [],
       max_reference_images: null,
@@ -87,7 +87,9 @@ describe("ProjectsPage", () => {
     fireEvent.change(screen.getByRole("textbox", { name: t("home_prompt_label") }), {
       target: { value: "纸飞机穿过云层" },
     });
-    fireEvent.click(screen.getByRole("button", { name: t("home_generate") }));
+    const submit = screen.getByRole("button", { name: t("home_generate") });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
 
     await waitFor(() => expect(createProject).toHaveBeenCalledTimes(1));
     expect(createProject).toHaveBeenCalledWith({

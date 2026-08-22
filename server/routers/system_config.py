@@ -37,6 +37,7 @@ from lib.config.service import ConfigService
 from lib.db import get_async_session
 from lib.httpx_shared import get_http_client
 from lib.i18n import Translator
+from server.auth import require_admin
 from server.dependencies import get_config_service
 from server.routers._validators import validate_backend_value
 
@@ -454,7 +455,7 @@ async def get_system_version(
 # ---------------------------------------------------------------------------
 
 
-@router.patch("/system/config")
+@router.patch("/system/config", dependencies=[Depends(require_admin)])
 async def patch_system_config(
     req: SystemConfigPatchRequest,
     svc: Annotated[ConfigService, Depends(get_config_service)],
