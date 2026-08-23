@@ -14,17 +14,17 @@ Before migrating, distinguish the three types of data involved:
 
 | Path | Purpose | Migration Action |
 |---|---|---|
-| `deploy/projects/.arcreel.db` | SQLite database used by the default deployment | Import into PostgreSQL with pgloader |
+| `${MATRIXSPOOLL_SQLITE_DB}` | Operator-selected SQLite database from the legacy deployment | Import into PostgreSQL with pgloader |
 | Other files under `deploy/projects/` | Project metadata and media assets | Copy to `deploy/production/projects/` |
 | `deploy/production/pgdata/` | PostgreSQL cluster data | Initialize with PostgreSQL; never place project or SQLite files here |
 
-The commands below consistently use the shell variable `source_projects` for the source data root on the host. The default deployment sets it to the absolute path of `deploy/projects/`. If you changed the container data directory with `ARCREEL_DATA_DIR` and a custom mount, set `source_projects` in step 1 to the corresponding absolute host path. The container and host paths may differ, so this guide does not derive that value directly from `.env`. Keep this variable in the same shell throughout the migration.
+The commands below consistently use the shell variable `source_projects` for the source data root on the host. The default deployment sets it to the absolute path of `deploy/projects/`. If you changed the container data directory with `MATRIXSPOOLL_DATA_DIR` and a custom mount, set `source_projects` in step 1 to the corresponding absolute host path. The container and host paths may differ, so this guide does not derive that value directly from `.env`. Keep this variable in the same shell throughout the migration.
 
 ## Prerequisites {#prerequisites}
 
 - Docker and Docker Compose are installed
 - The `sqlite3` command-line tool is installed; run `sqlite3 --version` to confirm
-- The legacy MatrixSpooll deployment uses SQLite, with the database at `deploy/projects/.arcreel.db`
+- The legacy MatrixSpooll deployment uses SQLite and `MATRIXSPOOLL_SQLITE_DB` is set to its absolute path
 - You preserved the Compose file actually used by that deployment and can use it to stop the legacy service
 - `deploy/production/pgdata/` and `deploy/production/projects/` do not contain production data that must be preserved
 
@@ -36,13 +36,15 @@ The commands below consistently use the shell variable `source_projects` for the
 cd "$(git rev-parse --show-toplevel)"
 
 source_projects="$(cd deploy/projects && pwd)"
-# Custom data directory example: source_projects="/srv/arcreel/projects"
+# Custom data directory example: source_projects="/srv/matrixspooll/projects"
 legacy_compose="/path/to/legacy/docker-compose.yml"
+source_db="${MATRIXSPOOLL_SQLITE_DB:?set the absolute path to the legacy SQLite database}"
 
-if [ ! -f "${source_projects}/.arcreel.db" ]; then
-  echo "Error: ${source_projects}/.arcreel.db does not exist" >&2
+if [ ! -f "${source_db}" ]; then
+  echo "Error: SQLite database does not exist: ${source_db}" >&2
   exit 1
 fi
+source_db_name="$(basename "${source_db}")"
 
 if [ ! -f "${legacy_compose}" ]; then
   echo "Error: legacy Compose file ${legacy_compose} does not exist" >&2
@@ -64,10 +66,10 @@ umask 077
 mkdir -p deploy/backups
 chmod 700 deploy/backups
 
-sqlite3 "${source_projects}/.arcreel.db" \
-  ".backup 'deploy/backups/arcreel-sqlite-${backup_stamp}.db'"
+sqlite3 "${source_db}" \
+  ".backup 'deploy/backups/matrixspooll-sqlite-${backup_stamp}.db'"
 
-check_result="$(sqlite3 "deploy/backups/arcreel-sqlite-${backup_stamp}.db" \
+check_result="$(sqlite3 "deploy/backups/matrixspooll-sqlite-${backup_stamp}.db" \
   "PRAGMA quick_check;")"
 
 if [ "${check_result}" != "ok" ]; then
@@ -75,13 +77,13 @@ if [ "${check_result}" != "ok" ]; then
   exit 1
 fi
 
-tar -czf "deploy/backups/arcreel-source-${backup_stamp}.tar.gz" \
+tar -czf "deploy/backups/matrixspooll-source-${backup_stamp}.tar.gz" \
   -C "${source_projects}" .
 
-cp deploy/.env "deploy/backups/arcreel-source-${backup_stamp}.env"
+cp deploy/.env "deploy/backups/matrixspooll-source-${backup_stamp}.env"
 ```
 
-The guard accepts only an exact `ok` response from `PRAGMA quick_check;`. Any backup, check, archive, or configuration-copy failure stops the migration immediately. `sqlite3 .backup` uses the SQLite backup API to create a consistent snapshot that includes committed WAL content. Do not copy only `.arcreel.db` with `cp` while the service is running. `.arcreel.db-wal` may contain committed transactions that have not yet been checkpointed, so separating it from the main file can lose data or corrupt the backup. The paired tar archive stores the complete contents of `source_projects`, while the adjacent `.env` copy stores the default deployment configuration. Restore only artifacts with the same timestamp. `umask 077` and directory mode `0700` restrict access to the credentials and project assets they contain.
+The guard accepts only an exact `ok` response from `PRAGMA quick_check;`. Any backup, check, archive, or configuration-copy failure stops the migration immediately. `sqlite3 .backup` uses the SQLite backup API to create a consistent snapshot that includes committed WAL content. Do not copy only the source database file with `cp` while the service is running. Its companion `-wal` file may contain committed transactions that have not yet been checkpointed, so separating it from the main file can lose data or corrupt the backup. The paired tar archive stores the complete contents of `source_projects`, while the adjacent `.env` copy stores the default deployment configuration. Restore only artifacts with the same timestamp. `umask 077` and directory mode `0700` restrict access to the credentials and project assets they contain.
 
 ### 3. Prepare the PostgreSQL Deployment {#configure-env}
 
@@ -134,7 +136,7 @@ Copy project and media assets to the production directory without copying the SQ
 set -euo pipefail
 
 mkdir -p deploy/production/projects
-tar -C "${source_projects}" --exclude='.arcreel.db*' -cf - . | \
+tar -C "${source_projects}" --exclude="${source_db_name}*" -cf - . | \
   tar -C deploy/production/projects -xf -
 ```
 
@@ -160,18 +162,19 @@ Use pgloader inside the MatrixSpooll container to migrate the original SQLite da
 
 ```bash
 docker compose -f deploy/production/docker-compose.yml run --rm \
+  -e SOURCE_DB_NAME="${source_db_name}" \
   -v "${source_projects}:/migration-source:ro" \
   matrixspooll bash -c '
     apt-get update &&
     apt-get install -y --no-install-recommends pgloader &&
-    pgloader sqlite:///migration-source/.arcreel.db \
-             "postgresql://arcreel:${POSTGRES_PASSWORD_URLENCODED:-$POSTGRES_PASSWORD}@postgres:5432/arcreel"
+    pgloader "sqlite:///migration-source/${SOURCE_DB_NAME}" \
+             "postgresql://matrixspooll:${POSTGRES_PASSWORD_URLENCODED:-$POSTGRES_PASSWORD}@postgres:5432/matrixspooll"
   '
 ```
 
 :::danger
 
-**Do not run this command repeatedly against a target that contains data.** pgloader's default SQLite options include `include drop`: it uses `CASCADE` to drop target tables whose names match the source database, then recreates the schema and imports the data. It does not skip existing tables. Run it once, only against the empty `arcreel` database initialized by this procedure. If migration fails, first verify that the target contains no data you need to preserve, recreate an empty target, and then retry. Never rerun pgloader after MatrixSpooll has started writing to PostgreSQL.
+**Do not run this command repeatedly against a target that contains data.** pgloader's default SQLite options include `include drop`: it uses `CASCADE` to drop target tables whose names match the source database, then recreates the schema and imports the data. It does not skip existing tables. Run it once, only against the empty `matrixspooll` database initialized by this procedure. If migration fails, first verify that the target contains no data you need to preserve, recreate an empty target, and then retry. Never rerun pgloader after MatrixSpooll has started writing to PostgreSQL.
 
 :::
 
@@ -181,7 +184,7 @@ pgloader handles common type and syntax differences between SQLite and PostgreSQ
 
 ```bash
 docker compose -f deploy/production/docker-compose.yml \
-  exec postgres psql -U arcreel -d arcreel -c "
+  exec postgres psql -U matrixspooll -d matrixspooll -c "
   SELECT 'tasks' AS tbl, COUNT(*) FROM tasks
   UNION ALL
   SELECT 'api_calls', COUNT(*) FROM api_calls
@@ -195,7 +198,7 @@ docker compose -f deploy/production/docker-compose.yml \
 Compare the record counts in SQLite:
 
 ```bash
-sqlite3 "${source_projects}/.arcreel.db" "
+sqlite3 "${source_db}" "
   SELECT 'tasks', COUNT(*) FROM tasks
   UNION ALL
   SELECT 'api_calls', COUNT(*) FROM api_calls
@@ -229,13 +232,13 @@ The migration procedure above does not modify the source data directory referenc
    docker compose -f deploy/production/docker-compose.yml down
    ```
 
-2. Confirm that `${source_projects}/.arcreel.db` and `deploy/.env` still exist. If the source directory was changed or damaged, first select the two backup files from step 2 that have the same timestamp, then run:
+2. Confirm that `${source_db}` and the legacy `.env` still exist. If the source directory was changed or damaged, first select the two backup files from step 2 that have the same timestamp, then run:
 
    ```bash
    set -euo pipefail
 
-   archive="deploy/backups/arcreel-source-YYYYMMDD-HHMMSS.tar.gz"
-   env_backup="deploy/backups/arcreel-source-YYYYMMDD-HHMMSS.env"
+   archive="deploy/backups/matrixspooll-source-YYYYMMDD-HHMMSS.tar.gz"
+   env_backup="deploy/backups/matrixspooll-source-YYYYMMDD-HHMMSS.env"
    preserved="${source_projects}.before-rollback-$(date +%Y%m%d-%H%M%S)"
 
    mv -- "${source_projects}" "${preserved}"
@@ -258,4 +261,4 @@ The migration procedure above does not modify the source data directory referenc
 
 5. Keep `deploy/production/pgdata/`, `deploy/production/projects/`, and the migration backups until rollback verification is complete. Do not delete them. `POSTGRES_PASSWORD` is stored in the separate `deploy/production/.env` and does not need to be removed from `deploy/.env`.
 
-If the original deployment used custom Compose configuration or a custom data mount, restore its original SQLite URL or unset `DATABASE_URL`, confirm that `ARCREEL_DATA_DIR` still points to the original directory inside the legacy container, and verify that the mount maps it to `${source_projects}` on the host. Return to the current PostgreSQL release after resolving the migration issue; do not keep the legacy SQLite release as a long-term deployment.
+If the original deployment used custom Compose configuration or a custom data mount, restore its original SQLite URL or unset `DATABASE_URL`, confirm that `MATRIXSPOOLL_DATA_DIR` still points to the original directory inside the legacy container, and verify that the mount maps it to `${source_projects}` on the host. Return to the current PostgreSQL release after resolving the migration issue; do not keep the legacy SQLite release as a long-term deployment.

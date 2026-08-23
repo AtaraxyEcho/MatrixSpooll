@@ -17,7 +17,7 @@ in-scope 文档分两组：
 
 README.en.md 是 README.md 的镜像，中文为源：不独立进引擎，改完后随中文做全文一致性核对（第 6 步）。
 
-面向用户的文档源文件在 `website/docs/` 下（发布到 docs.arc-reel.com）。排除供应商费用表，以及未上站的内部文档（`docs/` 下的 adr、research、各供应商 SDK 文档等）。新增上站页面按性质声明 `update_docs`，并同步 CONTRIBUTING「各页职责」。
+面向用户的文档源文件在 `website/docs/` 下（发布到 the local Docusaurus site）。排除供应商费用表，以及未上站的内部文档（`docs/` 下的 adr、research、各供应商 SDK 文档等）。新增上站页面按性质声明 `update_docs`，并同步 CONTRIBUTING「各页职责」。
 
 ## 步骤
 

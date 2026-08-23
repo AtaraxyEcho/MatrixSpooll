@@ -33,7 +33,7 @@ async def _seed_pg_users(engine) -> None:
             await conn.execute(
                 text(
                     "INSERT INTO users (id, username, role, is_active, created_at, updated_at) "
-                    "VALUES (:id, :username, 'user', true, NOW(), NOW()) "
+                    "VALUES (:id, :username, 'member', true, NOW(), NOW()) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
                 {"id": uid, "username": uid},

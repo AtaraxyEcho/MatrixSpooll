@@ -7,7 +7,7 @@ Old files:
   projects/.agent_data/sessions.db → agent_sessions table
 
 New file:
-  projects/.arcreel.db          (created by init_db / Alembic)
+  projects/.matrixspooll.db          (created by init_db / Alembic)
 
 On success, old files are renamed to *.bak so they are preserved but won't
 interfere with the new code.
@@ -21,6 +21,7 @@ import asyncio
 import sqlite3
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 # Ensure project root is on sys.path
 ROOT = Path(__file__).parent.parent
@@ -37,10 +38,12 @@ lib_stub.__path__ = [str(ROOT / "lib")]
 lib_stub.__package__ = "lib"
 sys.modules.setdefault("lib", lib_stub)
 
+from sqlalchemy import select  # noqa: E402
+
 from lib.app_data_dir import app_data_dir  # noqa: E402
 from lib.db import init_db  # noqa: E402
 from lib.db.engine import async_session_factory  # noqa: E402
-from lib.db.models import AgentSession, ApiCall, Task, WorkerLease  # noqa: E402
+from lib.db.models import AgentSession, ApiCall, ProjectRegistry, Task, User, WorkerLease  # noqa: E402
 
 PROJECTS_DIR = app_data_dir()
 OLD_TASK_DB = PROJECTS_DIR / ".task_queue.db"
@@ -116,11 +119,41 @@ async def _migrate(dry_run: bool) -> dict[str, int]:
     await init_db()
 
     async with async_session_factory() as session:
+        bootstrap_user_id = await session.scalar(select(User.id).where(User.is_superadmin.is_(True)).limit(1))
+        if bootstrap_user_id is None:
+            raise RuntimeError("cannot migrate legacy records before the PostgreSQL superadmin is bootstrapped")
+
+        async def actor_id_for(candidate: object) -> str:
+            if isinstance(candidate, str) and candidate:
+                existing = await session.scalar(select(User.id).where(User.id == candidate))
+                if existing is not None:
+                    return existing
+            return bootstrap_user_id
+
+        async def project_id_for(name: str) -> str:
+            matches = list((await session.scalars(select(ProjectRegistry).where(ProjectRegistry.name == name))).all())
+            if len(matches) > 1:
+                raise RuntimeError(f"project name is ambiguous; register legacy records explicitly: {name}")
+            if matches:
+                return matches[0].id
+            project = ProjectRegistry(
+                id=uuid4().hex,
+                name=name,
+                storage_key=name,
+                owner_id=bootstrap_user_id,
+            )
+            session.add(project)
+            await session.flush()
+            return project.id
+
         # Tasks
         for row in tasks:
+            project_id = await project_id_for(row["project_name"])
+            user_id = await actor_id_for(row.get("user_id"))
             session.add(
                 Task(
                     task_id=row["task_id"],
+                    project_id=project_id,
                     project_name=row["project_name"],
                     task_type=row["task_type"],
                     media_type=row["media_type"],
@@ -138,6 +171,7 @@ async def _migrate(dry_run: bool) -> dict[str, int]:
                     started_at=row.get("started_at"),
                     finished_at=row.get("finished_at"),
                     updated_at=row["updated_at"],
+                    user_id=user_id,
                 )
             )
 
@@ -154,8 +188,11 @@ async def _migrate(dry_run: bool) -> dict[str, int]:
 
         # API calls
         for row in api_calls:
+            project_id = await project_id_for(row["project_name"])
+            user_id = await actor_id_for(row.get("user_id"))
             session.add(
                 ApiCall(
+                    project_id=project_id,
                     project_name=row["project_name"],
                     call_type=row["call_type"],
                     model=row["model"],
@@ -173,20 +210,25 @@ async def _migrate(dry_run: bool) -> dict[str, int]:
                     retry_count=row.get("retry_count", 0),
                     cost_amount=row.get("cost_usd", 0.0),
                     created_at=row.get("created_at"),
+                    user_id=user_id,
                 )
             )
 
         # Agent sessions
         for row in sessions:
+            project_id = await project_id_for(row["project_name"])
+            user_id = await actor_id_for(row.get("user_id"))
             session.add(
                 AgentSession(
                     id=row["id"],
-                    sdk_session_id=row.get("sdk_session_id"),
+                    sdk_session_id=row.get("sdk_session_id") or row["id"],
+                    project_id=project_id,
                     project_name=row["project_name"],
                     title=row.get("title", ""),
                     status=row.get("status", "idle"),
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],
+                    user_id=user_id,
                 )
             )
 

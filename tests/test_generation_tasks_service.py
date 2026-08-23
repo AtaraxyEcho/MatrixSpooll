@@ -1832,7 +1832,7 @@ class TestGenerationTasks:
         current_prompt = {"action": "current action", "camera_motion": "Static", "dialogue": []}
         item["video_prompt"] = current_prompt
         item["duration_seconds"] = 8
-        manifest = project_path / ".arcreel_artifacts.json"
+        manifest = project_path / ".matrixspooll_artifacts.json"
         manifest_before = manifest.read_bytes()
         submitted: dict[str, Mapping[str, object]] = {}
 
@@ -1841,7 +1841,7 @@ class TestGenerationTasks:
                 self.video_calls.append(kwargs)
                 start_image = kwargs["start_image"]
                 assert isinstance(start_image, Path)
-                assert ".arcreel/tasks/task-storyboard/provider_media/" in start_image.as_posix()
+                assert ".matrixspooll/tasks/task-storyboard/provider_media/" in start_image.as_posix()
                 assert start_image.read_bytes() == b"png"
                 metadata = await kwargs["before_submit"](41)
                 assert metadata is not None
@@ -1893,7 +1893,7 @@ class TestGenerationTasks:
         assert call["formal_output"] is True
         assert submitted["metadata"]["execution_request_digest"] == checkpoint.request_digest
         assert manifest.read_bytes() == manifest_before
-        assert not (project_path / ".arcreel" / "tasks" / "task-storyboard" / "provider_media").exists()
+        assert not (project_path / ".matrixspooll" / "tasks" / "task-storyboard" / "provider_media").exists()
 
     @pytest.mark.integration
     async def test_execute_video_task_lane_bucket_follows_project_route(self, monkeypatch, tmp_path):
@@ -2233,7 +2233,7 @@ class TestGenerationTasks:
         assert result["request_duration_seconds"] == 8
         assert fake_generator.video_calls == []
         fake_queue.persist_execution_checkpoint.assert_not_awaited()
-        assert not (project_path / ".arcreel" / "tasks" / "task-reuse" / "provider_media").exists()
+        assert not (project_path / ".matrixspooll" / "tasks" / "task-reuse" / "provider_media").exists()
         assert fake_pm.script == script_before
         assert fake_generator.versions.get_versions("videos", "E1S01") == history_before
         assert current.read_bytes() == b"existing-paid-video"
@@ -2364,7 +2364,7 @@ class TestGenerationTasks:
 
         assert provider_submissions == []
         fake_queue.persist_execution_checkpoint.assert_not_awaited()
-        assert not (project_path / ".arcreel" / "tasks" / "task-storyboard-claim-race" / "provider_media").exists()
+        assert not (project_path / ".matrixspooll" / "tasks" / "task-storyboard-claim-race" / "provider_media").exists()
 
     @pytest.mark.integration
     async def test_video_rejects_storyboard_replaced_after_staging_before_provider(
@@ -2437,7 +2437,9 @@ class TestGenerationTasks:
 
         assert provider_submissions == []
         fake_queue.persist_execution_checkpoint.assert_not_awaited()
-        assert not (project_path / ".arcreel" / "tasks" / "task-legacy-storyboard-race" / "provider_media").exists()
+        assert not (
+            project_path / ".matrixspooll" / "tasks" / "task-legacy-storyboard-race" / "provider_media"
+        ).exists()
 
     @pytest.mark.integration
     async def test_execute_video_task_generated_assets_non_dict_is_refused(self, monkeypatch, tmp_path):

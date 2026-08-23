@@ -3,7 +3,7 @@ import type { AgentGenerationPreference } from "./GenerationComposer";
 import type { FreeCreationReferenceMode } from "./FreeCreationReferenceInput";
 import type { GenerationModelPreferences } from "./generationModelPreference";
 
-export const FREE_CREATION_COMPOSER_PREFERENCES_KEY = "arcreel:freeCreationComposerPreferences";
+export const FREE_CREATION_COMPOSER_PREFERENCES_KEY = "matrixspooll:freeCreationComposerPreferences";
 
 export interface FreeCreationComposerPreferences {
   composerMode?: "agent" | FreeCreationMediaType;

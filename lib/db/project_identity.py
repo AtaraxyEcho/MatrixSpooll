@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.agent_session_store.models import AgentSessionEntry, AgentSessionSummary
@@ -16,8 +16,13 @@ from lib.db.models.task import Task
 
 async def resolve_project_id(session: AsyncSession, project_name: str) -> str | None:
     """Resolve a file-backed project name to its stable registry ID."""
-
-    return await session.scalar(select(ProjectRegistry.id).where(ProjectRegistry.name == project_name))
+    direct = await session.get(ProjectRegistry, project_name)
+    if direct is not None:
+        return direct.id
+    ids = list((await session.scalars(select(ProjectRegistry.id).where(ProjectRegistry.name == project_name))).all())
+    if len(ids) > 1:
+        raise ValueError(f"project name is ambiguous; use project_id: {project_name}")
+    return ids[0] if ids else None
 
 
 async def backfill_project_record_ids(session: AsyncSession) -> int:
@@ -30,6 +35,26 @@ async def backfill_project_record_ids(session: AsyncSession) -> int:
 
     affected = 0
     for model in (Task, AgentSession, ApiCall):
+        # A legacy row can only be repaired by name when that name still
+        # identifies exactly one registry record.  Never let a scalar
+        # subquery pick an arbitrary duplicate project.
+        unresolved_names = set(
+            (await session.scalars(select(model.project_name).where(model.project_id.is_(None)).distinct())).all()
+        )
+        if unresolved_names:
+            ambiguous_names = set(
+                (
+                    await session.scalars(
+                        select(ProjectRegistry.name)
+                        .where(ProjectRegistry.name.in_(unresolved_names))
+                        .group_by(ProjectRegistry.name)
+                        .having(func.count(ProjectRegistry.id) > 1)
+                    )
+                ).all()
+            )
+            if ambiguous_names:
+                names = ", ".join(sorted(ambiguous_names))
+                raise ValueError(f"project identity backfill is ambiguous; assign project_id explicitly: {names}")
         project_id = (
             select(ProjectRegistry.id)
             .where(ProjectRegistry.name == model.project_name)

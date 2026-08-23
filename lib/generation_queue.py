@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from lib.db import safe_session_factory
 from lib.db.base import DEFAULT_USER_ID
+from lib.db.project_identity import resolve_project_id
 from lib.db.repositories.task_repo import TaskRepository
 from lib.generation_admission import generation_admission_lock
 from lib.project_migration_guard import assert_project_migration_ok
@@ -416,8 +417,11 @@ class GenerationQueue:
         # same per-unit admission guard.  Keeping the guard here makes every Web,
         # Agent, and batch enqueue entry participate without duplicating checks.
         if task_type in {"tts", "video", "reference_video"} and script_file:
+            async with self._session_factory() as identity_session:
+                admission_project_id = await resolve_project_id(identity_session, project_name)
             async with generation_admission_lock(
                 project_name=project_name,
+                project_id=admission_project_id,
                 script_file=script_file,
                 resource_id=resource_id,
             ):
@@ -593,16 +597,16 @@ class GenerationQueue:
         async with self._task_repo() as repo:
             return await repo.get_cancel_preview(task_id)
 
-    async def cancel_all_queued(self, project_name: str) -> dict[str, Any]:
+    async def cancel_all_queued(self, project_name: str, *, project_id: str | None = None) -> dict[str, Any]:
         async with self._task_repo() as repo:
-            result = await repo.cancel_all_queued(project_name)
+            result = await repo.cancel_all_queued(project_name, project_id=project_id)
         if result["cancelled_count"] > 0:
             logger.info("批量取消 project=%s 共取消 %d 个", project_name, result["cancelled_count"])
         return result
 
-    async def get_cancel_all_preview(self, project_name: str) -> int:
+    async def get_cancel_all_preview(self, project_name: str, *, project_id: str | None = None) -> int:
         async with self._task_repo() as repo:
-            return await repo.get_cancel_all_preview(project_name)
+            return await repo.get_cancel_all_preview(project_name, project_id=project_id)
 
     async def get_task(self, task_id: str) -> dict[str, Any] | None:
 
@@ -614,6 +618,8 @@ class GenerationQueue:
         *,
         project_name: str | None = None,
         project_names: Sequence[str] | None = None,
+        project_id: str | None = None,
+        project_ids: Sequence[str] | None = None,
         status: str | None = None,
         task_type: str | None = None,
         source: str | None = None,
@@ -625,6 +631,8 @@ class GenerationQueue:
             return await repo.list_tasks(
                 project_name=project_name,
                 project_names=project_names,
+                project_id=project_id,
+                project_ids=project_ids,
                 status=status,
                 task_type=task_type,
                 source=source,
@@ -636,10 +644,17 @@ class GenerationQueue:
         self,
         project_name: str | None = None,
         project_names: Sequence[str] | None = None,
+        project_id: str | None = None,
+        project_ids: Sequence[str] | None = None,
     ) -> dict[str, int]:
 
         async with self._task_repo() as repo:
-            return await repo.get_stats(project_name=project_name, project_names=project_names)
+            return await repo.get_stats(
+                project_name=project_name,
+                project_names=project_names,
+                project_id=project_id,
+                project_ids=project_ids,
+            )
 
     async def acquire_or_renew_worker_lease(
         self,

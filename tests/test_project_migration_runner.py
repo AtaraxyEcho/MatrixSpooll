@@ -199,7 +199,7 @@ def test_cleanup_old_backups(tmp_projects: Path):
     old.write_text("old", encoding="utf-8")
     new.write_text("new", encoding="utf-8")
     old_script = p / "scripts" / "episode_1.json.bak.v7-100000000"
-    new_manifest = p / ".arcreel_artifacts.json.bak.v7-9999999999"
+    new_manifest = p / ".matrixspooll_artifacts.json.bak.v7-9999999999"
     old_script.parent.mkdir()
     old_script.write_text("old-script", encoding="utf-8")
     new_manifest.write_text("new-manifest", encoding="utf-8")
@@ -246,7 +246,7 @@ def test_cleanup_retains_v7_recovery_backups_until_schema_promotion_succeeds(tmp
     backups = [
         project_dir / "project.json.bak.v7-100000000",
         project_dir / "scripts" / "episode_1.json.bak.v7-100000000",
-        project_dir / ".arcreel_artifacts.json.bak.v7-100000000",
+        project_dir / ".matrixspooll_artifacts.json.bak.v7-100000000",
     ]
     expired = time.time() - 8 * 86400
     for backup in backups:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy import delete, select, update
 
+from lib.db.actor_identity import resolve_actor_user_id
 from lib.db.base import DEFAULT_USER_ID
 from lib.db.models.agent_credential import AgentAnthropicCredential
 from lib.db.repositories.base import BaseRepository
@@ -29,8 +30,9 @@ class AgentCredentialRepository(BaseRepository):
         subagent_model: str | None = None,
         user_id: str = DEFAULT_USER_ID,
     ) -> AgentAnthropicCredential:
+        actor_id = await resolve_actor_user_id(self.session, user_id)
         cred = AgentAnthropicCredential(
-            user_id=user_id,
+            user_id=actor_id,
             preset_id=preset_id,
             display_name=display_name,
             base_url=base_url,
@@ -52,17 +54,19 @@ class AgentCredentialRepository(BaseRepository):
         return result.scalar_one_or_none()
 
     async def list_for_user(self, user_id: str = DEFAULT_USER_ID) -> list[AgentAnthropicCredential]:
+        actor_id = await resolve_actor_user_id(self.session, user_id)
         stmt = (
             select(AgentAnthropicCredential)
-            .where(AgentAnthropicCredential.user_id == user_id)
+            .where(AgentAnthropicCredential.user_id == actor_id)
             .order_by(AgentAnthropicCredential.id)
         )
         result = await self.session.execute(stmt)
         return list(result.scalars())
 
     async def get_active(self, user_id: str = DEFAULT_USER_ID) -> AgentAnthropicCredential | None:
+        actor_id = await resolve_actor_user_id(self.session, user_id)
         stmt = select(AgentAnthropicCredential).where(
-            AgentAnthropicCredential.user_id == user_id,
+            AgentAnthropicCredential.user_id == actor_id,
             AgentAnthropicCredential.is_active.is_(True),
         )
         result = await self.session.execute(stmt)
@@ -83,14 +87,15 @@ class AgentCredentialRepository(BaseRepository):
         Raises:
             ValueError: cred_id 不存在或不属于该 user
         """
+        actor_id = await resolve_actor_user_id(self.session, user_id)
         cred = await self.get(cred_id)
-        if cred is None or cred.user_id != user_id:
+        if cred is None or cred.user_id != actor_id:
             raise ValueError(f"credential id={cred_id} not found")
         # SQLite 的 partial unique index 在同事务内中间态可能违反，所以先全清再设
         await self.session.execute(
             update(AgentAnthropicCredential)
             .where(
-                AgentAnthropicCredential.user_id == user_id,
+                AgentAnthropicCredential.user_id == actor_id,
                 AgentAnthropicCredential.is_active.is_(True),
             )
             .values(is_active=False)

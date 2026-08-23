@@ -1,6 +1,6 @@
 """SDK MCP tool for narration audio (TTS) generation.
 
-工具返回文本是 agent-facing（免 i18n）；显示名在 ``ARCREEL_MCP_TOOL_IDS`` 注册、补三语。
+工具返回文本是 agent-facing（免 i18n）；显示名在 ``MATRIXSPOOLL_MCP_TOOL_IDS`` 注册、补三语。
 
 missing-only 选择只服务于用户显式要求生成旁白配音的这个入口：后期配音的视频请求
 不经过这里，缺少 TTS 在那条路径上既不自动补齐，也不算工作流缺口。
@@ -205,6 +205,7 @@ def generate_narration_audio_tool(ctx: ToolContext):
                 successes, failures = await batch_enqueue_and_wait(
                     project_name=ctx.project_name,
                     specs=specs,
+                    user_id=ctx.actor_user_id,
                 )
                 record_batch_outcomes(
                     builder,

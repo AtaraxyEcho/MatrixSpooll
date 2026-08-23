@@ -159,7 +159,7 @@ def test_stage_provider_media_copies_only_declared_inputs_with_digest_and_identi
     assert [item.target_index for item in staged] == [None, 0]
     assert [item.size_bytes for item in staged] == [15, 15]
     assert all(len(item.sha256) == 64 for item in staged)
-    assert all(item.staged_locator.startswith(".arcreel/tasks/task-1/provider_media/") for item in staged)
+    assert all(item.staged_locator.startswith(".matrixspooll/tasks/task-1/provider_media/") for item in staged)
     assert (project_path / staged[0].staged_locator).read_bytes() == b"immutable-image"
     assert (project_path / staged[1].staged_locator).read_bytes() == b"immutable-audio"
 
@@ -217,7 +217,7 @@ def test_stage_provider_media_rejects_escape_and_does_not_publish_partial_direct
             ),
         )
 
-    assert not (project_path / ".arcreel" / "tasks" / "task-1" / "provider_media").exists()
+    assert not (project_path / ".matrixspooll" / "tasks" / "task-1" / "provider_media").exists()
 
 
 @pytest.mark.parametrize("task_id", ["../escape", "/absolute", "bad/task"])
@@ -230,7 +230,7 @@ def test_stage_provider_media_rejects_unsafe_task_id(tmp_path: Path, task_id: st
 def test_cleanup_removes_only_task_provider_media(tmp_path: Path) -> None:
     project_path = tmp_path / "demo"
     stage_provider_media(project_path, "task-1", _stage_inputs(project_path))
-    sibling = project_path / ".arcreel" / "tasks" / "task-1" / "paid-history.keep"
+    sibling = project_path / ".matrixspooll" / "tasks" / "task-1" / "paid-history.keep"
     sibling.write_bytes(b"keep")
 
     cleanup_staged_provider_media(project_path, "task-1")
@@ -245,7 +245,7 @@ def test_cleanup_unlinks_provider_media_symlink_without_deleting_its_target(tmp_
     paid_history.mkdir(parents=True)
     paid_version = paid_history / "v1.mp4"
     paid_version.write_bytes(b"paid-history")
-    task_dir = project_path / ".arcreel" / "tasks" / "task-1"
+    task_dir = project_path / ".matrixspooll" / "tasks" / "task-1"
     task_dir.mkdir(parents=True)
     staging_link = task_dir / "provider_media"
     staging_link.symlink_to(paid_history, target_is_directory=True)
@@ -263,7 +263,7 @@ def test_cleanup_removes_provider_media_junction_without_using_file_unlink(
     from lib.reference_video import execution_checkpoint
 
     project_path = tmp_path / "demo"
-    staging_dir = project_path / ".arcreel" / "tasks" / "task-1" / "provider_media"
+    staging_dir = project_path / ".matrixspooll" / "tasks" / "task-1" / "provider_media"
     staging_dir.mkdir(parents=True)
     monkeypatch.setattr(
         execution_checkpoint.os.path,
@@ -284,7 +284,7 @@ def test_cleanup_does_not_traverse_a_symlinked_task_ancestor(tmp_path: Path) -> 
     provider_media.mkdir(parents=True)
     paid_version = provider_media / "v1.mp4"
     paid_version.write_bytes(b"paid-history")
-    tasks_dir = project_path / ".arcreel" / "tasks"
+    tasks_dir = project_path / ".matrixspooll" / "tasks"
     tasks_dir.mkdir(parents=True)
     task_link = tasks_dir / "task-1"
     task_link.symlink_to(paid_history, target_is_directory=True)
@@ -484,7 +484,7 @@ def test_checkpoint_rejects_noncanonical_staged_locator_and_wrong_identity(tmp_p
 
     wrong_task = replace(
         checkpoint.media[0],
-        staged_locator=".arcreel/tasks/task-2/provider_media/000-reference_image.png",
+        staged_locator=".matrixspooll/tasks/task-2/provider_media/000-reference_image.png",
     )
     with pytest.raises(ValueError, match="staged_locator"):
         ReferenceSubmissionCheckpoint.create(

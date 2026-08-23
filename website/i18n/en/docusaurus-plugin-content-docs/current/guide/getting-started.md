@@ -96,54 +96,11 @@ git clone https://github.com/MockMine/MatrixSpooll.git
 cd MatrixSpooll
 ```
 
-### 2.2 Use the Default SQLite Deployment {#deploy-with-sqlite}
+### 2.2 Deploy with PostgreSQL {#deploy-with-postgresql}
 
-The default deployment is suitable for initial evaluation, personal creation, and light use.
-
-```bash
-cd deploy
-cp .env.example .env
-```
-
-Edit `.env`:
-
-```dotenv
-AUTH_USERNAME=admin
-AUTH_PASSWORD=set a strong password
-AUTH_TOKEN_SECRET=set a long-lived random secret
-```
-
-You can generate `AUTH_TOKEN_SECRET` with this command:
-
-```bash
-openssl rand -hex 32
-```
-
-Start the service:
-
-```bash
-docker compose up -d
-```
-
-Check its status:
-
-```bash
-docker compose ps
-docker compose logs --tail=100 matrixspooll
-curl http://localhost:1241/health
-```
-
-After the health check succeeds, open this address in your browser:
-
-```text
-http://localhost:1241
-```
-
-> When `AUTH_PASSWORD` is empty, MatrixSpooll automatically generates a password on first startup and writes it back to `.env`. For regular use, you should still set and securely store a strong password yourself.
-
-### 2.3 Use the PostgreSQL Production Deployment {#deploy-with-postgresql}
-
-PostgreSQL is recommended for long-running, concurrent, or production services. It improves concurrency, backups, and operations, but does not provide user isolation. Do not let mutually untrusted users share the same MatrixSpooll instance.
+MatrixSpooll uses PostgreSQL for both local image builds and image-based deployments. PostgreSQL improves concurrency,
+backups, and operations, but does not provide cross-tenant isolation. Do not let mutually untrusted organizations share
+the same MatrixSpooll instance.
 
 Run these commands from the root of the MatrixSpooll repository:
 
@@ -173,10 +130,14 @@ Start the image deployment (pulling a pre-built image):
 docker compose -f docker-compose-img.yml pull
 docker compose -f docker-compose-img.yml up -d
 docker compose ps
-curl http://localhost:1241/health
+curl -f http://localhost:1241/health/ready
 ```
 
 Choose one deployment method; do not run both on the same port.
+
+After the readiness check succeeds, open `http://localhost:1241`. Developers who run the backend on the host for hot
+reload should use `deploy/development/docker-compose.yml` to start PostgreSQL only; see the
+[Contributing Guide](../dev/contributing.md).
 
 For complete production deployment, upgrade, backup, and reverse proxy instructions, see [Deployment and Operations](../ops/deployment.md).
 

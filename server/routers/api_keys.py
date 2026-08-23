@@ -23,13 +23,14 @@ from server.auth import (
     invalidate_api_key_cache,
     require_admin,
 )
+from server.services.audit import AuditAction, AuditResourceType, record_audit_event
 
 router = APIRouter()
 
 
 def _require_jwt_auth(user: CurrentUserInfo, _t: Callable[..., str]) -> None:
     """确保请求通过 JWT 认证（非 API Key）。API Key 管理操作不允许由 API Key 本身执行。"""
-    if user.sub.startswith("apikey:"):
+    if user.auth_method == "api_key":
         raise HTTPException(status_code=403, detail=_t("jwt_auth_required"))
 
 
@@ -37,7 +38,7 @@ API_KEY_DEFAULT_EXPIRY_DAYS = 30
 
 
 def _generate_api_key() -> str:
-    """生成格式为 arc-<32位随机字符> 的 API Key。"""
+    """生成格式为 msp-<32位随机字符> 的 API Key。"""
     random_part = secrets.token_hex(16)  # 32 hex chars
     return f"{API_KEY_PREFIX}{random_part}"
 
@@ -79,7 +80,7 @@ async def create_api_key(
     _require_jwt_auth(user, _t)
     key = _generate_api_key()
     key_hash = _hash_api_key(key)
-    key_prefix = key[:8]  # e.g. "arc-abcd"
+    key_prefix = key[:8]  # e.g. "msp-abcd"
 
     if body.expires_days == 0:
         expires_at: datetime | None = None
@@ -97,6 +98,15 @@ async def create_api_key(
                     key_hash=key_hash,
                     key_prefix=key_prefix,
                     expires_at=expires_at,
+                    user_id=user.id,
+                )
+                record_audit_event(
+                    session,
+                    actor=user,
+                    action=AuditAction.API_KEY_CREATE,
+                    resource_type=AuditResourceType.API_KEY,
+                    resource_id=str(row["id"]),
+                    details={"name": body.name},
                 )
     except IntegrityError:
         raise HTTPException(status_code=409, detail=_t("api_key_name_exists", name=body.name))
@@ -141,10 +151,20 @@ async def delete_api_key(
             if row is None:
                 raise HTTPException(status_code=404, detail=_t("api_key_not_found", key_id=key_id))
             key_hash = row["key_hash"]
-            # 先失效缓存再删库：即使事务提交后崩溃，缓存也已清除，
-            # 不会出现 DB 已删但缓存仍有效的宽限窗口。
+            # 先失效缓存再吊销：即使事务提交后崩溃，缓存也已清除。
             invalidate_api_key_cache(key_hash)
-            deleted = await repo.delete(key_id)
+            revoked = await repo.revoke(key_id)
+            if revoked:
+                record_audit_event(
+                    session,
+                    actor=user,
+                    action=AuditAction.API_KEY_REVOKE,
+                    resource_type=AuditResourceType.API_KEY,
+                    resource_id=str(key_id),
+                    details={"name": row["name"]},
+                )
 
-    if not deleted:
+    invalidate_api_key_cache(key_hash)
+
+    if not revoked:
         raise HTTPException(status_code=404, detail=_t("api_key_not_found", key_id=key_id))

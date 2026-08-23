@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete as sa_delete
 from sqlalchemy import select, update
 
+from lib.db.actor_identity import resolve_actor_user_id
 from lib.db.base import DEFAULT_USER_ID, utc_now
 from lib.db.models.api_key import ApiKey
 from lib.db.repositories.base import BaseRepository, rowcount
@@ -22,10 +22,12 @@ def _to_iso(dt: datetime | None) -> str | None:
 def _row_to_dict(row: ApiKey) -> dict[str, Any]:
     return {
         "id": row.id,
+        "user_id": row.user_id,
         "name": row.name,
         "key_prefix": row.key_prefix,
         "created_at": _to_iso(row.created_at),
         "expires_at": _to_iso(row.expires_at),
+        "revoked_at": _to_iso(row.revoked_at),
         "last_used_at": _to_iso(row.last_used_at),
     }
 
@@ -41,13 +43,14 @@ class ApiKeyRepository(BaseRepository):
         user_id: str = DEFAULT_USER_ID,
     ) -> dict[str, Any]:
         """Create a new API key record."""
+        actor_id = await resolve_actor_user_id(self.session, user_id)
         row = ApiKey(
             name=name,
             key_hash=key_hash,
             key_prefix=key_prefix,
             created_at=utc_now(),
             expires_at=expires_at,
-            user_id=user_id,
+            user_id=actor_id,
         )
         self.session.add(row)
         await self.session.flush()
@@ -56,14 +59,14 @@ class ApiKeyRepository(BaseRepository):
 
     async def list_all(self) -> list[dict[str, Any]]:
         """Return all API keys (metadata only, no hashes)."""
-        stmt = select(ApiKey).order_by(ApiKey.created_at.desc())
+        stmt = select(ApiKey).where(ApiKey.revoked_at.is_(None)).order_by(ApiKey.created_at.desc())
         stmt = self._scope_query(stmt, ApiKey)
         result = await self.session.execute(stmt)
         return [_row_to_dict(r) for r in result.scalars()]
 
     async def get_by_hash(self, key_hash: str) -> dict[str, Any] | None:
         """Look up a key by its SHA-256 hash. Returns full row including hash."""
-        stmt = select(ApiKey).where(ApiKey.key_hash == key_hash)
+        stmt = select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.revoked_at.is_(None))
         stmt = self._scope_query(stmt, ApiKey)
         result = await self.session.execute(stmt)
         row = result.scalar_one_or_none()
@@ -71,11 +74,13 @@ class ApiKeyRepository(BaseRepository):
             return None
         return {
             "id": row.id,
+            "user_id": row.user_id,
             "name": row.name,
             "key_hash": row.key_hash,
             "key_prefix": row.key_prefix,
             "created_at": row.created_at,
             "expires_at": row.expires_at,
+            "revoked_at": row.revoked_at,
             "last_used_at": row.last_used_at,
         }
 
@@ -91,9 +96,13 @@ class ApiKeyRepository(BaseRepository):
         d["key_hash"] = row.key_hash
         return d
 
-    async def delete(self, key_id: int) -> bool:
-        """Delete a key by ID. Returns True if deleted, False if not found."""
-        result = await self.session.execute(sa_delete(ApiKey).where(ApiKey.id == key_id))
+    async def revoke(self, key_id: int) -> bool:
+        """Revoke an active key by ID."""
+        result = await self.session.execute(
+            update(ApiKey)
+            .where(ApiKey.id == key_id, ApiKey.revoked_at.is_(None))
+            .values(revoked_at=utc_now(), updated_at=utc_now())
+        )
         return rowcount(result) > 0
 
     async def touch_last_used(self, key_hash: str) -> None:

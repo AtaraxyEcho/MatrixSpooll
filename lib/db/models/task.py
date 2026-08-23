@@ -20,6 +20,7 @@ class Task(UserOwnedMixin, Base):
         nullable=True,
     )
     project_name: Mapped[str] = mapped_column(String, nullable=False)
+    actor_username: Mapped[str | None] = mapped_column(String, nullable=True)
     task_type: Mapped[str] = mapped_column(String, nullable=False)
     media_type: Mapped[str] = mapped_column(String, nullable=False)
     resource_id: Mapped[str] = mapped_column(String, nullable=False)
@@ -56,12 +57,12 @@ class Task(UserOwnedMixin, Base):
     __table_args__ = (
         Index("idx_tasks_status_queued_at", "status", "queued_at"),
         Index("idx_tasks_project_id", "project_id"),
-        Index("idx_tasks_project_updated_at", "project_name", "updated_at"),
+        Index("idx_tasks_project_updated_at", "project_id", "updated_at"),
         Index("idx_tasks_dependency_task_id", "dependency_task_id"),
         Index("idx_tasks_status_provider_queued", "status", "provider_id", "queued_at"),
         Index(
             "idx_tasks_dedupe_active",
-            "project_name",
+            text("COALESCE(project_id, project_name)"),
             "task_type",
             "resource_id",
             text("COALESCE(script_file, '')"),

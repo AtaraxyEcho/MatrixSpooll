@@ -619,6 +619,7 @@ async def batch_enqueue_and_wait(
     *,
     project_name: str,
     specs: list[TaskSpec],
+    user_id: str = DEFAULT_USER_ID,
     on_success: Callable[[BatchTaskResult], None] | None = None,
     on_failure: Callable[[BatchTaskResult], None] | None = None,
     stop_on_failure: bool = False,
@@ -641,6 +642,7 @@ async def batch_enqueue_and_wait(
         project_name=project_name,
         specs=specs,
         stop_on_failure=stop_on_failure,
+        user_id=user_id,
     )
     task_ids = {item.resource_id: item.task_id for item in enqueued}
 
@@ -698,6 +700,7 @@ def batch_enqueue_and_wait_sync(
     *,
     project_name: str,
     specs: list[TaskSpec],
+    user_id: str = DEFAULT_USER_ID,
     on_success: Callable[[BatchTaskResult], None] | None = None,
     on_failure: Callable[[BatchTaskResult], None] | None = None,
 ) -> tuple[list[BatchTaskResult], list[BatchTaskResult]]:
@@ -718,6 +721,7 @@ def batch_enqueue_and_wait_sync(
         batch_enqueue_and_wait(
             project_name=project_name,
             specs=specs,
+            user_id=user_id,
             on_success=on_success,
             on_failure=on_failure,
         )

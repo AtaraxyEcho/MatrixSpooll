@@ -737,6 +737,7 @@ def _reference_fallback_relpath(resource_id: str) -> str:
 async def _submit_with_checkpoint(
     *,
     project_name: str,
+    user_id: str,
     project_dir: Path,
     specs: list[TaskSpec],
     order_map: dict[str, int],
@@ -762,6 +763,7 @@ async def _submit_with_checkpoint(
     return await batch_enqueue_and_wait(
         project_name=project_name,
         specs=specs,
+        user_id=user_id,
         on_success=on_success,
         stop_on_failure=True,
     )
@@ -893,6 +895,7 @@ async def _generate_reference_units(
     if specs:
         successes, failures = await _submit_with_checkpoint(
             project_name=ctx.project_name,
+            user_id=ctx.actor_user_id,
             project_dir=project_dir,
             specs=specs,
             order_map=order_map,
@@ -1368,7 +1371,10 @@ class _StoryboardBatch:
 
         if checkpoint is None:
             successes, failures = await batch_enqueue_and_wait(
-                project_name=self.ctx.project_name, specs=specs, stop_on_failure=True
+                project_name=self.ctx.project_name,
+                user_id=self.ctx.actor_user_id,
+                specs=specs,
+                stop_on_failure=True,
             )
             self._record(successes, failures)
             return self.result()
@@ -1376,6 +1382,7 @@ class _StoryboardBatch:
         if specs:
             successes, failures = await _submit_with_checkpoint(
                 project_name=self.ctx.project_name,
+                user_id=self.ctx.actor_user_id,
                 project_dir=checkpoint.project_dir,
                 specs=specs,
                 order_map=checkpoint.order_map,

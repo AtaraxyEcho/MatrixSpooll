@@ -15,17 +15,17 @@ update_docs: engine-b
 
 | 路径 | 用途 | 迁移处理 |
 |---|---|---|
-| `deploy/projects/.arcreel.db` | 默认部署的 SQLite 数据库 | 由 pgloader 导入 PostgreSQL |
+| `${MATRIXSPOOLL_SQLITE_DB}` | 操作者指定的旧部署 SQLite 数据库 | 由 pgloader 导入 PostgreSQL |
 | `deploy/projects/` 中的其他文件 | 项目元数据和媒体资产 | 复制到 `deploy/production/projects/` |
 | `deploy/production/pgdata/` | PostgreSQL 集群数据 | 由 PostgreSQL 初始化，不放项目文件或 SQLite 文件 |
 
-以下命令统一用 shell 变量 `source_projects` 指向宿主机上的源数据根目录。默认部署会把它设为 `deploy/projects/` 的绝对路径；如果通过 `ARCREEL_DATA_DIR` 和自定义挂载更改了容器内数据目录，请在第 1 步把 `source_projects` 改为对应的宿主机绝对路径。容器内路径与宿主机路径可能不同，因此本文不会直接从 `.env` 推导该值。迁移期间在同一个 shell 中保留此变量。
+以下命令统一用 shell 变量 `source_projects` 指向宿主机上的源数据根目录。默认部署会把它设为 `deploy/projects/` 的绝对路径；如果通过 `MATRIXSPOOLL_DATA_DIR` 和自定义挂载更改了容器内数据目录，请在第 1 步把 `source_projects` 改为对应的宿主机绝对路径。容器内路径与宿主机路径可能不同，因此本文不会直接从 `.env` 推导该值。迁移期间在同一个 shell 中保留此变量。
 
 ## 前置条件 {#prerequisites}
 
 - 已安装 Docker 和 Docker Compose
 - 已安装 `sqlite3` 命令行工具（先运行 `sqlite3 --version` 确认）
-- MatrixSpooll 旧部署使用 SQLite，数据库位于 `deploy/projects/.arcreel.db`
+- MatrixSpooll 旧部署使用 SQLite，并已通过 `MATRIXSPOOLL_SQLITE_DB` 指定数据库文件的绝对路径
 - 已保存旧部署实际使用的 Compose 文件路径，且能用它停止旧服务
 - `deploy/production/pgdata/` 与 `deploy/production/projects/` 尚未存放需要保留的生产数据
 
@@ -37,13 +37,14 @@ update_docs: engine-b
 cd "$(git rev-parse --show-toplevel)"
 
 source_projects="$(cd deploy/projects && pwd)"
-# 自定义数据目录示例：source_projects="/srv/arcreel/projects"
+# 自定义数据目录示例：source_projects="/srv/matrixspooll/projects"
 legacy_compose="/path/to/legacy/docker-compose.yml"
-
-if [ ! -f "${source_projects}/.arcreel.db" ]; then
-  echo "错误：${source_projects}/.arcreel.db 不存在" >&2
+source_db="${MATRIXSPOOLL_SQLITE_DB:?请设置旧部署 SQLite 数据库的绝对路径}"
+if [ ! -f "${source_db}" ]; then
+  echo "错误：SQLite 数据库不存在：${source_db}" >&2
   exit 1
 fi
+source_db_name="$(basename "${source_db}")"
 
 if [ ! -f "${legacy_compose}" ]; then
   echo "错误：找不到旧部署 Compose 文件 ${legacy_compose}" >&2
@@ -65,10 +66,10 @@ umask 077
 mkdir -p deploy/backups
 chmod 700 deploy/backups
 
-sqlite3 "${source_projects}/.arcreel.db" \
-  ".backup 'deploy/backups/arcreel-sqlite-${backup_stamp}.db'"
+sqlite3 "${source_db}" \
+  ".backup 'deploy/backups/matrixspooll-sqlite-${backup_stamp}.db'"
 
-check_result="$(sqlite3 "deploy/backups/arcreel-sqlite-${backup_stamp}.db" \
+check_result="$(sqlite3 "deploy/backups/matrixspooll-sqlite-${backup_stamp}.db" \
   "PRAGMA quick_check;")"
 
 if [ "${check_result}" != "ok" ]; then
@@ -76,13 +77,13 @@ if [ "${check_result}" != "ok" ]; then
   exit 1
 fi
 
-tar -czf "deploy/backups/arcreel-source-${backup_stamp}.tar.gz" \
+tar -czf "deploy/backups/matrixspooll-source-${backup_stamp}.tar.gz" \
   -C "${source_projects}" .
 
-cp deploy/.env "deploy/backups/arcreel-source-${backup_stamp}.env"
+cp deploy/production/.env "deploy/backups/matrixspooll-source-${backup_stamp}.env"
 ```
 
-守卫只接受 `PRAGMA quick_check;` 精确返回 `ok`；任一备份、校验、归档或配置复制命令失败都会立即停止迁移。`sqlite3 .backup` 通过 SQLite 备份 API 生成包含已提交 WAL 内容的一致快照；不要在服务运行时只用 `cp` 复制 `.arcreel.db`。SQLite 的 `.arcreel.db-wal` 可能保存已提交但尚未 checkpoint 的交易，与主文件分离可能丢数据或损坏备份。配套的 tar 归档保存 `source_projects` 的完整内容，旁边的 `.env` 副本保存默认部署配置；回滚时两者必须使用相同时间标签。`umask 077` 与目录模式 `0700` 会限制其中凭据和项目资产的读取权限。
+守卫只接受 `PRAGMA quick_check;` 精确返回 `ok`；任一备份、校验、归档或配置复制命令失败都会立即停止迁移。`sqlite3 .backup` 通过 SQLite 备份 API 生成包含已提交 WAL 内容的一致快照；不要在服务运行时只用 `cp` 复制源数据库文件。SQLite 的配套 `-wal` 文件可能保存已提交但尚未 checkpoint 的交易，与主文件分离可能丢数据或损坏备份。配套的 tar 归档保存 `source_projects` 的完整内容，旁边的 `.env` 副本保存默认部署配置；回滚时两者必须使用相同时间标签。`umask 077` 与目录模式 `0700` 会限制其中凭据和项目资产的读取权限。
 
 ### 3. 准备 PostgreSQL 部署 {#configure-env}
 
@@ -135,7 +136,7 @@ done
 set -euo pipefail
 
 mkdir -p deploy/production/projects
-tar -C "${source_projects}" --exclude='.arcreel.db*' -cf - . | \
+tar -C "${source_projects}" --exclude="${source_db_name}*" -cf - . | \
   tar -C deploy/production/projects -xf -
 ```
 
@@ -161,18 +162,19 @@ docker compose -f deploy/production/docker-compose.yml ps
 
 ```bash
 docker compose -f deploy/production/docker-compose.yml run --rm \
+  -e SOURCE_DB_NAME="${source_db_name}" \
   -v "${source_projects}:/migration-source:ro" \
   matrixspooll bash -c '
     apt-get update &&
     apt-get install -y --no-install-recommends pgloader &&
-    pgloader sqlite:///migration-source/.arcreel.db \
-             "postgresql://arcreel:${POSTGRES_PASSWORD_URLENCODED:-$POSTGRES_PASSWORD}@postgres:5432/arcreel"
+    pgloader "sqlite:///migration-source/${SOURCE_DB_NAME}" \
+             "postgresql://matrixspooll:${POSTGRES_PASSWORD_URLENCODED:-$POSTGRES_PASSWORD}@postgres:5432/matrixspooll"
   '
 ```
 
 :::danger
 
-**不要对已有数据的目标重复执行。** pgloader 的 SQLite 默认选项包含 `include drop`：它会用 `CASCADE` 删除目标中与源数据库同名的表，再重建结构和导入数据。这不是“跳过现有表”。只对本流程刚初始化的空 `arcreel` 数据库执行一次。如果迁移失败，先确认目标没有需要保留的数据，重建空目标后再重试；不要在 MatrixSpooll 已经向 PostgreSQL 写入数据后重跑。
+**不要对已有数据的目标重复执行。** pgloader 的 SQLite 默认选项包含 `include drop`：它会用 `CASCADE` 删除目标中与源数据库同名的表，再重建结构和导入数据。这不是“跳过现有表”。只对本流程刚初始化的空 `matrixspooll` 数据库执行一次。如果迁移失败，先确认目标没有需要保留的数据，重建空目标后再重试；不要在 MatrixSpooll 已经向 PostgreSQL 写入数据后重跑。
 
 :::
 
@@ -182,7 +184,7 @@ pgloader 会自动处理 SQLite 与 PostgreSQL 之间的常见类型和语法差
 
 ```bash
 docker compose -f deploy/production/docker-compose.yml \
-  exec postgres psql -U arcreel -d arcreel -c "
+  exec postgres psql -U matrixspooll -d matrixspooll -c "
   SELECT 'tasks' AS tbl, COUNT(*) FROM tasks
   UNION ALL
   SELECT 'api_calls', COUNT(*) FROM api_calls
@@ -196,7 +198,7 @@ docker compose -f deploy/production/docker-compose.yml \
 对比 SQLite 中的记录数：
 
 ```bash
-sqlite3 "${source_projects}/.arcreel.db" "
+sqlite3 "${source_db}" "
   SELECT 'tasks', COUNT(*) FROM tasks
   UNION ALL
   SELECT 'api_calls', COUNT(*) FROM api_calls
@@ -221,7 +223,7 @@ curl -f http://localhost:1241/health/ready
 
 ## 使用归档旧版本回滚 {#rollback-to-sqlite}
 
-以上迁移流程不会改写 `source_projects` 指向的源数据目录和 `deploy/.env`。如需短期回滚，只能使用迁移前归档的旧版本源码、镜像和 Compose 文件重新启动原 SQLite 部署；当前版本缺少 `DATABASE_URL` 时会拒绝启动。如果在新的 shell 中回滚，先按第 1 步重新设置 `source_projects` 与 `legacy_compose`：
+以上迁移流程不会改写 `source_projects` 指向的源数据目录和生产 `.env`。如需短期回滚，只能使用迁移前归档的旧版本源码、镜像和 Compose 文件重新启动原 SQLite 部署；当前版本缺少 `DATABASE_URL` 时会拒绝启动。如果在新的 shell 中回滚，先按第 1 步重新设置 `source_projects` 与 `legacy_compose`：
 
 1. 停止 PostgreSQL 生产部署：
 
@@ -230,19 +232,19 @@ curl -f http://localhost:1241/health/ready
    docker compose -f deploy/production/docker-compose.yml down
    ```
 
-2. 确认 `${source_projects}/.arcreel.db` 和 `deploy/.env` 仍在。如果源目录被修改或损坏，先选定第 2 步中同一时间标签的两个备份文件，再执行：
+2. 确认 `${source_db}` 与旧版本的 `.env` 仍在。如果源目录被修改或损坏，先选定第 2 步中同一时间标签的两个备份文件，再执行：
 
    ```bash
    set -euo pipefail
 
-   archive="deploy/backups/arcreel-source-YYYYMMDD-HHMMSS.tar.gz"
-   env_backup="deploy/backups/arcreel-source-YYYYMMDD-HHMMSS.env"
+   archive="deploy/backups/matrixspooll-source-YYYYMMDD-HHMMSS.tar.gz"
+   env_backup="deploy/backups/matrixspooll-source-YYYYMMDD-HHMMSS.env"
    preserved="${source_projects}.before-rollback-$(date +%Y%m%d-%H%M%S)"
 
    mv -- "${source_projects}" "${preserved}"
    mkdir -p "${source_projects}"
    tar -xzf "${archive}" -C "${source_projects}"
-   cp "${env_backup}" deploy/.env
+   cp "${env_backup}" deploy/production/.env
    ```
 
    这会先完整移走旧源目录，再创建空目录并解压，避免保留归档中不存在的旧文件。只有解压成功后才恢复 `.env`；不要只覆盖主 SQLite 文件而留下不匹配的 `-wal` 或 `-shm` 文件。保留 `${preserved}` 直到回滚验证完成。
@@ -259,4 +261,4 @@ curl -f http://localhost:1241/health/ready
 
 5. 在回滚验证完成前，保留 `deploy/production/pgdata/`、`deploy/production/projects/` 和迁移备份以便排查，不要删除。`POSTGRES_PASSWORD` 位于独立的 `deploy/production/.env`，无需从 `deploy/.env` 移除。
 
-如果原来使用自定义 Compose 或数据挂载，需按旧版本原有配置恢复 SQLite URL 或取消 `DATABASE_URL`，确认 `ARCREEL_DATA_DIR` 仍指向容器内原数据目录，并确认该挂载对应宿主机上的 `${source_projects}` 后再启动。完成排障后应重新切回当前 PostgreSQL 版本；不要把旧版 SQLite 作为长期运行方案。
+如果原来使用自定义 Compose 或数据挂载，需按旧版本原有配置恢复 SQLite URL 或取消 `DATABASE_URL`，确认 `MATRIXSPOOLL_DATA_DIR` 仍指向容器内原数据目录，并确认该挂载对应宿主机上的 `${source_projects}` 后再启动。完成排障后应重新切回当前 PostgreSQL 版本；不要把旧版 SQLite 作为长期运行方案。

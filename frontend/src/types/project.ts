@@ -248,6 +248,9 @@ export interface ExportDiagnostics {
 
 export interface ImportProjectResponse {
   success: boolean;
+  /** Stable database identity used for subsequent project routes. */
+  project_id?: string | null;
+  id?: string | null;
   project_name: string;
   project: ProjectData;
   warnings: string[];

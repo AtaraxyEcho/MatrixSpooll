@@ -11,6 +11,7 @@ from sqlalchemy import case, func, select, update
 
 from lib.cost_calculator import cost_calculator
 from lib.custom_provider import is_custom_provider, parse_provider_id
+from lib.db.actor_identity import resolve_actor_user_id
 from lib.db.base import DEFAULT_USER_ID, dt_to_iso, utc_now
 from lib.db.models.api_call import ApiCall
 from lib.db.project_identity import resolve_project_id
@@ -146,10 +147,13 @@ class UsageRepository(BaseRepository):
         now = utc_now()
         prompt_truncated = prompt[:500] if prompt else None
         project_id = await resolve_project_id(self.session, project_name)
+        actor_id = await resolve_actor_user_id(self.session, user_id)
+        actor_username = await self._actor_username(actor_id)
 
         row = ApiCall(
             project_id=project_id,
             project_name=project_name,
+            actor_username=actor_username,
             call_type=call_type,
             model=model,
             prompt=prompt_truncated,
@@ -160,7 +164,7 @@ class UsageRepository(BaseRepository):
             status="pending",
             started_at=now,
             provider=provider,
-            user_id=user_id,
+            user_id=actor_id,
             segment_id=segment_id,
         )
         self.session.add(row)
@@ -244,7 +248,7 @@ class UsageRepository(BaseRepository):
             )
 
             params = PricingParams(
-                call_type=row.call_type,  # pyright: ignore[reportArgumentType]
+                call_type=row.call_type,
                 model=row.model,
                 resolution=row.resolution,
                 aspect_ratio=row.aspect_ratio,
@@ -385,6 +389,8 @@ class UsageRepository(BaseRepository):
         *,
         project_name: str | None = None,
         project_names: Sequence[str] | None = None,
+        project_id: str | None = None,
+        project_ids: Sequence[str] | None = None,
         provider: str | None = None,
         call_type: CallType | None = None,
         status: str | None = None,
@@ -392,7 +398,11 @@ class UsageRepository(BaseRepository):
         end_date: datetime | None = None,
     ) -> list:
         filters: list = []
-        if project_name:
+        if project_id:
+            filters.append(ApiCall.project_id == project_id)
+        elif project_ids is not None:
+            filters.append(ApiCall.project_id.in_(list(project_ids)))
+        elif project_name:
             filters.append(ApiCall.project_name == project_name)
         elif project_names is not None:
             filters.append(ApiCall.project_name.in_(list(project_names)))
@@ -415,6 +425,8 @@ class UsageRepository(BaseRepository):
         *,
         project_name: str | None = None,
         project_names: Sequence[str] | None = None,
+        project_id: str | None = None,
+        project_ids: Sequence[str] | None = None,
         provider: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
@@ -422,6 +434,8 @@ class UsageRepository(BaseRepository):
         filters = self._build_filters(
             project_name=project_name,
             project_names=project_names,
+            project_id=project_id,
+            project_ids=project_ids,
             provider=provider,
             start_date=start_date,
             end_date=end_date,
@@ -491,6 +505,8 @@ class UsageRepository(BaseRepository):
         *,
         project_name: str | None = None,
         project_names: Sequence[str] | None = None,
+        project_id: str | None = None,
+        project_ids: Sequence[str] | None = None,
         provider: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
@@ -498,6 +514,8 @@ class UsageRepository(BaseRepository):
         filters = self._build_filters(
             project_name=project_name,
             project_names=project_names,
+            project_id=project_id,
+            project_ids=project_ids,
             provider=provider,
             start_date=start_date,
             end_date=end_date,
@@ -617,6 +635,8 @@ class UsageRepository(BaseRepository):
         *,
         project_name: str | None = None,
         project_names: Sequence[str] | None = None,
+        project_id: str | None = None,
+        project_ids: Sequence[str] | None = None,
         call_type: CallType | None = None,
         status: str | None = None,
         start_date: datetime | None = None,
@@ -627,6 +647,8 @@ class UsageRepository(BaseRepository):
         filters = self._build_filters(
             project_name=project_name,
             project_names=project_names,
+            project_id=project_id,
+            project_ids=project_ids,
             call_type=call_type,
             status=status,
             start_date=start_date,
@@ -655,6 +677,8 @@ class UsageRepository(BaseRepository):
     async def get_actual_costs_by_segment(
         self,
         project_name: str,
+        *,
+        project_id: str | None = None,
     ) -> dict[str, dict[str, dict[str, float]]]:
         """按 segment_id + call_type + currency 汇总实际费用。
 
@@ -662,6 +686,8 @@ class UsageRepository(BaseRepository):
             {segment_id: {call_type: {currency: total_amount}}}
             segment_id 为 None 的记录归入 ``PROJECT_LEVEL_SEGMENT_KEY`` 键。
         """
+        project_id = project_id or await resolve_project_id(self.session, project_name)
+        project_scope = ApiCall.project_id == project_id if project_id else ApiCall.project_name == project_name
         stmt = (
             select(
                 ApiCall.segment_id,
@@ -670,7 +696,7 @@ class UsageRepository(BaseRepository):
                 func.sum(ApiCall.cost_amount).label("total"),
             )
             .where(
-                ApiCall.project_name == project_name,
+                project_scope,
                 ApiCall.status == "success",
                 ApiCall.cost_amount > 0,
             )
@@ -688,12 +714,16 @@ class UsageRepository(BaseRepository):
     async def get_project_image_costs_by_asset_type(
         self,
         project_name: str,
+        *,
+        project_id: str | None = None,
     ) -> dict[str, dict[str, float]]:
         """project-level（segment_id is null）的 image 成本按 output_path 前缀分拆。
 
         Returns:
             {asset_type: {currency: total_amount}}，asset_type ∈ {characters, scenes, props, products, other}。
         """
+        project_id = project_id or await resolve_project_id(self.session, project_name)
+        project_scope = ApiCall.project_id == project_id if project_id else ApiCall.project_name == project_name
         stmt = (
             select(
                 ApiCall.output_path,
@@ -701,7 +731,7 @@ class UsageRepository(BaseRepository):
                 func.sum(ApiCall.cost_amount).label("total"),
             )
             .where(
-                ApiCall.project_name == project_name,
+                project_scope,
                 ApiCall.status == "success",
                 ApiCall.cost_amount > 0,
                 ApiCall.call_type == "image",
@@ -719,9 +749,16 @@ class UsageRepository(BaseRepository):
             bucket[currency] = round(bucket.get(currency, 0) + total, 6)
         return result
 
-    async def get_projects_list(self, *, project_names: Sequence[str] | None = None) -> list[str]:
+    async def get_projects_list(
+        self,
+        *,
+        project_names: Sequence[str] | None = None,
+        project_ids: Sequence[str] | None = None,
+    ) -> list[str]:
         stmt = select(ApiCall.project_name).distinct()
-        if project_names is not None:
+        if project_ids is not None:
+            stmt = stmt.where(ApiCall.project_id.in_(list(project_ids)))
+        elif project_names is not None:
             stmt = stmt.where(ApiCall.project_name.in_(list(project_names)))
         stmt = stmt.order_by(ApiCall.project_name)
         stmt = self._scope_query(stmt, ApiCall)

@@ -26,11 +26,11 @@ function record(root) {
 }
 
 test("status reports every untranslated documentation source", () => {
-  const root = mkdtempSync(join(tmpdir(), "arcreel-translation-lock-"));
+  const root = mkdtempSync(join(tmpdir(), "matrixspooll-translation-lock-"));
   write(root, "website/docs/index.mdx", "# 首页 {#home}\n");
   write(root, "website/docs/guide/start.md", "# 入门 {#start}\n");
   write(root, "CONTRIBUTING.md", "# 贡献\n");
-  write(root, "README.md", "# ArcReel\n");
+  write(root, "README.md", "# MatrixSpooll\n");
 
   assert.deepEqual(status(root), [
     {
@@ -53,7 +53,7 @@ test("status reports every untranslated documentation source", () => {
 });
 
 test("record writes LF-normalized source hashes to the flat lockfile", () => {
-  const root = mkdtempSync(join(tmpdir(), "arcreel-translation-lock-"));
+  const root = mkdtempSync(join(tmpdir(), "matrixspooll-translation-lock-"));
   write(root, "README.md", "hello\r\n");
   write(root, "README.en.md", "hello\n");
 
@@ -67,9 +67,9 @@ test("record writes LF-normalized source hashes to the flat lockfile", () => {
 });
 
 test("status reports translations whose sources were deleted", () => {
-  const root = mkdtempSync(join(tmpdir(), "arcreel-translation-lock-"));
-  write(root, "README.md", "# ArcReel\n");
-  write(root, "README.en.md", "# ArcReel\n");
+  const root = mkdtempSync(join(tmpdir(), "matrixspooll-translation-lock-"));
+  write(root, "README.md", "# MatrixSpooll\n");
+  write(root, "README.en.md", "# MatrixSpooll\n");
   write(root, "website/docs/guide/start.md", "# 入门\n");
   write(root, "website/i18n/en/docusaurus-plugin-content-docs/current/guide/start.md", "# Getting started\n");
   record(root);
@@ -87,7 +87,7 @@ test("status reports translations whose sources were deleted", () => {
 });
 
 test("status reports unregistered document translations but ignores locale assets", () => {
-  const root = mkdtempSync(join(tmpdir(), "arcreel-translation-lock-"));
+  const root = mkdtempSync(join(tmpdir(), "matrixspooll-translation-lock-"));
   write(
     root,
     "website/i18n/vi/docusaurus-plugin-content-docs/current/guide/unregistered.md",
@@ -107,7 +107,7 @@ test("status reports unregistered document translations but ignores locale asset
 });
 
 test("status reports a translation as stale when its lock entry was removed", () => {
-  const root = mkdtempSync(join(tmpdir(), "arcreel-translation-lock-"));
+  const root = mkdtempSync(join(tmpdir(), "matrixspooll-translation-lock-"));
   write(root, "website/docs/guide/start.md", "# 入门\n");
   write(root, "website/i18n/en/docusaurus-plugin-content-docs/current/guide/start.md", "# Getting started\n");
   record(root);
@@ -123,11 +123,11 @@ test("status reports a translation as stale when its lock entry was removed", ()
 });
 
 test("status reports a translated source whose recorded content changed", () => {
-  const root = mkdtempSync(join(tmpdir(), "arcreel-translation-lock-"));
-  write(root, "README.md", "# ArcReel\n");
-  write(root, "README.en.md", "# ArcReel\n");
+  const root = mkdtempSync(join(tmpdir(), "matrixspooll-translation-lock-"));
+  write(root, "README.md", "# MatrixSpooll\n");
+  write(root, "README.en.md", "# MatrixSpooll\n");
   record(root);
-  write(root, "README.md", "# ArcReel video creation\n");
+  write(root, "README.md", "# MatrixSpooll video creation\n");
 
   assert.deepEqual(status(root), [
     { source: "README.md", target: "README.en.md", state: "stale" },
@@ -135,7 +135,7 @@ test("status reports a translated source whose recorded content changed", () => 
 });
 
 test("status reports CONTRIBUTING.md stale when only its synced copy changed", () => {
-  const root = mkdtempSync(join(tmpdir(), "arcreel-translation-lock-"));
+  const root = mkdtempSync(join(tmpdir(), "matrixspooll-translation-lock-"));
   write(root, "CONTRIBUTING.md", "# 贡献\n");
   write(root, "website/docs/dev/contributing.md", "---\nid: contributing\n---\n\n# 贡献 {#contributing}\n");
   write(root, "website/i18n/en/docusaurus-plugin-content-docs/current/dev/contributing.md", "# Contributing\n");
@@ -152,8 +152,8 @@ test("status reports CONTRIBUTING.md stale when only its synced copy changed", (
 });
 
 test("record refuses to hide a missing translation", () => {
-  const root = mkdtempSync(join(tmpdir(), "arcreel-translation-lock-"));
-  write(root, "README.md", "# ArcReel\n");
+  const root = mkdtempSync(join(tmpdir(), "matrixspooll-translation-lock-"));
+  write(root, "README.md", "# MatrixSpooll\n");
 
   const result = spawnSync(process.execPath, [scriptPath, "record", "--root", root], {
     encoding: "utf8",
@@ -165,9 +165,9 @@ test("record refuses to hide a missing translation", () => {
 });
 
 test("record refuses to hide an orphan translation that still exists", () => {
-  const root = mkdtempSync(join(tmpdir(), "arcreel-translation-lock-"));
-  write(root, "README.md", "# ArcReel\n");
-  write(root, "README.en.md", "# ArcReel\n");
+  const root = mkdtempSync(join(tmpdir(), "matrixspooll-translation-lock-"));
+  write(root, "README.md", "# MatrixSpooll\n");
+  write(root, "README.en.md", "# MatrixSpooll\n");
   record(root);
   renameSync(join(root, "README.md"), join(root, "README.deleted"));
 
@@ -180,7 +180,7 @@ test("record refuses to hide an orphan translation that still exists", () => {
 });
 
 test("record refuses to hide an unregistered document translation", () => {
-  const root = mkdtempSync(join(tmpdir(), "arcreel-translation-lock-"));
+  const root = mkdtempSync(join(tmpdir(), "matrixspooll-translation-lock-"));
   write(root, "website/i18n/en/docusaurus-plugin-content-docs/current/guide/unregistered.md", "# Unregistered\n");
 
   const result = spawnSync(process.execPath, [scriptPath, "record", "--root", root], {

@@ -14,13 +14,37 @@ This document covers MatrixSpooll's single PostgreSQL runtime, environment varia
 |---|---|---|---|
 | Local Docker build | `deploy/production/docker-compose.yml` | PostgreSQL | Builds the complete image from the current source |
 | Published image deployment | `deploy/production/docker-compose-img.yml` | PostgreSQL | Pulls a prebuilt complete image |
-| Local development | Run from source | PostgreSQL | Requires an explicit `DATABASE_URL`; see the [Contributing Guide](../dev/contributing.md) |
+| Local development | Docker PostgreSQL + source | PostgreSQL | Containerized database with application hot reload; see the [Contributing Guide](../dev/contributing.md) |
 
 Regardless of the method you choose, project images, videos, and other generated assets must be stored persistently.
 
 MatrixSpooll supports administrators, members, and project owner/editor/viewer roles, but remains a single-instance, single-tenant deployment without organization-level tenant isolation.
 
 SQLite is no longer a runtime fallback. Outside isolated tests that explicitly set `TESTING=true`, a missing `DATABASE_URL` prevents startup so local and Docker environments cannot silently use different databases.
+
+## Local Development PostgreSQL {#local-development-postgresql}
+
+In development, Docker runs only PostgreSQL while the backend and frontend continue to run on the host:
+
+```bash
+docker compose -f deploy/development/docker-compose.yml up -d
+cp .env.example .env
+uv run alembic upgrade head
+uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241
+```
+
+The default development connection is
+`postgresql+asyncpg://matrixspooll:matrixspooll_dev@localhost:5432/matrixspooll`. Database files are stored in
+`deploy/development/pgdata/`. To change the port or password, copy `deploy/development/.env.example` to `.env`
+in the same directory and update `DATABASE_URL` in the repository-root `.env` to match.
+
+Inspect or stop the development database with:
+
+```bash
+docker compose -f deploy/development/docker-compose.yml exec postgres \
+  psql -U matrixspooll -d matrixspooll -c "SELECT current_database(), current_user;"
+docker compose -f deploy/development/docker-compose.yml down
+```
 
 ## 1. Deployment: PostgreSQL {#postgresql-deployment}
 
@@ -73,6 +97,60 @@ docker compose logs --tail=100 matrixspooll
 curl -f http://localhost:1241/health/ready
 ```
 
+### 1.2 Migrate an Existing PostgreSQL Identity {#rename-postgresql-identity}
+
+This section applies only to an existing PostgreSQL data volume whose role or database is not yet named
+`matrixspooll`. `POSTGRES_USER` and `POSTGRES_DB` are used only when PostgreSQL initializes an empty data directory;
+changing Compose does not rename existing data. Read the actual names from the old deployment's `.env` or Compose
+file and set them explicitly in the current shell:
+
+```bash
+old_pg_role="<old-role-name>"
+old_pg_database="<old-database-name>"
+test "$old_pg_role" != "matrixspooll"
+test "$old_pg_database" != "matrixspooll"
+case "$old_pg_role:$old_pg_database" in
+  (*[!A-Za-z0-9_:]*) echo "Old names may contain only letters, digits, and underscores" >&2; exit 1 ;;
+esac
+```
+
+Stop the application and create a database backup. Select the Compose file used by the deployment:
+
+```bash
+cd "$(git rev-parse --show-toplevel)/deploy/production"
+compose_file=docker-compose.yml  # Use docker-compose-img.yml for image deployments
+
+docker compose -f "$compose_file" stop matrixspooll || true
+docker compose -f "$compose_file" up -d --no-deps postgres
+mkdir -p backups
+docker compose -f "$compose_file" exec -T postgres \
+  pg_dump -U "$old_pg_role" -d "$old_pg_database" > backups/matrixspooll-before-identity-rename.sql
+```
+
+The container may report `unhealthy` until the rename is complete because the updated health check queries
+`matrixspooll`, but `docker compose exec` remains available. Use the old superuser to terminate old database
+connections and perform the rename:
+
+```bash
+docker compose -f "$compose_file" exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
+  -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$old_pg_database' AND pid <> pg_backend_pid()"
+
+docker compose -f "$compose_file" exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
+  -c "ALTER DATABASE \"$old_pg_database\" RENAME TO matrixspooll"
+
+docker compose -f "$compose_file" exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
+  -c "ALTER ROLE \"$old_pg_role\" RENAME TO matrixspooll"
+
+docker compose -f "$compose_file" up -d
+curl -f http://localhost:1241/health/ready
+```
+
+Renaming a role preserves its internal OID, so ownership of existing tables, sequences, and other objects remains
+intact. If a command is interrupted, inspect `pg_roles` and `pg_database`, then resume at the first incomplete step.
+
 ### 1.2 PostgreSQL Persistent Directories {#postgresql-volumes}
 
 | Host Path | Contents |
@@ -84,7 +162,7 @@ curl -f http://localhost:1241/health/ready
 | `deploy/production/claude_data/` | Agent runtime data |
 | `deploy/production/.env` | Authentication and database configuration |
 
-`pgdata/` stores only the PostgreSQL cluster, while `projects/` stores project metadata and media assets. Both directories must be persisted and backed up together. The production deployment uses PostgreSQL through `DATABASE_URL` and does not use `deploy/production/projects/.arcreel.db`. Do not copy SQLite files into `pgdata/`, and do not treat these two directories as interchangeable database backups.
+`pgdata/` stores only the PostgreSQL cluster, while `projects/` stores project metadata and media assets. Both directories must be persisted and backed up together. The production deployment uses PostgreSQL through `DATABASE_URL` and does not use `deploy/production/projects/.matrixspooll.db`. Do not copy SQLite files into `pgdata/`, and do not treat these two directories as interchangeable database backups.
 
 ### 1.3 Database Migrations {#database-migrations}
 
@@ -105,7 +183,7 @@ The default deployment examples currently include these core variables:
 | `POSTGRES_PASSWORD` | None | Required for the bundled PostgreSQL deployment |
 | `TZ` | `Asia/Shanghai` | Can be overridden in the Compose environment |
 | `DATABASE_URL` | None | Required; production Compose constructs the PostgreSQL URL |
-| `ARCREEL_DATA_DIR` | `projects` | Use this to customize the application's root data directory |
+| `MATRIXSPOOLL_DATA_DIR` | `projects` | Use this to customize the application's root data directory |
 
 Notes:
 
@@ -195,7 +273,7 @@ Before committing a migration, MatrixSpooll creates adjacent backups with a `.ba
 
 - `project.json`;
 - Formal script files registered in `project.json`;
-- An existing `.arcreel_artifacts.json`.
+- An existing `.matrixspooll_artifacts.json`.
 
 Project migration is safe to retry. If a previous startup was interrupted while creating backups or committing changes, the next startup validates the project again and ensures that at least one backup exactly matches the pre-migration content before continuing. These automatically generated project-level backups exist only for migration recovery; they do not replace deployment-level backups of the database and the entire `projects/` directory.
 
@@ -232,10 +310,10 @@ docker compose stop matrixspooll
 backup_stamp="$(date +%Y%m%d-%H%M%S)"
 
 docker compose exec -T postgres sh -c \
-  'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_dump -h 127.0.0.1 -U arcreel -d arcreel' \
-  > "backups/arcreel-db-${backup_stamp}.sql"
+  'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_dump -h 127.0.0.1 -U matrixspooll -d matrixspooll' \
+  > "backups/matrixspooll-db-${backup_stamp}.sql"
 
-tar -czf "backups/arcreel-files-${backup_stamp}.tar.gz" \
+tar -czf "backups/matrixspooll-files-${backup_stamp}.tar.gz" \
   .env docker-compose.yml projects vertex_keys claude_data
 
 docker compose start matrixspooll
@@ -256,22 +334,22 @@ cd "$(git rev-parse --show-toplevel)/deploy/production"
 docker compose stop matrixspooll
 
 backup_stamp=YYYYMMDD-HHMMSS
-tar -xzf "backups/arcreel-files-${backup_stamp}.tar.gz"
+tar -xzf "backups/matrixspooll-files-${backup_stamp}.tar.gz"
 ```
 
-The file archive restores `.env`, `docker-compose.yml`, `projects/`, and the runtime directories. The following procedure also deletes the existing data in the target `arcreel` database. First verify that the database and file backups with the same `backup_stamp` are complete, and rehearse the restoration procedure in an isolated environment.
+The file archive restores `.env`, `docker-compose.yml`, `projects/`, and the runtime directories. The following procedure also deletes the existing data in the target `matrixspooll` database. First verify that the database and file backups with the same `backup_stamp` are complete, and rehearse the restoration procedure in an isolated environment.
 
 Recreate an empty database before importing to avoid conflicts with existing schemas or data:
 
 ```bash
 docker compose exec -T postgres \
-  dropdb -U arcreel --maintenance-db=postgres --if-exists --force arcreel
+  dropdb -U matrixspooll --maintenance-db=postgres --if-exists --force matrixspooll
 
 docker compose exec -T postgres \
-  createdb -U arcreel --maintenance-db=postgres -O arcreel arcreel
+  createdb -U matrixspooll --maintenance-db=postgres -O matrixspooll matrixspooll
 
-cat "backups/arcreel-db-${backup_stamp}.sql" | \
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U arcreel -d arcreel
+cat "backups/matrixspooll-db-${backup_stamp}.sql" | \
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U matrixspooll -d matrixspooll
 ```
 
 After the database import succeeds, restart the application:
@@ -307,10 +385,10 @@ Nginx example:
 ```nginx
 server {
     listen 443 ssl http2;
-    server_name arcreel.example.com;
+    server_name matrixspooll.example.com;
 
-    ssl_certificate /etc/letsencrypt/live/arcreel.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/arcreel.example.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/matrixspooll.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/matrixspooll.example.com/privkey.pem;
 
     client_max_body_size 2g;
 

@@ -72,7 +72,7 @@ class AgentAccessPolicy:
     # 源仓库根（已 resolve）：``.env`` / ``.env.*`` 相对此根（dotenv 从仓库根
     # 加载），也是「仓库内参考资料放行」的围栏基准。
     project_root: Path
-    # 数据根（已 resolve，生产为 app_data_dir()）：``.arcreel.db*`` /
+    # 数据根（已 resolve，生产为 app_data_dir()）：``.matrixspooll.db*`` /
     # ``.system_config.json*`` 所在地，也是跨项目读隔离的基准。
     projects_root: Path
     # agent profile 根（已 resolve，受调用方 env 解析控制）：
@@ -81,7 +81,7 @@ class AgentAccessPolicy:
     # 日志目录（已 resolve）：服务器日志含 HTTP 请求路径、provider 探测、异常栈，
     # 默认 read 规则会把 project_root 当成参考资料根放行，不显式 deny 会让任意
     # 项目 session 里的 agent 通过 Read/Grep 读到全局日志。无论落在 repo 内还是
-    # 外（如 /var/log/arcreel）都必须 deny。
+    # 外（如 /var/log/matrixspooll）都必须 deny。
     log_dir: Path
     # False 表示内核沙箱不支持当前平台（目前仅 Windows）——Bash 走代码白名单回退。
     sandbox_enabled: bool = True
@@ -190,7 +190,7 @@ class AgentAccessPolicy:
         覆盖后的真实位置（env 解析由调用方完成，本类只消费 resolve 后的根）：
 
         - ``.env`` / ``.env.*`` 总是相对源仓库根
-        - ``.arcreel.db`` / ``.system_config.json`` / ``.arcreel.db-*`` 在
+        - ``.matrixspooll.db`` / ``.system_config.json`` / ``.matrixspooll.db-*`` 在
           ``projects_root``（生产为 ``app_data_dir()``）下
         - ``vertex_keys/`` 在 ``projects_root.parent`` 下（与
           ``server.routers.providers.upload_vertex_credential`` 写入位置一致）
@@ -203,16 +203,16 @@ class AgentAccessPolicy:
         profile = self.agent_profile_root
         files: tuple[Path, ...] = (
             repo / ".env",
-            data / ".arcreel.db",
+            data / ".matrixspooll.db",
             data / ".system_config.json",
             data / ".system_config.json.bak",
             profile / ".claude" / "settings.json",
         )
         prefixes: tuple[Path, ...] = (data.parent / "vertex_keys", self.log_dir)
-        # ``.arcreel.db-wal`` / ``.arcreel.db-shm`` 与主 db 同目录
+        # ``.matrixspooll.db-wal`` / ``.matrixspooll.db-shm`` 与主 db 同目录
         globs: tuple[tuple[Path, str], ...] = (
             (repo, ".env.*"),
-            (data, ".arcreel.db-*"),
+            (data, ".matrixspooll.db-*"),
         )
         return files, prefixes, globs
 
@@ -220,31 +220,52 @@ class AgentAccessPolicy:
         """判断已 resolve 的路径是否命中敏感文件清单。
 
         覆盖 ``.env`` / ``.env.*`` / ``vertex_keys/`` 子树 / ``.system_config.json*`` /
-        ``.arcreel.db*`` / ``agent_runtime_profile/.claude/settings.json`` / 日志目录。
+        ``.matrixspooll.db*`` / ``agent_runtime_profile/.claude/settings.json`` / 日志目录。
         """
         files, prefixes, globs = self._sensitive_table
         for sensitive_file in files:
-            if resolved == sensitive_file:
+            if any(resolved == candidate for candidate in self._path_variants(sensitive_file)):
                 return True
         for prefix in prefixes:
-            try:
-                if resolved == prefix or resolved.is_relative_to(prefix):
-                    return True
-            except ValueError:
-                continue
+            for candidate in self._path_variants(prefix):
+                try:
+                    if resolved == candidate or resolved.is_relative_to(candidate):
+                        return True
+                except ValueError:
+                    continue
         for parent, pattern in globs:
-            try:
-                rel = resolved.relative_to(parent)
-            except ValueError:
-                continue
-            rel_posix = rel.as_posix()
-            # 仅匹配 ``parent`` 直系子项，避免 ``.env.local`` 模式吃掉
-            # ``project_root/sub/.env.local``（不是同一文件）。
-            if "/" in rel_posix:
-                continue
-            if fnmatch.fnmatchcase(rel_posix, pattern):
-                return True
+            for candidate in self._path_variants(parent):
+                try:
+                    rel = resolved.relative_to(candidate)
+                except ValueError:
+                    continue
+                rel_posix = rel.as_posix()
+                # 仅匹配 ``parent`` 直系子项，避免 ``.env.local`` 模式吃掉
+                # ``project_root/sub/.env.local``（不是同一文件）。
+                if "/" in rel_posix:
+                    continue
+                if fnmatch.fnmatchcase(rel_posix, pattern):
+                    return True
         return False
+
+    @staticmethod
+    def _path_variants(path: Path) -> tuple[Path, ...]:
+        """Return raw and resolved forms for a configured path.
+
+        Callers normally pass already-resolved roots, but the policy is also a
+        pure value object and tests (or integrations) may construct it with a
+        logical Windows path or a symlink.  Comparing both forms keeps the
+        sensitive-path fence fail-closed without requiring filesystem I/O at
+        construction time.
+        """
+        variants: list[Path] = [path]
+        try:
+            resolved = path.resolve(strict=False)
+        except (OSError, RuntimeError):
+            return tuple(variants)
+        if resolved != path:
+            variants.append(resolved)
+        return tuple(variants)
 
     def check_path_access(
         self,
@@ -538,13 +559,20 @@ class AgentAccessPolicy:
         projects_root 下其他项目子目录拒、根直放文件放行；仓库根内参考资料
         （lib/docs 等）放行；其余（host 文件系统：~/.ssh、/etc 等）默认拒。
         """
-        if resolved.is_relative_to(project_cwd):
+        # ``resolved`` 已展开符号链接，而调用方传入的 cwd 可能仍是逻辑路径。
+        # 读路径也必须使用 raw + resolved 两种 base，否则 Windows 根路径形式
+        # 或 symlink 项目会把项目内文件误判为 cwd 外文件。
+        cwd_bases = self._enumerate_cwd_bases(project_cwd)
+        if any(resolved.is_relative_to(base) for base in cwd_bases):
             return True, None
         # SDK tool-results 例外（已 resolve 的基准见 _claude_projects_dir_resolved）。
         claude_projects_dir = self._claude_projects_dir_resolved
         if claude_projects_dir is not None:
-            sdk_project_dir = claude_projects_dir / self.encode_sdk_project_path(project_cwd)
-            if resolved.is_relative_to(sdk_project_dir) and "tool-results" in resolved.parts:
+            if any(
+                resolved.is_relative_to(claude_projects_dir / self.encode_sdk_project_path(base))
+                and "tool-results" in resolved.parts
+                for base in cwd_bases
+            ):
                 return True, None
         # SDK 后台任务输出例外（前缀计算见 _sdk_tmp_prefixes，实例内缓存一次）。
         if str(resolved).startswith(self._sdk_tmp_prefixes) and "tasks" in resolved.parts:
@@ -555,7 +583,7 @@ class AgentAccessPolicy:
             rel_to_projects = resolved.relative_to(projects_root)
             if rel_to_projects.parts:
                 first_entry = projects_root / rel_to_projects.parts[0]
-                if first_entry.is_dir() and first_entry.name != project_cwd.name:
+                if first_entry.is_dir() and all(first_entry.name != base.name for base in cwd_bases):
                     return False, (f"访问被拒绝：不允许跨项目读取 ({resolved} 不在当前项目 {project_cwd} 内)")
             return True, None
         # 仓库根内的参考资料（lib/docs/agent_runtime_profile 等）放行
@@ -729,9 +757,9 @@ AgentAccessPolicy.PROTECTED_WRITE_RULES = (
         matches=AgentAccessPolicy._is_protected_project_json,
         deny_message=(
             "访问被拒绝：scripts/*.json 与 project.json 不可用 Write/Edit 直改，"
-            "请改用 MCP 工具——剧本编辑走 mcp__arcreel__patch_episode_script / "
-            "mcp__arcreel__insert_segment / mcp__arcreel__remove_segment / mcp__arcreel__split_segment，"
-            "角色/场景/道具走 mcp__arcreel__patch_project，资产改名走 mcp__arcreel__rename_asset。"
+            "请改用 MCP 工具——剧本编辑走 mcp__matrixspooll__patch_episode_script / "
+            "mcp__matrixspooll__insert_segment / mcp__matrixspooll__remove_segment / mcp__matrixspooll__split_segment，"
+            "角色/场景/道具走 mcp__matrixspooll__patch_project，资产改名走 mcp__matrixspooll__rename_asset。"
         ),
         sandbox_subpaths=("scripts", "project.json"),
     ),
@@ -744,8 +772,8 @@ AgentAccessPolicy.PROTECTED_WRITE_RULES = (
             + "）不可用 Write/Edit 直改。"
             "这些文件与 Web 端保存、迁移读改写、重生成共享一把文件锁，而 Write/Edit 取不到这把锁，"
             "直改会与并发的保存互相丢失更新。"
-            f'请改用 MCP 工具——mcp__arcreel__{STEP1_EDIT_TOOL_NAME}({{"episode": N}}) 取回可编辑草稿，'
-            f"改草稿的 content，再用 mcp__arcreel__{PROMOTE_TOOL_NAME} 校验并晋升回正式文件。"
+            f'请改用 MCP 工具——mcp__matrixspooll__{STEP1_EDIT_TOOL_NAME}({{"episode": N}}) 取回可编辑草稿，'
+            f"改草稿的 content，再用 mcp__matrixspooll__{PROMOTE_TOOL_NAME} 校验并晋升回正式文件。"
         ),
         sandbox_subpaths=("drafts",),
     ),

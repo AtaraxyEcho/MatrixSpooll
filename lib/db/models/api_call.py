@@ -21,6 +21,7 @@ class ApiCall(TimestampMixin, UserOwnedMixin, Base):
         nullable=True,
     )
     project_name: Mapped[str] = mapped_column(String, nullable=False)
+    actor_username: Mapped[str | None] = mapped_column(String, nullable=True)
     call_type: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[str] = mapped_column(String, nullable=False)
     prompt: Mapped[str | None] = mapped_column(Text)

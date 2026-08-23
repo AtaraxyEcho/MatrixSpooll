@@ -5,7 +5,14 @@ from datetime import UTC, datetime
 from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-DEFAULT_USER_ID = "default"
+# ``default`` was the identifier used by the original single-user runtime.
+# It is retained only as a migration/test compatibility marker; no production
+# row or ORM default may use it as an actor identity.
+LEGACY_DEFAULT_USER_ID = "default"
+# Import compatibility for older service signatures.  An omitted actor is an
+# empty sentinel, never a database identifier.  Persistence boundaries resolve
+# it to the bootstrapped UUID superadmin (or reject it outside TESTING).
+DEFAULT_USER_ID = ""
 
 
 class Base(DeclarativeBase):
@@ -31,12 +38,11 @@ class TimestampMixin:
 
 
 class UserOwnedMixin:
-    """User ownership marker."""
+    """Historical actor marker retained after account deletion."""
 
-    user_id: Mapped[str] = mapped_column(
+    user_id: Mapped[str | None] = mapped_column(
         String,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        server_default=DEFAULT_USER_ID,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )

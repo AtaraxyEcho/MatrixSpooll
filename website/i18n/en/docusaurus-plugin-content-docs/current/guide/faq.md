@@ -24,9 +24,10 @@ Docker is the preferred option for most users. The recommended environments are 
 
 ```bash
 git clone https://github.com/MockMine/MatrixSpooll.git
-cd MatrixSpooll/deploy
+cd MatrixSpooll/deploy/production
 cp .env.example .env
-docker compose up -d
+# Edit .env and set POSTGRES_PASSWORD plus authentication values
+docker compose -f docker-compose.yml up -d --build
 ```
 
 After startup, open `http://localhost:1241`. If MatrixSpooll is deployed on another host, replace `localhost` with that host's address.
@@ -35,11 +36,12 @@ Native Windows can run basic workflows such as project creation, but the Agent s
 
 ### What should I do if MatrixSpooll does not open after Docker starts, or the container keeps restarting? {#docker-wont-start}
 
-Run these commands in the `deploy/` or `deploy/production/` directory you actually use:
+Run these commands in `deploy/production/`:
 
 ```bash
 docker compose ps
-docker compose logs arcreel
+docker compose logs matrixspooll
+docker compose logs postgres
 ```
 
 Check the following in order:
@@ -69,7 +71,7 @@ For a source deployment, restart the MatrixSpooll service. Do not disable authen
 Create a backup first, then run these commands in the appropriate Compose directory:
 
 ```bash
-docker compose build arcreel
+docker compose build matrixspooll
 docker compose up -d
 ```
 
@@ -81,12 +83,13 @@ The About section of the Settings page can check for a new version and open its 
 
 The main data for a default Docker deployment is stored in its Compose directory:
 
-- `projects/`: projects, assets, and the default SQLite database
+- `projects/`: projects, assets, and media files
+- `pgdata/`: PostgreSQL data directory
 - `.env`: login and deployment configuration
 - `vertex_keys/`: Vertex credential files
 - `claude_data/`: Agent session data
 
-A production PostgreSQL deployment also requires a PostgreSQL database backup. A full-instance backup must cover the project directory, database, and required credentials. Use `pg_dump` / `pg_restore` for PostgreSQL. Copy SQLite only after stopping the service, or use SQLite's online backup mechanism.
+A full-instance backup must cover the project directory, PostgreSQL database, and required credentials. Export the database with `pg_dump` and regularly rehearse the [documented restore procedure](../ops/deployment.md#backup-and-restore).
 
 A project ZIP from the Web UI is suitable for migrating an individual project, but it does not include global provider configuration, account configuration, task records, cost records, or Agent sessions. It is not a substitute for a full-instance backup.
 
@@ -306,7 +309,7 @@ MatrixSpooll may be customized, deployed privately, and supported under AGPL-3.0
 A generic frontend error cannot identify the root cause. First expand the task error, then inspect the server logs and the status code returned by the provider. For a Docker deployment, run this command in the Compose directory:
 
 ```bash
-docker compose logs arcreel
+docker compose logs matrixspooll
 ```
 
 You can also download diagnostic logs from the About section of Settings. The diagnostic bundle attempts to mask known credentials in the system summary, but it does not rescan and redact the full contents of existing logs at download time. Before sharing it, manually inspect the entire bundle and remove API keys, Tokens, passwords, the complete `.env`, private endpoint addresses, and project content.

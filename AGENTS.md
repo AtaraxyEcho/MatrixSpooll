@@ -1,6 +1,6 @@
-# ArcReel
+# MatrixSpooll
 
-ArcReel 是一个 AI 视频生成平台，将小说转化为短视频。三层架构：
+MatrixSpooll 是一个 AI 视频生成平台，将小说转化为短视频。三层架构：
 
 ```
 frontend/ (React SPA)  →  server/ (FastAPI)  →  lib/ (核心库)
@@ -13,6 +13,9 @@ frontend/ (React SPA)  →  server/ (FastAPI)  →  lib/ (核心库)
 
 ```bash
 # 后端
+# 启动本地 PostgreSQL（应用仍在宿主机运行，便于热重载）
+docker compose -f deploy/development/docker-compose.yml up -d
+
 # 启动开发服务器（必须用 --reload-dir 限定监视目录，否则 watchfiles 会扫描
 # node_modules / .venv / .git / .worktrees 等十几万个文件，单核 CPU 50%+）
 uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241
@@ -22,7 +25,7 @@ uv run ruff check . && uv run ruff format .          # lint + format
 uv run basedpyright                                  # 类型检查（CI 强制 0 error）
 uv run lint-imports                                  # import 分层契约（CI backend-static 必过）
 uv sync                                              # 安装依赖
-uv run alembic upgrade head                          # 数据库迁移
+uv run alembic upgrade head                          # 迁移 Docker 开发库或 DATABASE_URL 指向的库
 uv run alembic revision --autogenerate -m "desc"     # 生成迁移
 
 # 前端，先 cd frontend
@@ -50,7 +53,7 @@ pnpm build       # 双 locale 构建，须先 pnpm sync-contributing
 
 `server/agent_runtime/` 封装 Claude Agent SDK：
 - `SessionActor` — 每会话一个专属 asyncio task，串行化所有 ClaudeSDKClient 调用（spec: `docs/superpowers/specs/2026-04-13-session-actor-design.md`）
-- `SessionStore` 的 transcript DB 镜像受 `ARCREEL_SDK_SESSION_STORE` 环境变量控制：`db`/`off`，off 时回退到 SDK 自带的 jsonl 路径
+- `SessionStore` 的 transcript DB 镜像受 `MATRIXSPOOLL_SDK_SESSION_STORE` 环境变量控制：`db`/`off`，off 时回退到 SDK 自带的 jsonl 路径
 - `sdk_tools/` 内的 SDK 进程内 MCP 工具由 agent profile manifest 注入，供 Skill 调用
 
 ## 关键设计模式
@@ -107,7 +110,7 @@ Windows 原生无 bwrap，会自动降级：
 
 ## 智能体运行环境
 
-ArcReel 内嵌基于 Claude Agent SDK 的智能体（Harness 即上文的 Agent Runtime），其专属配置的源目录是 `agent_runtime_profile/`，与开发态 `.claude/` 物理分离：
+MatrixSpooll 内嵌基于 Claude Agent SDK 的智能体（Harness 即上文的 Agent Runtime），其专属配置的源目录是 `agent_runtime_profile/`，与开发态 `.claude/` 物理分离：
 
 - `agent_runtime_profile/.claude/skills/`、`agent_runtime_profile/.claude/agents/` — Skill 与 Subagent 定义
 - `agent_runtime_profile/CLAUDE.*.md` — 按 `content_mode` 拆分的系统 prompt 变体，运行时按项目内容模式动态注入
@@ -155,7 +158,7 @@ API Key、后端选择、模型配置等通过 WebUI 配置页（`/settings`）�
 
 ### Issue tracker
 
-议题（issue/Spec）追踪在 `ArcReel/ArcReel` 的 GitHub Issues，统一用 `gh` CLI 操作。Spec 用 `Spec` 标签 + `Spec:` 标题前缀；细分 issue 标题尾缀 `[Spec #N]` 并挂原生 sub-issue。详见 `docs/agents/issue-tracker.md`。
+议题（issue/Spec）追踪在 `MockMine/MatrixSpooll` 的 GitHub Issues，统一用 `gh` CLI 操作。Spec 用 `Spec` 标签 + `Spec:` 标题前缀；细分 issue 标题尾缀 `[Spec #N]` 并挂原生 sub-issue。详见 `docs/agents/issue-tracker.md`。
 
 ### Triage labels
 

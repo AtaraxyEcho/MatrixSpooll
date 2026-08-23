@@ -1,4 +1,4 @@
-"""Authoritative, side-effect-free workflow status for ArcReel projects."""
+"""Authoritative, side-effect-free workflow status for MatrixSpooll projects."""
 
 from __future__ import annotations
 
@@ -1204,7 +1204,7 @@ class WorkflowStateService:
             blockers.append(
                 WorkflowBlocker(
                     code="artifact_currency_unavailable",
-                    path=".arcreel_artifacts.json",
+                    path=".matrixspooll_artifacts.json",
                     reason=str(exc),
                 )
             )
@@ -1637,9 +1637,7 @@ class WorkflowStateService:
             project=WorkflowProject(
                 content_mode=str(project.get("content_mode")),
                 generation_mode=(
-                    project.get("generation_mode")
-                    if isinstance(project.get("generation_mode"), str)
-                    else None
+                    project.get("generation_mode") if isinstance(project.get("generation_mode"), str) else None
                 ),
                 grid_storyboard=project.get("grid_storyboard") is True,
                 workflow_applicable=project.get("content_mode") != "free",

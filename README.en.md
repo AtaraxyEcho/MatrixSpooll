@@ -47,8 +47,6 @@
 
 MatrixSpooll is an open-source, self-hosted workspace for AI drama and novel adaptation, narrated short videos, ads, product shorts, and free creation. It organizes content analysis, asset management, storyboards, media generation, cost tracking, and export into inspectable and resumable workflows, while also supporting direct image and video generation outside the fixed workflow.
 
-MatrixSpooll is a modified version of ArcReel, with this modified version dated 2026-08-21. Major changes include the MatrixSpooll brand, the free-creation project mode, the home composer, model-capability controls, the infinite canvas, and provider error handling; see the [CHANGELOG](CHANGELOG.md) for details.
-
 - **One production workflow**: turn novels, finished screenplays, or product assets into characters, scenes, props, storyboards, video clips, and final videos step by step.
 - **Visual continuity with human control**: reuse reference assets across shots, review key stages, regenerate individual assets, and roll back to earlier versions.
 - **Manageable models and costs**: configure text, image, video, and TTS capabilities in one place, then review estimated costs and actual usage.
@@ -99,7 +97,7 @@ For the complete first-run workflow, see [Getting Started](website/docs/guide/ge
 | [Provider Configuration](website/docs/guide/providers.md) | Selection and configuration of Agent, text, image, video, and TTS providers |
 | [Jianying Draft Export](website/docs/guide/jianying-export.md) | Continue editing MatrixSpooll output in Jianying |
 | [FAQ](website/docs/guide/faq.md) | Deployment, cost, model, data, and licensing questions |
-| [Deployment and Operations](website/docs/ops/deployment.md) | SQLite, PostgreSQL, upgrades, backups, and reverse proxies |
+| [Deployment and Operations](website/docs/ops/deployment.md) | PostgreSQL, upgrades, backups, and reverse proxies |
 | [Migrate from SQLite to PostgreSQL](website/docs/ops/migrate-to-postgres.md) | SQLite to PostgreSQL migration, verification, and rollback |
 | [Architecture](website/docs/dev/architecture.md) | Agent Runtime, task queue, provider abstraction, and data layer |
 | [Contributing](website/docs/dev/contributing.md) | Local development, tests, conventions, and pull requests |
@@ -116,16 +114,12 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before starting. After cloning the repos
 uv run pre-commit install
 ```
 
-## License and provenance
-
-MatrixSpooll is a modified version of ArcReel, with this modified version dated 2026-08-21.
-
-Powered by ArcReel — https://github.com/ArcReel/ArcReel
+## License
 
 This project is released under the [GNU Affero General Public License v3.0](LICENSE), with the attribution and modification-notice requirements in [NOTICE](NOTICE). The software is provided without warranty; users may use, modify, and redistribute it under AGPL-3.0.
 
+This repository is a modified version of the upstream project. It adds MatrixSpooll multi-user access, free creation, stable project identity, and PostgreSQL deployment support, and is clearly distinguished from the upstream release.
+
 Current source: <https://github.com/MockMine/MatrixSpooll>
 
-ArcReel Copyright © 2026 Pollo3470 and ArcReel contributors.
-
-MatrixSpooll modifications Copyright © 2026 MatrixSpooll contributors.
+MatrixSpooll Copyright © 2026 MatrixSpooll contributors.

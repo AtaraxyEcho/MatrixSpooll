@@ -50,6 +50,7 @@ from lib.storyboard_sequence import get_storyboard_items, group_scenes_by_segmen
 from server.agent_runtime.sdk_tools._context import (
     ToolContext,
     generation_result_response,
+    invoke_with_optional_actor,
     tool_error,
     validate_script_filename,
 )
@@ -373,7 +374,9 @@ def generate_grid_tool(ctx: ToolContext):
                     # 入队成功的宫格继续跑，调用方不会被一张失败导致全量重试。
                     gm.save(grid)
                     try:
-                        enqueue_result = await enqueue_task_only(
+                        enqueue_result = await invoke_with_optional_actor(
+                            enqueue_task_only,
+                            actor_user_id=ctx.actor_user_id,
                             project_name=ctx.project_name,
                             task_type="grid",
                             media_type="image",

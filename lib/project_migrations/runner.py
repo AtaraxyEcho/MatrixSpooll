@@ -275,7 +275,7 @@ def cleanup_stale_backups(projects_root: Path, max_age_days: int = 7) -> None:
         script_backup_versions = (6,) if retain_v7_recovery else (6, CURRENT_SCHEMA_VERSION - 1)
         sources = (
             (project_dir / "project.json", project_backup_versions),
-            (project_dir / ".arcreel_artifacts.json", activation_backup_versions),
+            (project_dir / ".matrixspooll_artifacts.json", activation_backup_versions),
             *((source, script_backup_versions) for source in _bound_script_sources(project_dir)),
         )
         for source, versions in sources:

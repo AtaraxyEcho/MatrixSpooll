@@ -500,7 +500,7 @@ def _video_content(path: Path, *, role: str, model: str) -> dict[str, Any]:
 
 
 def build_seedance_request_body(model: str, request: VideoGenerationRequest) -> dict[str, Any]:
-    """Map ArcReel's normalized request to AnyFast's role-bearing contract."""
+    """Map MatrixSpooll's normalized request to AnyFast's role-bearing contract."""
 
     profile = _model_profile(model)
     if profile is None:

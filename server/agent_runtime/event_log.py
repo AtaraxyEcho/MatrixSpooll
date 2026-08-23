@@ -21,6 +21,7 @@ from sqlalchemy import exists, func, select
 from sqlalchemy.exc import IntegrityError
 
 from lib.db import safe_session_factory
+from lib.db.actor_identity import resolve_actor_user_id
 from lib.db.base import DEFAULT_USER_ID, utc_now
 from lib.db.models.session import AgentSession
 from lib.db.models.session_event import AgentSessionEventLogEntry
@@ -625,6 +626,9 @@ class EventLogStore:
         now_dt = utc_now()
         async with self._session_factory() as session:
             project_id = await session.scalar(select(AgentSession.project_id).where(AgentSession.id == session_id))
+            if project_id is None:
+                raise ValueError(f"agent session is not registered: {session_id}")
+            actor_id = await resolve_actor_user_id(session, actor_user_id or self._user_id)
             seq_start_row = await session.execute(
                 select(func.coalesce(func.max(AgentSessionEventLogEntry.seq), -1) + 1).where(
                     AgentSessionEventLogEntry.session_id == session_id,
@@ -642,7 +646,7 @@ class EventLogStore:
                         entry_type=str(entry.get("type") or ""),
                         payload=entry,
                         client_key=client_key if len(entries) == 1 else None,
-                        user_id=actor_user_id or self._user_id,
+                        user_id=actor_id,
                         created_at=now_dt,
                         updated_at=now_dt,
                     )

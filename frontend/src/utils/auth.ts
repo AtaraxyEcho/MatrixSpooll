@@ -1,5 +1,5 @@
-const TOKEN_KEY = "arcreel_auth_token";
-const DEVICE_KEY = "arcreel_auth_device";
+const TOKEN_KEY = "matrixspooll_auth_token";
+const DEVICE_KEY = "matrixspooll_auth_device";
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);

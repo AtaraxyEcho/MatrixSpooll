@@ -1,0 +1,20 @@
+name: matrixspooll-development
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: matrixspooll
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-matrixspooll_dev}
+      POSTGRES_DB: matrixspooll
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U matrixspooll -d matrixspooll"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

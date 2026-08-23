@@ -265,7 +265,7 @@ MatrixSpooll 的项目不仅是一条数据库记录，还包括文件系统中�
 
 应用数据根目录解析顺序：
 
-1. `ARCREEL_DATA_DIR`
+1. `MATRIXSPOOLL_DATA_DIR`
 2. 兼容变量 `AI_ANIME_PROJECTS`
 3. 默认 `projects/`
 
@@ -368,7 +368,7 @@ MatrixSpooll 提供：
 
 - 用户名和密码登录；
 - JWT；
-- `arc-` 前缀 API Key；
+- `msp-` 前缀 API Key；
 - 外部 Agent 同步对话端点。
 
 API Key 应使用哈希存储，不应在创建后以明文持续返回。

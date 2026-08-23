@@ -9,14 +9,16 @@ from typing import Literal
 
 from lib.agent_session_store.models import AgentSessionEntry, AgentSessionSummary
 
-_ENV_VAR = "ARCREEL_SDK_SESSION_STORE"
+_ENV_VAR = "MATRIXSPOOLL_SDK_SESSION_STORE"
+_LEGACY_ENV_VAR = "ARCREEL_SDK_SESSION_STORE"
 _VALID_MODES = frozenset({"db", "off", ""})
 
-logger = logging.getLogger("arcreel.session_store.config")
+logger = logging.getLogger("matrixspooll.session_store.config")
 
 FlushMode = Literal["eager", "batched"]
 
-_FLUSH_ENV_VAR = "ARCREEL_SDK_SESSION_STORE_FLUSH"
+_FLUSH_ENV_VAR = "MATRIXSPOOLL_SDK_SESSION_STORE_FLUSH"
+_LEGACY_FLUSH_ENV_VAR = "ARCREEL_SDK_SESSION_STORE_FLUSH"
 _VALID_FLUSH_MODES = frozenset({"eager", "batched"})
 
 
@@ -34,19 +36,19 @@ def make_project_key(project_cwd: Path | str) -> str:
 
 
 def session_store_enabled() -> bool:
-    """True when ARCREEL_SDK_SESSION_STORE is anything but 'off' (case-insensitive).
+    """True when MATRIXSPOOLL_SDK_SESSION_STORE is anything but 'off' (case-insensitive).
 
     Single source of truth for the kill-switch parsed at every read site
     (lifespan migration, SessionManager). Unknown values default to enabled
     with a warning in callers that care to log it.
     """
-    mode = os.getenv(_ENV_VAR, "db").strip().lower()
+    mode = os.getenv(_ENV_VAR, os.getenv(_LEGACY_ENV_VAR, "db")).strip().lower()
     return mode != "off"
 
 
 def session_store_mode() -> str:
     """Return the raw normalized mode string (`db`, `off`, or other)."""
-    return os.getenv(_ENV_VAR, "db").strip().lower()
+    return os.getenv(_ENV_VAR, os.getenv(_LEGACY_ENV_VAR, "db")).strip().lower()
 
 
 def is_known_session_store_mode(mode: str) -> bool:
@@ -58,10 +60,10 @@ def session_store_flush_mode() -> FlushMode:
 
     Defaults to "eager" so transcript writes are durable across crashes
     and visible mid-turn for reconnect snapshots. Set
-    ARCREEL_SDK_SESSION_STORE_FLUSH=batched for the legacy end-of-turn
+    MATRIXSPOOLL_SDK_SESSION_STORE_FLUSH=batched for the legacy end-of-turn
     flush behavior (rollback path).
     """
-    raw = os.getenv(_FLUSH_ENV_VAR, "").strip().lower()
+    raw = os.getenv(_FLUSH_ENV_VAR, os.getenv(_LEGACY_FLUSH_ENV_VAR, "")).strip().lower()
     if raw == "batched":
         return "batched"
     if raw and raw not in _VALID_FLUSH_MODES:

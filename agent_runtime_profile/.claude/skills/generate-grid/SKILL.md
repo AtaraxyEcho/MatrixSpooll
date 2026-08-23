@@ -17,9 +17,9 @@ description: 生成宫格分镜图。当用户说"生成宫格"、"宫格生图"
 
 | 操作 | 工具 |
 |------|------|
-| 整集生成 | `mcp__arcreel__generate_grid({"script": "episode_1.json"})` |
-| 指定场景所在的组 | `mcp__arcreel__generate_grid({"script": "episode_1.json", "scene_ids": ["E1S01", "E1S02", "E1S03"]})` |
-| 列出当前分组信息 | `mcp__arcreel__generate_grid({"script": "episode_1.json", "list_only": true})` |
+| 整集生成 | `mcp__matrixspooll__generate_grid({"script": "episode_1.json"})` |
+| 指定场景所在的组 | `mcp__matrixspooll__generate_grid({"script": "episode_1.json", "scene_ids": ["E1S01", "E1S02", "E1S03"]})` |
+| 列出当前分组信息 | `mcp__matrixspooll__generate_grid({"script": "episode_1.json", "list_only": true})` |
 
 不传 `scene_ids` 时只补缺：分镜格已齐备的分组会被复用，不重新生成。
 结果按 `requested / succeeded / failed / blocked` 逐**场景** ID 返回：同组场景共享一张宫格，

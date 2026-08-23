@@ -16,10 +16,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from lib.agent_session_store.models import AgentSessionEntry, AgentSessionSummary
+from lib.db.actor_identity import resolve_actor_user_id
 from lib.db.base import DEFAULT_USER_ID, utc_now
 from lib.db.models.session import AgentSession
 
-logger = logging.getLogger("arcreel.session_store")
+logger = logging.getLogger("matrixspooll.session_store")
 
 _MAX_APPEND_RETRY = 16
 _APPEND_BACKOFF_CAP_S = 0.05
@@ -110,6 +111,9 @@ class DbSessionStore:
         now_dt = utc_now()
         async with self._session_factory() as session:
             project_id = await session.scalar(select(AgentSession.project_id).where(AgentSession.id == session_id))
+            if project_id is None:
+                raise ValueError(f"agent session is not registered: {session_id}")
+            actor_id = await resolve_actor_user_id(session, self._user_id)
             seq_start_row = await session.execute(
                 select(func.coalesce(func.max(AgentSessionEntry.seq), -1) + 1).where(
                     AgentSessionEntry.project_key == project_key,
@@ -130,7 +134,7 @@ class DbSessionStore:
                     "entry_type": _entry_type(entry),
                     "payload": entry,
                     "mtime_ms": now_ms,
-                    "user_id": self._user_id,
+                    "user_id": actor_id,
                     "created_at": now_dt,
                     "updated_at": now_dt,
                 }
@@ -142,7 +146,9 @@ class DbSessionStore:
             # Maintain per-session summary for list_session_summaries fast path.
             # Per SDK protocol: skip for subagent transcripts (subpath != "").
             if subpath == "":
-                await self._fold_summary_locked(session, project_key, session_id, entries, now_ms, now_dt, project_id)
+                await self._fold_summary_locked(
+                    session, project_key, session_id, entries, now_ms, now_dt, project_id, actor_id
+                )
 
             await session.commit()
 
@@ -163,6 +169,7 @@ class DbSessionStore:
         now_ms: int,
         now_dt,
         project_id: str | None,
+        actor_id: str,
     ) -> None:
         """Read-fold-write the per-session summary inside the active transaction.
 
@@ -203,7 +210,7 @@ class DbSessionStore:
                     session_id=session_id,
                     mtime_ms=now_ms,
                     data=new_data,
-                    user_id=self._user_id,
+                    user_id=actor_id,
                     created_at=now_dt,
                     updated_at=now_dt,
                 )
@@ -211,6 +218,7 @@ class DbSessionStore:
         else:
             prev_row.mtime_ms = now_ms
             prev_row.data = new_data
+            prev_row.user_id = actor_id
             prev_row.updated_at = now_dt
 
     async def _insert_entries(self, session, rows: list[dict]) -> None:

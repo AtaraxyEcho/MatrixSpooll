@@ -1,7 +1,7 @@
 """Contract coverage for the video-workflow Agent Profile.
 
 档案是 prompt，但这里只断言**能对照代码真相源的覆盖**：受控动作与问题码枚举、产物状态枚举、
-准入结论、旁白交付常量、已注册的 `mcp__arcreel__*` 工具名，以及按内容模式物化出的文件映射。
+准入结论、旁白交付常量、已注册的 `mcp__matrixspooll__*` 工具名，以及按内容模式物化出的文件映射。
 措辞不在断言范围内——服务端扩一个枚举而档案没跟上会红，改一句措辞不会。越界行为由服务端契约
 与 ``AgentAccessPolicy`` 在工具边界上拒绝，不靠在测试里抄一遍 prompt 原文。
 """
@@ -23,7 +23,7 @@ from lib.narration_delivery import POST_PRODUCTION, USE_TTS
 from lib.profile_manifest import VALID_CONTENT_MODES, resolve_profile_files_for_mode
 from lib.workflow_rules import WORKFLOW_RULES
 from lib.workflow_state import WorkflowActionType, WorkflowTarget
-from server.agent_runtime.sdk_tools import ARCREEL_MCP_TOOL_IDS
+from server.agent_runtime.sdk_tools import MATRIXSPOOLL_MCP_TOOL_IDS
 
 pytestmark = pytest.mark.unit
 
@@ -63,9 +63,9 @@ def _reference(path: Path) -> str:
 def test_variants_route_through_the_registered_plan_tool(filename: str) -> None:
     content = _skill(filename)
 
-    assert "get_workflow_plan" in ARCREEL_MCP_TOOL_IDS
-    assert "mcp__arcreel__get_workflow_plan" in content
-    assert "mcp__arcreel__get_workflow_status" not in content
+    assert "get_workflow_plan" in MATRIXSPOOLL_MCP_TOOL_IDS
+    assert "mcp__matrixspooll__get_workflow_plan" in content
+    assert "mcp__matrixspooll__get_workflow_status" not in content
 
 
 @pytest.mark.parametrize("filename", WORKFLOW_VARIANTS)
@@ -91,10 +91,10 @@ def test_plan_reference_covers_every_controlled_action() -> None:
 def test_plan_reference_names_only_registered_mcp_tools() -> None:
     content = _reference(WORKFLOW_PLAN_REFERENCE)
 
-    assert "mcp__arcreel__get_workflow_plan" in content
+    assert "mcp__matrixspooll__get_workflow_plan" in content
     for tool_id in ("plan_episodes", "reset_episode_planning", "patch_episode_script"):
-        assert tool_id in ARCREEL_MCP_TOOL_IDS
-        assert f"mcp__arcreel__{tool_id}" in content
+        assert tool_id in MATRIXSPOOLL_MCP_TOOL_IDS
+        assert f"mcp__matrixspooll__{tool_id}" in content
 
 
 def test_plan_reference_documents_every_target_field() -> None:
@@ -186,23 +186,23 @@ def test_episodic_variants_name_the_registered_recovery_tools(filename: str) -> 
         "get_episode_script_revision",
         "patch_episode_script",
     ):
-        assert tool_id in ARCREEL_MCP_TOOL_IDS
-        assert f"mcp__arcreel__{tool_id}" in content
+        assert tool_id in MATRIXSPOOLL_MCP_TOOL_IDS
+        assert f"mcp__matrixspooll__{tool_id}" in content
 
 
 def test_ad_variant_names_the_registered_video_tools() -> None:
     content = _skill("SKILL.ad.md")
 
     for tool_id in ("generate_video_selected", "generate_video_episode"):
-        assert tool_id in ARCREEL_MCP_TOOL_IDS
-        assert f"mcp__arcreel__{tool_id}" in content
+        assert tool_id in MATRIXSPOOLL_MCP_TOOL_IDS
+        assert f"mcp__matrixspooll__{tool_id}" in content
 
 
 def test_asset_analysis_subagent_names_its_registered_tool() -> None:
     content = (PROFILE / ".claude" / "agents" / "analyze-assets.md").read_text(encoding="utf-8")
 
-    assert "complete_asset_inventory" in ARCREEL_MCP_TOOL_IDS
-    assert "mcp__arcreel__complete_asset_inventory" in content
+    assert "complete_asset_inventory" in MATRIXSPOOLL_MCP_TOOL_IDS
+    assert "mcp__matrixspooll__complete_asset_inventory" in content
 
 
 # ------------------------------------ Profile 物化：每个模式都拿到工作流 skill

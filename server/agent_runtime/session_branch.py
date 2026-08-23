@@ -79,7 +79,7 @@ class SessionBranchService:
         store = self._store
         if store is None:
             raise SessionBranchError(
-                "session branching requires the DB transcript store (ARCREEL_SDK_SESSION_STORE=db)"
+                "session branching requires the DB transcript store (MATRIXSPOOLL_SDK_SESSION_STORE=db)"
             )
 
         meta = await self._meta_store.get(session_id)

@@ -6,6 +6,7 @@ from sqlalchemy import JSON, BigInteger, ForeignKey, Index, PrimaryKeyConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lib.db.base import Base, TimestampMixin, UserOwnedMixin
+from lib.db.schema_comments import apply_schema_comments
 
 
 class AgentSessionEntry(TimestampMixin, UserOwnedMixin, Base):
@@ -13,14 +14,17 @@ class AgentSessionEntry(TimestampMixin, UserOwnedMixin, Base):
 
     __tablename__ = "agent_session_entries"
 
-    project_id: Mapped[str | None] = mapped_column(
+    project_id: Mapped[str] = mapped_column(
         String,
         ForeignKey("project_registry.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True,
+        nullable=False,
     )
     project_key: Mapped[str] = mapped_column(String, nullable=False)
-    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    session_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("agent_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     subpath: Mapped[str] = mapped_column(String, nullable=False, server_default="")
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     uuid: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -46,6 +50,8 @@ class AgentSessionEntry(TimestampMixin, UserOwnedMixin, Base):
             "session_id",
             "mtime_ms",
         ),
+        Index("idx_agent_entries_project_id", "project_id"),
+        Index("idx_agent_entries_session_id", "session_id"),
     )
 
 
@@ -54,13 +60,24 @@ class AgentSessionSummary(TimestampMixin, UserOwnedMixin, Base):
 
     __tablename__ = "agent_session_summaries"
 
-    project_id: Mapped[str | None] = mapped_column(
+    project_id: Mapped[str] = mapped_column(
         String,
         ForeignKey("project_registry.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True,
+        nullable=False,
     )
     project_key: Mapped[str] = mapped_column(String, primary_key=True)
-    session_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("agent_sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
     mtime_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
     data: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+    __table_args__ = (
+        Index("idx_agent_summaries_project_id", "project_id"),
+        Index("idx_agent_summaries_session_id", "session_id"),
+    )
+
+
+apply_schema_comments(Base.metadata)

@@ -3,7 +3,6 @@
 > 文档版本：1.0  
 > 编制日期：2026-08-21  
 > 适用项目：MatrixSpooll 定制版本  
-> 上游项目：ArcReel  
 > 软件许可证：GNU Affero General Public License v3.0（AGPL-3.0）
 
 本文档用于记录 MatrixSpooll 定制版本的交付范围、交付物、部署方式、验收标准和许可证边界。项目名称、交付版本、源码提交号和客户信息应在正式交付时补全。
@@ -29,7 +28,7 @@
 
 - MatrixSpooll 完整源代码，包括 `frontend/`、`server/`、`lib/`、`scripts/`、数据库迁移和构建配置。
 - `LICENSE`：GNU AGPL-3.0 完整许可证文本。
-- `NOTICE`：ArcReel 来源、版权、修改版本和界面署名要求。
+- `NOTICE`：法定来源、版权、修改版本和界面署名要求。
 - `README.md`、`README.en.md` 和 `website/docs/` 中与当前版本相符的使用及部署说明。
 - `Dockerfile`、`deploy/` 和 `deploy/production/` 中的本地构建及部署配置。
 - `pyproject.toml`、`uv.lock`、前端依赖清单和其他可重现构建所需文件。
@@ -47,13 +46,13 @@
 - 健康检查、日志查看、升级、备份和恢复操作说明。
 - 第三方模型供应商配置说明，以及需要客户自行申请的 API 凭据清单。
 
-当前数据库和内部协议中的 `arcreel` 标识（例如 `.arcreel.db`、`ARCREEL_*` 和 PostgreSQL 默认数据库名）属于兼容性标识，交付时不应自行重命名。若客户要求更换这些标识，必须单独制定数据迁移、回滚和兼容性验证方案。
+当前数据库和内部协议中的 `matrixspooll` 标识（例如 `.matrixspooll.db`、`MATRIXSPOOLL_*` 和 PostgreSQL 默认数据库名）属于兼容性标识，交付时不应自行重命名。若客户要求更换这些标识，必须单独制定数据迁移、回滚和兼容性验证方案。
 
 ### 2.3 定制功能范围
 
 本交付版本以实际验收清单为准。当前定制范围包括：
 
-- MatrixSpooll 品牌、图标和界面来源声明。
+- MatrixSpooll 品牌、图标和关于页。
 - 自由创作项目模式，以及首页创作输入框。
 - Agent、图片生成、视频生成等输入框模式控制。
 - 模型能力联动和生成参数控制。
@@ -68,21 +67,17 @@
 
 ### 3.1 软件许可证
 
-MatrixSpooll 是 ArcReel 的修改版本，整体按 GNU AGPL-3.0 发布。交付方可以收取定制开发、部署、培训、维护和技术支持费用，但这不等同于将 AGPL 软件转化为闭源专有软件。
+本软件整体按 GNU AGPL-3.0 发布。交付方可以收取定制开发、部署、培训、维护和技术支持费用，但这不等同于将 AGPL 软件转化为闭源专有软件。法定来源与署名以交付版本中的 `NOTICE` 为唯一真相源。
 
 交付包必须保留：
 
 - `LICENSE` 完整文本；
 - `NOTICE` 完整文本；
-- ArcReel 原始版权和来源链接；
-- MatrixSpooll 的修改声明和修改日期；
+- `NOTICE` 中列明的版权和来源链接；
+- `NOTICE` 中列明的修改声明要求；
 - 用户界面中约定的来源署名。
 
-界面署名应保留以下内容：
-
-```text
-Powered by ArcReel — https://github.com/ArcReel/ArcReel
-```
+关于页从 `NOTICE` 动态读取法定署名，交付时不得删除或覆盖该文件。
 
 ### 3.2 源码交付方式
 
@@ -132,7 +127,7 @@ AUTH_TOKEN_SECRET=请设置长期固定的随机密钥
 docker compose build
 docker compose up -d
 docker compose ps
-docker compose logs --tail=100 arcreel
+docker compose logs --tail=100 matrixspooll
 curl -f http://localhost:1241/health
 ```
 
@@ -150,11 +145,11 @@ cp .env.example .env
 设置认证参数和 `POSTGRES_PASSWORD` 后，使用本地构建启动：
 
 ```bash
-docker compose build arcreel
+docker compose build matrixspooll
 docker compose up -d
 docker compose ps
 docker compose logs --tail=100 postgres
-docker compose logs --tail=200 arcreel
+docker compose logs --tail=200 matrixspooll
 curl -f http://localhost:1241/health
 ```
 
@@ -179,7 +174,7 @@ API Key 和供应商凭据应在客户部署环境中配置，不应写入源码
 - [ ] 服务能够启动并通过 `/health` 健康检查。
 - [ ] 管理员能够登录和修改认证配置。
 - [ ] 项目列表、项目创建、项目设置和关于页面可正常访问。
-- [ ] MatrixSpooll 品牌和 ArcReel 来源声明显示正确。
+- [ ] MatrixSpooll 品牌和 `NOTICE` 规定的法定来源声明显示正确。
 - [ ] `LICENSE`、`NOTICE` 和源码交付物可以取得。
 
 ### 5.2 自由创作

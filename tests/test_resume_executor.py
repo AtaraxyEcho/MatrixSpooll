@@ -121,7 +121,7 @@ def _storyboard_checkpoint_json(
         logical_name="E1S01",
         kind="first_frame",
         source_locator="storyboards/scene_E1S01.png",
-        staged_locator=f".arcreel/tasks/{task_id}/provider_media/000-start_image.png",
+        staged_locator=f".matrixspooll/tasks/{task_id}/provider_media/000-start_image.png",
         sha256="a" * 64,
         size_bytes=1,
     )
@@ -548,7 +548,7 @@ def _reference_checkpoint(
 ) -> str:
     from lib.reference_video.execution_checkpoint import NarrationExecutionFacts, ReferenceSubmissionCheckpoint
 
-    staging = project_path / ".arcreel" / "tasks" / "T-ref" / "provider_media"
+    staging = project_path / ".matrixspooll" / "tasks" / "T-ref" / "provider_media"
     staging.mkdir(parents=True, exist_ok=True)
     (staging / "crash-leftover").write_bytes(b"staged")
     visual = ArtifactBasis.build(
@@ -712,7 +712,7 @@ async def test_reference_resume_reads_only_strict_checkpoint_request_and_cleans_
     )
     finalize.assert_awaited_once()
     assert finalize.await_args.kwargs["script_file"] == "scripts/frozen.json"
-    assert not (fake_pm.project_path / ".arcreel" / "tasks" / "T-ref" / "provider_media").exists()
+    assert not (fake_pm.project_path / ".matrixspooll" / "tasks" / "T-ref" / "provider_media").exists()
 
 
 @pytest.mark.asyncio
@@ -804,7 +804,7 @@ async def test_reference_resume_endpoint_guard_is_exact(
         await execute_resume_video_task(task, job_id="job-1")
 
     assert fake_gen.resume_calls == []
-    assert not (fake_pm.project_path / ".arcreel" / "tasks" / "T-ref" / "provider_media").exists()
+    assert not (fake_pm.project_path / ".matrixspooll" / "tasks" / "T-ref" / "provider_media").exists()
 
 
 @pytest.mark.asyncio
@@ -841,7 +841,7 @@ async def test_reference_resume_rejects_resolved_model_drift_before_poll(monkeyp
         await execute_resume_video_task(task, job_id="job-1")
 
     assert fake_gen.resume_calls == []
-    assert not (fake_pm.project_path / ".arcreel" / "tasks" / "T-ref" / "provider_media").exists()
+    assert not (fake_pm.project_path / ".matrixspooll" / "tasks" / "T-ref" / "provider_media").exists()
 
 
 # ── endpoint 比对闸 ──────────────────────────────────────────────

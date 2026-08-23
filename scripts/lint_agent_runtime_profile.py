@@ -2,7 +2,7 @@
 """Static integrity checks for the materialized Agent Runtime Profile.
 
 校验范围限于能对照代码真相源的结构：frontmatter 与变体身份、按内容模式物化后的
-Markdown 指针可达性、`mcp__arcreel__*` 工具名是否已注册、eval id 是否唯一。
+Markdown 指针可达性、`mcp__matrixspooll__*` 工具名是否已注册、eval id 是否唯一。
 档案散文本身不做措辞校验——越界行为（如直改正式 step1）由 ``AgentAccessPolicy``
 在工具边界上拒绝，不靠对散文做黑名单。
 """
@@ -20,9 +20,9 @@ from urllib.parse import unquote
 
 from lib.profile_frontmatter import FrontmatterError, ProfileMetadata, parse_profile_metadata
 from lib.profile_manifest import VALID_CONTENT_MODES, ProfileMisconfiguredError, resolve_profile_files_for_mode
-from server.agent_runtime.sdk_tools import ARCREEL_MCP_TOOL_IDS
+from server.agent_runtime.sdk_tools import MATRIXSPOOLL_MCP_TOOL_IDS
 
-_MCP_RE = re.compile(r"mcp__arcreel__([a-zA-Z0-9_*.-]+)")
+_MCP_RE = re.compile(r"mcp__matrixspooll__([a-zA-Z0-9_*.-]+)")
 _MCP_SENTENCE_PUNCTUATION = ".,;:!?"
 _URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 _ROOT_POINTER_RE = re.compile(r"(?<![\w/])(\.claude/[A-Za-z0-9_./-]+\.md)")
@@ -119,7 +119,7 @@ def _validate_projection(
         tool_names = {match.rstrip(_MCP_SENTENCE_PUNCTUATION) for match in _MCP_RE.findall(text)}
         for tool_name in sorted(tool_names):
             if tool_name != "*" and tool_name not in registered_tools:
-                errors.append(f"{mode}:{source_rel}: unregistered MCP tool mcp__arcreel__{tool_name}")
+                errors.append(f"{mode}:{source_rel}: unregistered MCP tool mcp__matrixspooll__{tool_name}")
 
 
 def _validate_evals(profile_dir: Path, errors: list[str]) -> None:
@@ -163,7 +163,7 @@ def lint_profile(profile_dir: Path, *, registered_tools: set[str] | None = None)
     if not profile_dir.is_dir():
         return [f"profile directory does not exist: {profile_dir}"]
     _validate_metadata(profile_dir, errors)
-    tool_ids = set(ARCREEL_MCP_TOOL_IDS) if registered_tools is None else registered_tools
+    tool_ids = set(MATRIXSPOOLL_MCP_TOOL_IDS) if registered_tools is None else registered_tools
     for mode in sorted(VALID_CONTENT_MODES):
         _validate_projection(profile_dir, mode, tool_ids, errors)
     _validate_evals(profile_dir, errors)

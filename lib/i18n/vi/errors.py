@@ -1,4 +1,6 @@
 MESSAGES = {
+    "project_identifier_ambiguous": "Tên dự án '{name}' không duy nhất; hãy sử dụng project ID",
+    "project_delete_active_tasks": "Không thể xóa dự án khi còn {count} tác vụ tạo nội dung đang hoạt động. Hãy hủy và chờ các tác vụ kết thúc trước",
     "admin_user_not_found": "Không tìm thấy người dùng",
     "admin_username_required": "Tên người dùng không được để trống",
     "admin_user_exists": "Tên người dùng đã tồn tại",
@@ -9,6 +11,11 @@ MESSAGES = {
     "admin_superadmin_protected": "Không thể thay đổi quản trị viên siêu cấp được cấu hình từ môi trường",
     "avatar_too_large": "Tệp ảnh đại diện quá lớn (tối đa 2MB)",
     "session_invalid": "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại",
+    "api_key_invalid": "API Key không hợp lệ, đã hết hạn, bị thu hồi hoặc không khả dụng",
+    "api_key_user_invalid": "Người dùng liên kết với API Key không tồn tại hoặc đã bị vô hiệu hóa",
+    "token_invalid": "Thông tin xác thực không hợp lệ hoặc đã hết hạn",
+    "auth_required": "Vui lòng đăng nhập trước",
+    "auth_token_required": "Thiếu thông tin xác thực",
     "password_change_unavailable": "Phiên đăng nhập hiện tại không hỗ trợ đổi mật khẩu",
     "current_password_invalid": "Mật khẩu hiện tại không đúng",
     "free_creation_audio_composite_input_not_found": "Video hoặc bản lồng tiếng đã chọn không còn khả dụng",

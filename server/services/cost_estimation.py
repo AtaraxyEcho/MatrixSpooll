@@ -280,6 +280,7 @@ class CostEstimationService:
         scripts: dict[str, dict[str, Any]],
         *,
         project_name: str,
+        project_id: str | None = None,
         reference_request_options: Mapping[str, ReferenceRequestOptions] | None = None,
     ) -> dict[str, Any]:
         episodes_meta = project_data.get("episodes", [])
@@ -397,7 +398,9 @@ class CostEstimationService:
 
         # Get actual costs + 自定义供应商价格（缺则预估恒为零，需与实际记账同源预查 DB 单价）
         async with self._session_factory() as session:
-            actual_by_segment = await UsageRepository(session).get_actual_costs_by_segment(project_name)
+            actual_by_segment = await UsageRepository(session).get_actual_costs_by_segment(
+                project_name, project_id=project_id
+            )
             custom_repo = CustomProviderRepository(session)
             image_price = await custom_repo.resolve_price(image_provider, image_model)
             audio_price = await custom_repo.resolve_price(audio_provider, audio_model)
@@ -708,7 +711,9 @@ class CostEstimationService:
 
         # Project-level actual costs (characters/scenes/props/products 资产图 —— segment_id is null)
         async with self._session_factory() as session:
-            project_image_by_type = await UsageRepository(session).get_project_image_costs_by_asset_type(project_name)
+            project_image_by_type = await UsageRepository(session).get_project_image_costs_by_asset_type(
+                project_name, project_id=project_id
+            )
         for asset_type in ("characters", "scenes", "props", "products"):
             bucket = project_image_by_type.get(asset_type)
             if bucket:

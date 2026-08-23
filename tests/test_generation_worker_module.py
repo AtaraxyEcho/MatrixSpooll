@@ -169,7 +169,7 @@ def _worker_storyboard_checkpoint(task_id: str, *, provider_id: str = "ark") -> 
                 logical_name="E1S01",
                 kind="storyboard",
                 source_locator="storyboards/E1S01.png",
-                staged_locator=f".arcreel/tasks/{task_id}/provider_media/000-start_image.png",
+                staged_locator=f".matrixspooll/tasks/{task_id}/provider_media/000-start_image.png",
                 sha256="b" * 64,
                 size_bytes=5,
             ),
@@ -244,18 +244,18 @@ class _FakeQueue:
 class TestReadIntEnv:
     @pytest.mark.unit
     def test_default_when_unset(self, monkeypatch):
-        monkeypatch.delenv("ARCREEL_INT", raising=False)
-        assert _read_int_env("ARCREEL_INT", 3, minimum=1) == 3
+        monkeypatch.delenv("MATRIXSPOOLL_INT", raising=False)
+        assert _read_int_env("MATRIXSPOOLL_INT", 3, minimum=1) == 3
 
     @pytest.mark.unit
     def test_default_when_bad(self, monkeypatch):
-        monkeypatch.setenv("ARCREEL_INT", "bad")
-        assert _read_int_env("ARCREEL_INT", 3, minimum=1) == 3
+        monkeypatch.setenv("MATRIXSPOOLL_INT", "bad")
+        assert _read_int_env("MATRIXSPOOLL_INT", 3, minimum=1) == 3
 
     @pytest.mark.unit
     def test_minimum_enforced(self, monkeypatch):
-        monkeypatch.setenv("ARCREEL_INT", "0")
-        assert _read_int_env("ARCREEL_INT", 3, minimum=2) == 2
+        monkeypatch.setenv("MATRIXSPOOLL_INT", "0")
+        assert _read_int_env("MATRIXSPOOLL_INT", 3, minimum=2) == 2
 
 
 def _patch_pm(monkeypatch, project: dict | None):
@@ -1605,7 +1605,7 @@ class TestGenerationWorker:
         output_path.parent.mkdir(parents=True)
         staged_output = task_video_staging_path(output_path, "orphan-cleanup")
         staged_output.write_bytes(b"interrupted-download")
-        provider_media = project_path / ".arcreel" / "tasks" / "orphan-cleanup" / "provider_media"
+        provider_media = project_path / ".matrixspooll" / "tasks" / "orphan-cleanup" / "provider_media"
         provider_media.mkdir(parents=True)
         (provider_media / "000-start_image.png").write_bytes(b"staged-input")
 

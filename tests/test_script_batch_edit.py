@@ -251,7 +251,7 @@ def test_ad_batch_edit_registers_shared_canonical_script_basis(tmp_path: Path) -
     }
     pm.save_script("demo", script, "episode_1.json")
     project_dir = pm.get_project_path("demo")
-    (project_dir / ".arcreel_artifacts.json").unlink(missing_ok=True)
+    (project_dir / ".matrixspooll_artifacts.json").unlink(missing_ok=True)
     service = ScriptBatchEditor(pm)
 
     result = service.execute(
@@ -271,7 +271,7 @@ def test_unmigrated_project_batch_edit_refuses_instead_of_activating(
     """产物清单是唯一读取口径：schema 未到 8 的项目既不隐性激活清单，也不放行写入。"""
     pm, service, project_dir = editor
     pm.update_project("demo", lambda project: project.update({"schema_version": 7}))
-    (project_dir / ".arcreel_artifacts.json").unlink(missing_ok=True)
+    (project_dir / ".matrixspooll_artifacts.json").unlink(missing_ok=True)
     before = (project_dir / "scripts" / "episode_1.json").read_bytes()
 
     result = service.execute(
@@ -282,7 +282,7 @@ def test_unmigrated_project_batch_edit_refuses_instead_of_activating(
     assert result.success is False
     assert result.problems[0].code == "project_migration_failed"
     assert result.problems[0].next_action == "retry_project_migration"
-    assert not (project_dir / ".arcreel_artifacts.json").exists()
+    assert not (project_dir / ".matrixspooll_artifacts.json").exists()
     assert (project_dir / "scripts" / "episode_1.json").read_bytes() == before
 
 
@@ -295,7 +295,7 @@ def test_unmigrated_project_refuses_a_script_that_prepares_no_manifest_commit(
     script["episode"] = 0
     pm.save_script("demo", script, "custom.json")
     pm.update_project("demo", lambda project: project.update({"schema_version": 7}))
-    (project_dir / ".arcreel_artifacts.json").unlink(missing_ok=True)
+    (project_dir / ".matrixspooll_artifacts.json").unlink(missing_ok=True)
     before = (project_dir / "scripts" / "custom.json").read_bytes()
 
     result = service.execute(
@@ -338,7 +338,7 @@ def test_invalid_operation_at_any_position_writes_nothing(
     assert result.problems[0].operation_index == failure_index
     assert script_path.read_bytes() == before_script
     assert project_path.read_bytes() == before_project
-    assert not (project_dir / ".arcreel_artifacts.json").exists()
+    assert not (project_dir / ".matrixspooll_artifacts.json").exists()
 
 
 def test_invalid_second_field_reports_exact_operation_field(
@@ -628,7 +628,7 @@ def test_manifest_write_failure_restores_script_and_project_bytes(
     assert result.problems[0].code == "commit_failed"
     assert script_path.read_bytes() == before_script
     assert project_path.read_bytes() == before_project
-    assert not (project_dir / ".arcreel_artifacts.json").exists()
+    assert not (project_dir / ".matrixspooll_artifacts.json").exists()
 
 
 def test_manifest_post_replace_failure_restores_all_three_stores(
@@ -650,7 +650,7 @@ def test_manifest_post_replace_failure_restores_all_three_stores(
     assert result.problems[0].code == "commit_failed"
     assert script_path.read_bytes() == before_script
     assert project_path.read_bytes() == before_project
-    assert not (project_dir / ".arcreel_artifacts.json").exists()
+    assert not (project_dir / ".matrixspooll_artifacts.json").exists()
 
 
 def test_removed_claim_batch_post_replace_failure_restores_all_three_stores(
@@ -663,7 +663,7 @@ def test_removed_claim_batch_post_replace_failure_restores_all_three_stores(
     service = ScriptBatchEditor(pm, manifest_adapter_factory=_WriteThenFailManifestAdapter)
     script_path = project_dir / "scripts" / "episode_1.json"
     project_path = project_dir / "project.json"
-    manifest_path = project_dir / ".arcreel_artifacts.json"
+    manifest_path = project_dir / ".matrixspooll_artifacts.json"
     before = {
         "script": script_path.read_bytes(),
         "project": project_path.read_bytes(),
@@ -707,7 +707,7 @@ def test_corrupt_manifest_is_rejected_during_preflight_without_writes(
     project_path = project_dir / "project.json"
     before_script = script_path.read_bytes()
     before_project = project_path.read_bytes()
-    (project_dir / ".arcreel_artifacts.json").write_text("{broken", encoding="utf-8")
+    (project_dir / ".matrixspooll_artifacts.json").write_text("{broken", encoding="utf-8")
 
     result = service.execute(
         "demo",
@@ -718,7 +718,7 @@ def test_corrupt_manifest_is_rejected_during_preflight_without_writes(
     assert result.problems[0].code == "manifest_invalid"
     assert script_path.read_bytes() == before_script
     assert project_path.read_bytes() == before_project
-    assert (project_dir / ".arcreel_artifacts.json").read_text(encoding="utf-8") == "{broken"
+    assert (project_dir / ".matrixspooll_artifacts.json").read_text(encoding="utf-8") == "{broken"
 
 
 def test_reference_failure_maps_numeric_path_and_responsible_operation(

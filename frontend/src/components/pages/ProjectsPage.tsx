@@ -66,12 +66,12 @@ import {
 } from "@/types";
 
 // 项目大厅 · Darkroom
-// 设计：导演的暗房（Claude Design 交付包 ArcReel Projects B Darkroom.html）
+// 设计：导演的暗房（Claude Design 交付包 MatrixSpooll Projects B Darkroom.html）
 // 数据：仅消费 ProjectSummary 真实字段；hue 由 project.name 哈希派生
 
 type PhaseFilter = Phase | "all";
 type ContentModeFilter = "all" | "free" | "narration" | "drama" | "ad";
-const CONTENT_MODE_FILTER_KEY = "arcreel.lobby.contentModeFilter";
+const CONTENT_MODE_FILTER_KEY = "matrixspooll.lobby.contentModeFilter";
 type GreetingKey =
   | "lobby_hero_greeting_morning"
   | "lobby_hero_greeting_afternoon"
@@ -866,9 +866,11 @@ function ProjectListView({ projects, hasProjects, styleLabels, onDelete, onCreat
         <div className="app-project-list__grid">
           {projects.map((project) => (
             <ProjectCard
-              key={project.name}
+              key={project.project_id ?? project.id ?? project.name}
               project={project}
-              styleLabel={styleLabels[project.name] ?? t("dashboard:style_not_set")}
+              styleLabel={
+                styleLabels[project.project_id ?? project.id ?? project.name] ?? t("dashboard:style_not_set")
+              }
               onDelete={() => onDelete(project)}
             />
           ))}
@@ -964,7 +966,8 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
 
       const autoFixedCount = result.diagnostics.auto_fixed.length;
       const warningCount = result.diagnostics.warnings.length;
-      const navigateTo = `/app/projects/${result.project_name}`;
+      const projectRef = result.project_id ?? result.id ?? result.project_name;
+      const navigateTo = `/app/projects/${projectRef}`;
       if (warningCount > 0 || autoFixedCount > 0) {
         useAppStore
           .getState()
@@ -1031,7 +1034,7 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
     const projectDisplayName = deletingProject.title || deletingProject.name;
     setDeleteLoading(true);
     try {
-      await API.deleteProject(deletingProject.name);
+      await API.deleteProject(deletingProject.project_id ?? deletingProject.id ?? deletingProject.name);
       await fetchProjects();
       useAppStore.getState().pushToast(t("common:deleted"), "success");
     } catch (err) {
@@ -1066,7 +1069,9 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
 
   const styleLabels = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const p of projects) map[p.name] = styleLabelOf(p, t);
+    for (const p of projects) {
+      map[p.project_id ?? p.id ?? p.name] = styleLabelOf(p, t);
+    }
     return map;
   }, [projects, t]);
 

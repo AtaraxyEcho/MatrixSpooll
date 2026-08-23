@@ -110,7 +110,7 @@ description: 从剧本中提取角色 / 场景 / 道具三类资产定义，并�
 整理完成后，调用一次：
 
 ```text
-mcp__arcreel__complete_asset_inventory({
+mcp__matrixspooll__complete_asset_inventory({
   "entries": {Step 4 整理的 characters / scenes / props；全空时传三个空对象},
   "scope": {主 agent 传入的 scope},
   "expected_source_revision": "{主 agent 传入的 expected_source_revision}"

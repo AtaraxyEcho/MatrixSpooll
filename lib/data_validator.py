@@ -182,7 +182,7 @@ class DataValidator:
 
         Args:
             projects_root: 项目根目录；默认走 ``app_data_dir()``
-                （兼顾 ``ARCREEL_DATA_DIR`` / ``AI_ANIME_PROJECTS`` env）。
+                （兼顾 ``MATRIXSPOOLL_DATA_DIR`` / ``AI_ANIME_PROJECTS`` env）。
         """
         if projects_root is None:
             from lib.app_data_dir import app_data_dir

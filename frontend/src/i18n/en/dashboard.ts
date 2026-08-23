@@ -97,7 +97,7 @@ export default {
   'media_tool_ffprobe': 'FFprobe',
   'media_tool_available': 'Available',
   'media_tool_missing': 'Not found',
-  'media_tools_install_hint': 'Install FFmpeg and FFprobe on the server and restart ArcReel. The application reads them from PATH; no arbitrary executable path is accepted in the browser.',
+  'media_tools_install_hint': 'Install FFmpeg and FFprobe on the server and restart MatrixSpooll. The application reads them from PATH; no arbitrary executable path is accepted in the browser.',
   'free_creation_frame_slots_full': 'Both frame slots are full. Remove or replace a reference first.',
   'free_creation_add_frame': 'Add {{frame}}',
   'free_creation_replace_frame': 'Replace {{frame}}',
@@ -314,17 +314,7 @@ export default {
   'usage': 'Usage',
   'api_keys': 'API Keys',
   'about': 'About',
-  'license_source_kicker': 'Legal and source',
-  'license_source_title': 'About',
-  'license_source_modified': 'MatrixSpooll is a modified version of ArcReel. Current modification date: {{date}}.',
-  'license_source_license_heading': 'License',
-  'license_source_license_description': 'This project is released under the GNU Affero General Public License v3.0. See NOTICE for the attribution and modification-notice requirements.',
-  'license_source_no_warranty': 'The software is provided without warranty. Users may use, modify, and redistribute it under AGPL-3.0.',
-  'license_source_license_link': 'View LICENSE',
-  'license_source_notice_link': 'View NOTICE',
-  'license_source_copyright_heading': 'Copyright',
-  'license_source_original_copyright': 'ArcReel Copyright © 2026 Pollo3470 and ArcReel contributors.',
-  'license_source_modified_copyright': 'MatrixSpooll modifications Copyright © 2026 MatrixSpooll contributors.',
+  'about_attribution_unavailable': 'The legal attribution could not be loaded. Check the NOTICE file.',
   'system_config_title': 'System configuration and API access management',
   'account_security': 'Account security',
   'account_security_nav': 'Account security',
@@ -356,7 +346,7 @@ export default {
   'avatar_failed': 'Failed to update avatar, please retry.',
   'config_issues': 'Configuration Issues',
   'config_issues_hint': 'The following issues were found in the current configuration and may affect functionality:',
-  'arcreel_agent': '[[brand]] Agent',
+  'matrixspooll_agent': '[[brand]] Agent',
   'chat_role_user': 'You',
   'chat_role_assistant': 'Assistant',
   'chat_role_system': 'System',
@@ -1359,7 +1349,7 @@ export default {
   'reference_tab_preview': 'Video',
   'reference_tab_aria': 'Reference unit panel tabs',
 
-  // ArcReel Workbench v3 — Reference Video
+  // MatrixSpooll Workbench v3 — Reference Video
   'reference_main_tab_aria': 'Workspace main tabs',
   'grid_canvas_tab_aria': 'Grid workbench main tabs',
   'list_source_files_failed': 'Failed to load source files: {{message}}',
@@ -1723,7 +1713,7 @@ export default {
   // Timeline typed entries (interrupt / AskUserQuestion answer)
   'chat_interrupt_notice': 'Session interrupted by user',
   'chat_question_answer_label': 'Answered',
-  // MCP tool display names (single source of truth: ARCREEL_MCP_TOOL_IDS in
+  // MCP tool display names (single source of truth: MATRIXSPOOLL_MCP_TOOL_IDS in
   // server/agent_runtime/sdk_tools/__init__.py; tests/test_frontend_mcp_tool_i18n.py
   // enforces all locales stay in sync — adding a backend tool without wiring zh/en/vi fails CI)
   'tool_name_list_pending_assets': 'List pending assets',

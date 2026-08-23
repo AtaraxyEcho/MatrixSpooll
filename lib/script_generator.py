@@ -207,10 +207,10 @@ class ScriptGenerator:
         return raw_outline if isinstance(raw_outline, dict) else {}
 
     @classmethod
-    async def create(cls, project_path: str | Path) -> "ScriptGenerator":
+    async def create(cls, project_path: str | Path, *, user_id: str | None = None) -> "ScriptGenerator":
         """异步工厂方法，自动从 DB 加载供应商配置创建 TextGenerator。"""
         project_name = Path(project_path).name
-        generator = await TextGenerator.create(TextTaskType.SCRIPT, project_name)
+        generator = await TextGenerator.create(TextTaskType.SCRIPT, project_name, user_id=user_id)
         return cls(project_path, generator)
 
     async def generate(

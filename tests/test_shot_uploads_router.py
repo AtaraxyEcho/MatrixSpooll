@@ -101,7 +101,7 @@ class TestShotStoryboardUpload:
         target.write_bytes(b"old-canonical-storyboard")
         script_path = project_path / "scripts" / "episode_1.json"
         versions_path = project_path / "versions.json"
-        manifest_path = project_path / ".arcreel_artifacts.json"
+        manifest_path = project_path / ".matrixspooll_artifacts.json"
         before_script = script_path.read_bytes()
         before_manifest = manifest_path.read_bytes() if manifest_path.exists() else None
 

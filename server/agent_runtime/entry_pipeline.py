@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import inspect
 import json
 import logging
 from collections.abc import Callable
@@ -34,6 +35,26 @@ logger = logging.getLogger(__name__)
 # 落库瞬时失败（SQLite busy / 连接抖动）的有界重试；重试耗尽才放弃该条目。
 _APPEND_ATTEMPTS = 3
 _APPEND_RETRY_BASE_S = 0.05
+
+
+async def _invoke_store_with_optional_actor(method: Callable[..., Any], *args: Any, actor_user_id: str | None) -> Any:
+    """Call old and new EventLogStore implementations through one boundary.
+
+    The runtime store accepts ``actor_user_id`` for tenant attribution. A few
+    integrations still implement the pre-isolation SessionStore protocol, so
+    the compatibility decision belongs here rather than in every caller.
+    """
+    try:
+        parameters = inspect.signature(method).parameters.values()
+        accepts_actor = any(
+            parameter.name == "actor_user_id" or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+    except (TypeError, ValueError):
+        accepts_actor = True
+    if accepts_actor:
+        return await method(*args, actor_user_id=actor_user_id)
+    return await method(*args)
 
 
 def _coerce_index(value: Any) -> int | None:
@@ -324,7 +345,8 @@ class SessionEntryPipeline:
         if not entry_uuid or not sdk_entry_uuid:
             return
         try:
-            await self._store.record_user_message_link(
+            await _invoke_store_with_optional_actor(
+                self._store.record_user_message_link,
                 session_id,
                 str(entry_uuid),
                 str(sdk_entry_uuid),
@@ -379,7 +401,8 @@ class SessionEntryPipeline:
         """有界重试落库：瞬时 DB 错误不至于在 append-only 日志上留下永久空洞。"""
         for attempt in range(_APPEND_ATTEMPTS):
             try:
-                return await self._store.append(
+                return await _invoke_store_with_optional_actor(
+                    self._store.append,
                     session_id,
                     entries,
                     actor_user_id=self._actor_user_id_provider(),

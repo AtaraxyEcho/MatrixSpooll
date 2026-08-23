@@ -14,7 +14,7 @@
 
 - 读取官方索引：[`llms.txt`](https://docs.anyfast.ai/llms.txt)。
 - 批量读取 `api-reference/model-api` 下与视频、图片、音频/配音有关的页面；排除纯聊天模型、任务查询页和下载页。
-- 表中的“输入角色”使用 ArcReel 的标准角色名：`first_frame`、`last_frame`、`reference_image`、`reference_video`、`reference_audio`。官方字段不同的模型必须在适配器中转换。
+- 表中的“输入角色”使用 MatrixSpooll 的标准角色名：`first_frame`、`last_frame`、`reference_image`、`reference_video`、`reference_audio`。官方字段不同的模型必须在适配器中转换。
 - “数量/素材上限”只记录官方明确声明的数量；未声明时显示“未声明”，不使用其他模型的默认值。
 - `ratio`/`aspect_ratio`/`size`/`width+height` 是不同概念。UI 应根据模型适配器决定显示比例、分辨率还是尺寸输入。
 
@@ -36,7 +36,7 @@
 | Alibaba | `wan2.7-t2v`、`wan2.7-i2v`、`wan2.7-r2v` | T2V；I2V 支持 `first_frame`、`last_frame`、`first_clip`；R2V 支持 `reference_image`、`reference_video`、`first_frame`、参考声音 | `720P`、`1080P` | T2V/R2V：`16:9`、`9:16`、`1:1`、`4:3`、`3:4`；首帧输入时比例被忽略或跟随首帧 | `2–15` 秒；R2V 有参考视频时最大 `10` 秒 | I2V 每种媒体类型最多一个；R2V 媒体 1–6 个、图和视频合计不超过 5 个 | T2V 可传 2–30 秒 WAV/MP3；R2V 可传参考声音；页面未提供独立音频生成开关 | [wan2-7](https://docs.anyfast.ai/api-reference/model-api/alibaba/wan2.7.md) |
 | Alibaba | `wan2.2-t2v-a14b` | 文生视频，字段为 `prompt`、`duration`、`width`、`height` | 由 `width`/`height` 指定；官方页未给离散分辨率白名单 | 由宽高决定；未提供统一 `ratio` 枚举 | `3–5` 秒 | 不接受参考素材 | 未声明音频、编辑或续写 | [wan2-2-t2v-a14b](https://docs.anyfast.ai/api-reference/model-api/alibaba/wan2.2-t2v-a14b.md) |
 | Alibaba | `wan2.2-i2v-a14b` | I2V，必须传 `image` | 由 `width`/`height` 指定；官方页未给离散分辨率白名单 | 由宽高决定 | `3–5` 秒 | 一张参考图 | 未声明音频、编辑或续写 | [wan2-2-i2v-a14b](https://docs.anyfast.ai/api-reference/model-api/alibaba/wan2.2-i2v-a14b.md) |
-| MiniMax | `MiniMax-H3` | 文生视频、首帧/首尾帧、参考图/视频/音频；角色字段与 ArcReel 标准角色一致 | `768P`、`2K` | `adaptive`、`21:9`、`16:9`、`4:3`、`1:1`、`3:4`、`9:16`；T2V 不允许 `adaptive` | `4–15` 秒 | 最多 1 首帧、1 尾帧、9 张参考图、3 个视频、3 个音频；跨类型最多 12 个；视频/音频各合计不超过 15 秒 | 接受参考音频；未声明同步生成音频、编辑或续写 | [minimax-h3](https://docs.anyfast.ai/api-reference/model-api/minimax/minimax-h3.md) |
+| MiniMax | `MiniMax-H3` | 文生视频、首帧/首尾帧、参考图/视频/音频；角色字段与 MatrixSpooll 标准角色一致 | `768P`、`2K` | `adaptive`、`21:9`、`16:9`、`4:3`、`1:1`、`3:4`、`9:16`；T2V 不允许 `adaptive` | `4–15` 秒 | 最多 1 首帧、1 尾帧、9 张参考图、3 个视频、3 个音频；跨类型最多 12 个；视频/音频各合计不超过 15 秒 | 接受参考音频；未声明同步生成音频、编辑或续写 | [minimax-h3](https://docs.anyfast.ai/api-reference/model-api/minimax/minimax-h3.md) |
 | Kuaishou | `kling-3.0-turbo` | T2V、I2V；I2V 必须 `first_frame`，可选尾帧/多镜头 | `720p`、`1080p` | T2V `16:9`、`9:16`、`1:1`；I2V 跟随图片，比例参数不适用 | `3–15` 秒 | 多镜头最多 6 段；图片/视频参考数量由该升级 API 工作流限定 | 未声明独立音频开关 | [kling-v3-turbo](https://docs.anyfast.ai/api-reference/model-api/kuaishou/kling-v3-turbo.md) |
 | Kuaishou | `kling-v3` | T2V、I2V、Omni；图片首帧/尾帧、参考视频、元素、最多两条 voice reference | 分辨率未声明 | `16:9`、`9:16`、`1:1` | `3–15` 秒；Omni 源视频编辑模式忽略时长 | I2V 至少一帧；Omni 无视频时图片+元素最多 7 个，有视频时最多 4 个；参考视频最多 1 个 | `sound=on/off`；支持声线引用、参考视频保留原声；支持多镜头、编辑 | [kling-v3](https://docs.anyfast.ai/api-reference/model-api/kuaishou/kling-v3.md) |
 | Kuaishou | `kling-v2-6` | T2V、I2V、动作控制、voice 管理 | 分辨率未声明 | `16:9`、`9:16`、`1:1` | 仅 `5` 或 `10` 秒 | I2V 至少一张首/尾帧；动作控制图片模式源视频最多 10 秒、视频模式最多 30 秒 | `sound=on/off`；可使用最多两条 voice；支持动作控制 | [kling-v2-6](https://docs.anyfast.ai/api-reference/model-api/kuaishou/kling-v2-6.md) |
@@ -63,7 +63,7 @@
 | Google | `gemini-3.1-flash-image`、`gemini-3.1-flash-lite-image`、`gemini-3-pro-image`、`gemini-2.5-flash-image`（含 stream/preview 变体） | 文本 + inline base64 图片参考；生成或编辑 | `imageSize`：`512`、`1K`、`2K`、`4K`（不同型号/变体需重新读取枚举） | `aspectRatio` 枚举由每页声明；请求以单次 `generateContent` 为主，数量不提供统一 `n` | 不能把 URL 直接当 `image_url`；需要 inline data；stream 变体只改变传输方式 | [gemini-3-1-flash-image](https://docs.anyfast.ai/api-reference/model-api/google/gemini-3.1-flash-image.md)、[gemini-3-pro-image](https://docs.anyfast.ai/api-reference/model-api/google/gemini-3-pro-image.md)、[gemini-2-5-flash-image](https://docs.anyfast.ai/api-reference/model-api/google/gemini-2-5-flash-image.md) |
 | OpenAI | `gpt-image-2` | T2I | 任意 `widthxheight`；边长为 16 的倍数，总像素 655,360–8,000,000，比例不超过 3:1 | `n=1–10`，但 Direct 资源组要求 | `quality`、`output_format`、`moderation`；尺寸不是固定 480p/720p 档位 | [gpt-image-2](https://docs.anyfast.ai/api-reference/model-api/openai/gpt-image-2.md) |
 | OpenAI | `gpt-image-2-c` | T2I | 与 GPT Image 2 相同的灵活尺寸 | 不支持 `n`，每次只能 1 张 | 支持 `response_format`；不能显示生成数量控件 | [gpt-image-2-c](https://docs.anyfast.ai/api-reference/model-api/openai/gpt-image-2-c.md) |
-| OpenAI | `gpt-image-1.5`、`gpt-image-1` | T2I；对应页面支持编辑 | 页面声明为灵活尺寸/质量字段，未给统一 ArcReel 档位 | 数量、比例和尺寸应按各页面枚举 | 不能复用 GPT Image 2 的 `n` 上限 | [gpt-image-1-5](https://docs.anyfast.ai/api-reference/model-api/openai/gpt-image-1-5.md)、[gpt-image-1](https://docs.anyfast.ai/api-reference/model-api/openai/gpt-image-1.md) |
+| OpenAI | `gpt-image-1.5`、`gpt-image-1` | T2I；对应页面支持编辑 | 页面声明为灵活尺寸/质量字段，未给统一 MatrixSpooll 档位 | 数量、比例和尺寸应按各页面枚举 | 不能复用 GPT Image 2 的 `n` 上限 | [gpt-image-1-5](https://docs.anyfast.ai/api-reference/model-api/openai/gpt-image-1-5.md)、[gpt-image-1](https://docs.anyfast.ai/api-reference/model-api/openai/gpt-image-1.md) |
 | Black Forest Labs | `flux-1.1-pro` | T2I | `size` 显式像素尺寸 | `n=1`；比例由尺寸决定 | 不要显示视频参数；页面返回 Base64 | [flux-1-1-pro](https://docs.anyfast.ai/api-reference/model-api/blackforestlabs/flux-1-1-pro.md) |
 | Black Forest Labs | `flux-1-kontext-pro`、`flux-1-kontext-pro-edit` | T2I、I2I 编辑 | `size` 显式像素尺寸，例如 `1024x1024` | `n` 仅支持 1 | 编辑接口是 multipart；T2I 与编辑请求结构不同 | [flux-1-kontext-pro](https://docs.anyfast.ai/api-reference/model-api/blackforestlabs/flux-1-kontext-pro.md)、[flux-1-kontext-pro-edit](https://docs.anyfast.ai/api-reference/model-api/blackforestlabs/flux-1-kontext-pro-edit.md) |
 
@@ -80,7 +80,7 @@ AnyFast 索引中没有一个可直接作为“独立音乐生成”模型的统
 | 配音/唇形同步视频 | Kling Lip Sync | 输入现有视频和文本或音频，输出仍是视频；不是独立音频文件 | [Kling Lip Sync](https://docs.anyfast.ai/api-reference/model-api/kuaishou/kling-lip-sync.md) |
 | 素材上传 | Seedance Asset API | 图片、视频、音频先上传为 `asset://ID`；视频支持 MP4/MOV、2–15 秒、≤50 MB，音频支持 WAV/MP3、≤15 MB | [Create Video Asset](https://docs.anyfast.ai/api-reference/model-api/bytedance/volc-asset-create-video.md)、[Create Audio Asset](https://docs.anyfast.ai/api-reference/model-api/bytedance/volc-asset-create-audio.md) |
 
-## 对 ArcReel 能力注册表的建议
+## 对 MatrixSpooll 能力注册表的建议
 
 ### 不要运行时抓取官方文档
 
@@ -125,6 +125,6 @@ AnyFast 索引中没有一个可直接作为“独立音乐生成”模型的统
 
 - Seedance 2.0 Fast/Mini/Ultra 的官方页面声明了多模态能力，但部分素材数量规则只在描述段落出现，建议实现前再从对应页面的 OpenAPI `content` schema 读取并写入注册表。
 - Kling Legacy 的完整分辨率白名单在部分页面没有声明；未知型号仍隐藏分辨率。已确认的 `kling-v2-6` 适配器按 `std=720p`、`pro=1080p` 暴露这两个档位，其他未登记型号不得按名称猜测。
-- `seedream-3.0-t2i`、GPT Image 1/1.5、部分 Gemini 图像变体未给出与 ArcReel 现有“比例/分辨率/数量”控件完全对应的离散枚举；在补齐前不应显示通用视频控件。
+- `seedream-3.0-t2i`、GPT Image 1/1.5、部分 Gemini 图像变体未给出与 MatrixSpooll 现有“比例/分辨率/数量”控件完全对应的离散枚举；在补齐前不应显示通用视频控件。
 - AnyFast 文档中同时存在 `guides/model-api` 和 `api-reference/model-api` 两套路径。参数注册应以 API reference 页面为主，guide 只用于补充工作流说明。
 - 本文记录的是官方页面当前声明，不代表供应商运行时一定接受所有组合。入队前仍需使用同一份能力注册表做模式、角色、数量、比例、分辨率和时长校验，并把供应商错误保留在任务元数据中。

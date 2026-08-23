@@ -12,8 +12,6 @@ an operator must repair the orphan before enabling the new schema.
 
 from __future__ import annotations
 
-import logging
-import os
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -24,8 +22,6 @@ revision: str = "e7f9a1c3d5b7"
 down_revision: str | Sequence[str] | None = "d2c4e6f8a0b2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
-
-logger = logging.getLogger(__name__)
 
 _TABLES = (
     "agent_session_event_log",
@@ -104,10 +100,7 @@ def _report_unresolved(unresolved: dict[str, int], *, phase: str) -> None:
         "project identity migration found Agent records without a registered "
         f"session during {phase} ({detail}); repair these rows before production startup"
     )
-    if os.environ.get("TESTING", "").strip().lower() in {"1", "true", "yes", "on"}:
-        logger.warning(message)
-    else:
-        raise RuntimeError(message)
+    raise RuntimeError(message)
 
 
 def _enforce_project_identity() -> None:

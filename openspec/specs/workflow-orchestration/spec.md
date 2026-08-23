@@ -2,7 +2,7 @@
 
 ### Requirement: video-workflow 编排 skill 须按服务端权威计划路由
 
-video-workflow skill 被加载后，SHALL 调用 `mcp__arcreel__get_workflow_plan` 取得权威计划，按 `next_action` 决定下一步，不自行读 project.json 或探测文件系统推断阶段。
+video-workflow skill 被加载后，SHALL 调用 `mcp__matrixspooll__get_workflow_plan` 取得权威计划，按 `next_action` 决定下一步，不自行读 project.json 或探测文件系统推断阶段。
 
 #### Scenario: 计划交回资产分析动作
 - **WHEN** `next_action.type == "analyze_assets"`
