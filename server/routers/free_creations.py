@@ -8,9 +8,9 @@ import shutil
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Request, UploadFile
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -27,19 +27,23 @@ from lib.generation_queue_client import TaskSpec
 from lib.i18n import Translator
 from lib.image_backends.base import ImageCapabilityError
 from lib.path_safety import PathTraversalError, safe_join
-from lib.project_change_hints import project_change_source
+from lib.project_change_hints import emit_project_change_batch, project_change_source
 from lib.project_manager import get_project_manager
 from lib.task_failure import parse_failure, render_failure
 from lib.video_backends.base import VideoCapabilityError
 from server.auth import CurrentUser, CurrentUserFlexible, CurrentUserInfo, database_auth_initialized, get_current_user
 from server.services.audit import AuditAction, AuditResourceType, record_audit_event
+from server.services.free_creation_canvas import CanvasPatchConflict, apply_canvas_patch
 from server.services.free_creation_deletion import FreeCreationDeletionNotReadyError, delete_free_creation_items
+from server.services.free_creation_index import load_free_creation_index
 from server.services.free_creation_merge import (
     composite_creation_audio,
     merge_video_creations,
     render_creation_subtitles,
 )
 from server.services.free_creation_planner import effective_free_creation_mode
+from server.services.free_creation_previews import ensure_reference_video_cover
+from server.services.free_creation_proxies import ensure_video_proxy, find_video_proxy
 from server.services.free_creation_tasks import (
     delete_creation_metadata,
     list_creation_metadata,
@@ -64,6 +68,7 @@ from server.services.free_creation_workspace import (
     list_subtitle_tracks,
     load_canvas_state,
     load_canvas_viewport,
+    load_reference_upload,
     load_storyboard_plan,
     load_subtitle_track,
     new_request_id,
@@ -223,7 +228,7 @@ class CanvasPoint(BaseModel):
 
 
 class CanvasViewport(CanvasPoint):
-    scale: float = Field(ge=0.35, le=2.5)
+    scale: float = Field(ge=0.05, le=2.5)
 
 
 class CanvasGroup(BaseModel):
@@ -241,9 +246,9 @@ class CanvasGroup(BaseModel):
 
 class CanvasStateUpdate(BaseModel):
     viewport: CanvasViewport
-    positions: dict[str, CanvasPoint] = Field(default_factory=dict, max_length=500)
-    hidden_creation_ids: list[str] = Field(default_factory=list, max_length=500)
-    hidden_reference_ids: list[str] = Field(default_factory=list, max_length=500)
+    positions: dict[str, CanvasPoint] = Field(default_factory=dict, max_length=10000)
+    hidden_creation_ids: list[str] = Field(default_factory=list, max_length=10000)
+    hidden_reference_ids: list[str] = Field(default_factory=list, max_length=10000)
     groups: list[CanvasGroup] = Field(default_factory=list, max_length=100)
     show_relations: bool = True
     expected_revision: int | None = Field(default=None, ge=0)
@@ -254,6 +259,68 @@ class CanvasStateUpdate(BaseModel):
         if any(not key.startswith(("c_", "r_")) for key in value):
             raise ValueError("canvas position ids must identify creations or references")
         return value
+
+
+class CanvasPatchUpdate(BaseModel):
+    patch_id: UUID
+    base_revision: int = Field(ge=0)
+    target_revisions: dict[str, int] = Field(default_factory=dict, max_length=10000)
+    position_updates: dict[str, CanvasPoint] = Field(default_factory=dict, max_length=10000)
+    hidden_creation_updates: dict[str, bool] = Field(default_factory=dict, max_length=10000)
+    hidden_reference_updates: dict[str, bool] = Field(default_factory=dict, max_length=10000)
+    group_upserts: list[CanvasGroup] = Field(default_factory=list, max_length=100)
+    group_deletes: list[str] = Field(default_factory=list, max_length=100)
+    show_relations: bool | None = None
+
+    @field_validator("target_revisions")
+    @classmethod
+    def validate_target_revisions(cls, value: dict[str, int]) -> dict[str, int]:
+        if any(revision < 0 or not key.startswith(("c_", "r_", "g_", "canvas:")) for key, revision in value.items()):
+            raise ValueError("canvas patch target revisions are invalid")
+        return value
+
+    @field_validator("position_updates")
+    @classmethod
+    def validate_position_updates(cls, value: dict[str, CanvasPoint]) -> dict[str, CanvasPoint]:
+        if any(not key.startswith(("c_", "r_")) for key in value):
+            raise ValueError("canvas patch positions require creation or reference ids")
+        return value
+
+    @field_validator("hidden_creation_updates")
+    @classmethod
+    def validate_hidden_creation_updates(cls, value: dict[str, bool]) -> dict[str, bool]:
+        if any(not key.startswith("c_") for key in value):
+            raise ValueError("canvas hidden creation updates require creation ids")
+        return value
+
+    @field_validator("hidden_reference_updates")
+    @classmethod
+    def validate_hidden_reference_updates(cls, value: dict[str, bool]) -> dict[str, bool]:
+        if any(not key.startswith("r_") for key in value):
+            raise ValueError("canvas hidden reference updates require reference ids")
+        return value
+
+    @field_validator("group_deletes")
+    @classmethod
+    def validate_group_deletes(cls, value: list[str]) -> list[str]:
+        if any(not key.startswith("g_") for key in value):
+            raise ValueError("canvas group deletes require group ids")
+        return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def validate_operations(self) -> CanvasPatchUpdate:
+        if not any(
+            (
+                self.position_updates,
+                self.hidden_creation_updates,
+                self.hidden_reference_updates,
+                self.group_upserts,
+                self.group_deletes,
+                self.show_relations is not None,
+            )
+        ):
+            raise ValueError("canvas patch requires at least one operation")
+        return self
 
     @field_validator("hidden_creation_ids")
     @classmethod
@@ -1839,6 +1906,64 @@ async def get_free_creation_canvas(project_name: str, user: CurrentUser):
     return {"canvas": canvas}
 
 
+@router.get("/projects/{project_name}/free-creation-canvas/index")
+async def get_free_creation_canvas_index(project_name: str, _t: Translator):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    index = await asyncio.to_thread(load_free_creation_index, project_path)
+    return {
+        **index,
+        "creations": [_localize_creation(item, _t) for item in index["creations"]],
+        "references": [
+            {**reference, "url": f"/api/v1/files/{project_name}/{reference['path']}"}
+            for reference in index["references"]
+        ],
+    }
+
+
+@router.patch("/projects/{project_name}/free-creation-canvas")
+async def patch_free_creation_canvas(project_name: str, req: CanvasPatchUpdate, user: CurrentUser):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    payload = req.model_dump(mode="json")
+    payload["patch_id"] = str(req.patch_id)
+    try:
+        canvas = await asyncio.to_thread(apply_canvas_patch, project_path, payload, actor_id=user.id)
+    except CanvasPatchConflict as exc:
+        raise ConflictError(
+            "free_creation_canvas_conflict",
+            conflict_ids=",".join(exc.conflict_ids),
+            revision=exc.canvas.get("revision", 0),
+        ) from exc
+    except ValueError as exc:
+        raise BadRequestError("free_creation_canvas_invalid") from exc
+    duplicate = bool(canvas.pop("_duplicate_patch", False))
+    applied_patch = None if duplicate else canvas.get("last_patch")
+    if isinstance(applied_patch, dict) and applied_patch.get("patch_id") == str(req.patch_id):
+        emit_project_change_batch(
+            project_name,
+            [
+                {
+                    "entity_type": "free_creation_canvas",
+                    "action": "updated",
+                    "entity_id": "canvas",
+                    "label": "canvas",
+                    "focus": None,
+                    "important": False,
+                    "canvas_patch": applied_patch,
+                }
+            ],
+            source="webui",
+        )
+    return {"success": True, "canvas": canvas, "patch": applied_patch}
+
+
+@router.put("/projects/{project_name}/free-creation-canvas/viewport")
+async def update_free_creation_canvas_viewport(project_name: str, req: CanvasViewport, user: CurrentUser):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    viewport = req.model_dump()
+    await asyncio.to_thread(save_canvas_viewport, project_path, user.id, viewport)
+    return {"success": True, "viewport": viewport}
+
+
 @router.put("/projects/{project_name}/free-creation-canvas")
 async def update_free_creation_canvas(project_name: str, req: CanvasStateUpdate, user: CurrentUser):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
@@ -1884,7 +2009,11 @@ async def preview_free_creation_reference(project_name: str, reference_id: str):
 
 
 @router.post("/projects/{project_name}/free-creation-references")
-async def upload_free_creation_reference(project_name: str, file: UploadFile = File(...)):
+async def upload_free_creation_reference(
+    project_name: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
     if not file.filename:
         raise BadRequestError("free_creation_reference_invalid")
@@ -1898,11 +2027,55 @@ async def upload_free_creation_reference(project_name: str, file: UploadFile = F
         )
     except (ValueError, OverflowError) as exc:
         raise BadRequestError("free_creation_reference_invalid") from exc
+    if record.get("media_type") == "video":
+        background_tasks.add_task(ensure_reference_video_cover, project_path, record["reference_id"])
     return {
         "success": True,
         "reference": record,
         "url": f"/api/v1/files/{project_name}/{record['path']}",
     }
+
+
+@self_auth_router.get("/projects/{project_name}/free-creation-references/{reference_id}/cover")
+async def get_free_creation_reference_cover(
+    project_name: str,
+    reference_id: str,
+    request: Request,
+    _user: CurrentUserFlexible,
+):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    record = await asyncio.to_thread(load_reference_upload, project_path, reference_id)
+    if not record or record.get("media_type") != "video":
+        raise NotFoundError("free_creation_cover_not_found", id=reference_id)
+    path = await ensure_reference_video_cover(project_path, reference_id)
+    if path is None or not path.is_file():
+        raise NotFoundError("free_creation_cover_not_found", id=reference_id)
+    return serve_media_file(path, request, media_type="image/jpeg")
+
+
+@self_auth_router.get("/projects/{project_name}/free-creation-references/{reference_id}/proxy")
+async def get_free_creation_reference_proxy(
+    project_name: str,
+    reference_id: str,
+    request: Request,
+    _user: CurrentUserFlexible,
+):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    record = await asyncio.to_thread(load_reference_upload, project_path, reference_id)
+    if not record or record.get("media_type") != "video" or not isinstance(record.get("path"), str):
+        raise NotFoundError("free_creation_media_not_found", id=reference_id)
+    try:
+        source = safe_join(project_path, record["path"])
+    except PathTraversalError as exc:
+        raise NotFoundError("free_creation_media_not_found", id=reference_id) from exc
+    if not source.is_file():
+        raise NotFoundError("free_creation_media_not_found", id=reference_id)
+    proxy = await asyncio.to_thread(find_video_proxy, project_path, "reference", reference_id, source)
+    media_type = "video/mp4" if proxy is not None or source.suffix.lower() != ".mov" else "video/quicktime"
+    response = serve_media_file(proxy or source, request, media_type=media_type)
+    if proxy is None:
+        response.background = BackgroundTask(ensure_video_proxy, project_path, "reference", reference_id, source)
+    return response
 
 
 @router.delete("/projects/{project_name}/free-creation-references/{reference_id}")
@@ -2139,6 +2312,35 @@ async def get_free_creation_cover(
         media_type="image/jpeg",
         immutable=bool(request.query_params.get("v")),
     )
+
+
+@self_auth_router.get("/projects/{project_name}/creations/{creation_id}/proxy")
+async def get_free_creation_proxy(
+    project_name: str,
+    creation_id: CreationId,
+    request: Request,
+    _user: CurrentUserFlexible,
+):
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    creation = await asyncio.to_thread(load_creation_metadata, project_path, creation_id)
+    if creation is None or creation.get("deleted_at"):
+        raise NotFoundError("free_creation_not_found", id=creation_id)
+    if creation.get("media_type") != "video" and creation.get("output_type") != "video":
+        raise NotFoundError("free_creation_media_not_found", id=creation_id)
+    media_path = creation.get("media_path")
+    if not isinstance(media_path, str):
+        raise NotFoundError("free_creation_media_not_found", id=creation_id)
+    try:
+        source = safe_join(project_path, media_path)
+    except PathTraversalError as exc:
+        raise NotFoundError("free_creation_media_not_found", id=creation_id) from exc
+    if not source.is_file():
+        raise NotFoundError("free_creation_media_not_found", id=creation_id)
+    proxy = await asyncio.to_thread(find_video_proxy, project_path, "creation", creation_id, source)
+    response = serve_media_file(proxy or source, request, media_type="video/mp4")
+    if proxy is None:
+        response.background = BackgroundTask(ensure_video_proxy, project_path, "creation", creation_id, source)
+    return response
 
 
 @router.post("/projects/{project_name}/creations/{creation_id}/cancel")

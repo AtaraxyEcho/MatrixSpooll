@@ -5,6 +5,7 @@ import {
   arrangeCanvasNodes,
   buildCanvasDependencyEdges,
   createCanvasGroupId,
+  createCanvasPatchId,
   dependencyLane,
   dependencyPath,
   FreeCreationInfiniteCanvas,
@@ -517,6 +518,16 @@ describe("FreeCreationInfiniteCanvas", () => {
     }
   });
 
+  it("creates a valid patch UUID without crypto.randomUUID", () => {
+    const originalRandomUuid = crypto.randomUUID;
+    Object.defineProperty(crypto, "randomUUID", { configurable: true, value: undefined });
+    try {
+      expect(createCanvasPatchId()).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+    } finally {
+      Object.defineProperty(crypto, "randomUUID", { configurable: true, value: originalRandomUuid });
+    }
+  });
+
   it("deduplicates dependency edges and arranges connected nodes from inputs to outputs", () => {
     const source: FreeCreation = { ...creation, creation_id: "c_source0123456789abcd", prompt: "source" };
     const target: FreeCreation = {
@@ -673,7 +684,7 @@ describe("FreeCreationInfiniteCanvas", () => {
     fireEvent.pointerUp(surface, { pointerId: 52, clientX: 148, clientY: 132 });
     fireEvent.keyUp(window, { code: "Space", key: " " });
 
-    await waitFor(() => expect(transformLayer?.style.transform).toContain("translate3d(48px, 32px, 0)"));
+    await waitFor(() => expect(transformLayer?.style.transform).toContain("translate3d(272px, 32px, 0)"));
     expect(card).toHaveStyle({ left: "96px", top: "88px" });
   });
 
@@ -980,6 +991,9 @@ describe("FreeCreationInfiniteCanvas", () => {
 
     await waitFor(() => expect(container.querySelector(selector)).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: t("free_creation_show_hidden", { count: 1 }) })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "y", ctrlKey: true });
+    await waitFor(() => expect(container.querySelector(selector)).not.toBeInTheDocument());
   });
 
   it("restores a removed reference with Ctrl/Cmd+Z", async () => {

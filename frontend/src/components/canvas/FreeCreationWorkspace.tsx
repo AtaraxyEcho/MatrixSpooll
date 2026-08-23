@@ -342,26 +342,17 @@ export function FreeCreationWorkspace({
   const loadCreations = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
     try {
-      const requestsPromise = API.listFreeCreationRequests(projectName, 40);
-      const subtitlesPromise = API.listFreeSubtitleTracks(projectName).catch(() => ({ tracks: [] as FreeSubtitleTrack[] }));
-      const loaded: FreeCreation[] = [];
-      const seen = new Set<string>();
-      let cursor: string | undefined;
-      let total = 0;
-      do {
-        const response = await API.listFreeCreations(projectName, 100, cursor);
-        loaded.push(...response.creations);
-        total = response.total ?? loaded.length;
-        if (!response.next_cursor || seen.has(response.next_cursor)) break;
-        seen.add(response.next_cursor);
-        cursor = response.next_cursor;
-      } while (loaded.length < total && loaded.length < 500);
-      const [requestResponse, subtitleResponse] = await Promise.all([requestsPromise, subtitlesPromise]);
+      const [index, requestResponse, subtitleResponse] = await Promise.all([
+        API.getFreeCreationCanvasIndex(projectName),
+        API.listFreeCreationRequests(projectName, 40),
+        API.listFreeSubtitleTracks(projectName).catch(() => ({ tracks: [] as FreeSubtitleTrack[] })),
+      ]);
       if (loadSequenceRef.current !== sequence) return;
-      setCreations(loaded);
+      setCreations(index.creations);
+      setUploads(index.references);
       setRequests(requestResponse.requests);
       setSubtitleTracks(subtitleResponse.tracks);
-      setTotalCreations(total);
+      setTotalCreations(index.creation_total);
       setError(null);
     } catch (loadError) {
       if (loadSequenceRef.current === sequence) setError(errMsg(loadError));
@@ -372,10 +363,6 @@ export function FreeCreationWorkspace({
     const timer = window.setTimeout(() => void loadCreations(), 0);
     return () => window.clearTimeout(timer);
   }, [loadCreations, refreshToken]);
-
-  useEffect(() => {
-    void API.listFreeCreationReferences(projectName).then(({ references: next }) => setUploads(next)).catch(() => undefined);
-  }, [projectName]);
 
   const hasActiveCreation = creations.some((item) => ["queued", "running", "cancelling"].includes(item.status));
   useEffect(() => {

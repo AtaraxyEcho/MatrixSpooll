@@ -1,5 +1,5 @@
 /* eslint-disable jsx-a11y/media-has-caption */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
   Captions,
@@ -14,9 +14,11 @@ import {
   Link2,
   Loader2,
   LocateFixed,
+  Maximize2,
   MoreHorizontal,
   Pencil,
   RotateCcw,
+  ScanSearch,
   Trash2,
   Ungroup,
   UploadCloud,
@@ -28,6 +30,28 @@ import { useTranslation } from "react-i18next";
 import { API } from "@/api";
 import { VersionTimeMachine } from "@/components/canvas/timeline/VersionTimeMachine";
 import type { FreeCreationPreviewTarget } from "@/components/canvas/FreeCreationPreviewDialog";
+import { CanvasMinimap } from "@/components/canvas/free-creation/CanvasMinimap";
+import {
+  CanvasSceneLayer,
+  type CanvasRenderNode,
+} from "@/components/canvas/free-creation/CanvasSceneLayer";
+import {
+  CanvasSpatialIndex,
+  clampCameraToBounds,
+  computeContentBounds,
+  fitCameraToBounds,
+  selectCanvasLod,
+  viewportWorldRect,
+  type CanvasLod,
+} from "@/components/canvas/free-creation/canvas-engine";
+import {
+  applyCanvasPatch,
+  buildCanvasPatch,
+  canvasPatchTargets,
+  rebaseCanvasState,
+  type CanvasSharedState,
+} from "@/components/canvas/free-creation/canvas-sync";
+import { CanvasCommandHistory } from "@/components/canvas/free-creation/canvas-history";
 import { useAppStore } from "@/stores/app-store";
 import { useFreeCreationStore } from "@/stores/free-creation-store";
 import type {
@@ -35,6 +59,7 @@ import type {
   FreeCreationArtifactMediaType,
   FreeCreationReferenceClaim,
   FreeCreationReferenceRole,
+  FreeCreationCanvasState,
   FreeSubtitleTrack,
   FreeCreationUpload,
 } from "@/types";
@@ -90,7 +115,7 @@ const NODE_HEIGHT = 322;
 const UPLOAD_NODE_HEIGHT = 238;
 const NODE_GAP_X = 72;
 const NODE_GAP_Y = 56;
-const MIN_SCALE = 0.4;
+const MIN_SCALE = 0.05;
 const MAX_SCALE = 1.8;
 const PLACEMENT_PADDING = 24;
 const SUBTITLE_NODE_WIDTH = 236;
@@ -131,8 +156,9 @@ interface CanvasHistoryState {
   hiddenCreationIds: string[];
   hiddenUploadIds: string[];
   groups: CanvasGroup[];
-  restoreCreationIds?: string[];
-  restoreReferenceIds?: string[];
+  showRelations: boolean;
+  deletedCreationIds?: string[];
+  deletedReferenceIds?: string[];
 }
 
 function creationMediaType(creation: FreeCreation): FreeCreationArtifactMediaType {
@@ -246,6 +272,22 @@ export function createCanvasGroupId(): string {
     : `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
   const compact = randomUuid.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(20, "0");
   return `g_${compact.slice(0, 20)}`;
+}
+
+export function createCanvasPatchId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 export function arrangeCanvasNodes(
@@ -389,10 +431,6 @@ export function findOpenCanvasPosition(
   return { position: initialPosition(index), visible: false };
 }
 
-function intersects(left: DOMRect, right: DOMRect): boolean {
-  return left.left <= right.right && left.right >= right.left && left.top <= right.bottom && left.bottom >= right.top;
-}
-
 function isEditableTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement
     || target instanceof HTMLTextAreaElement
@@ -418,22 +456,30 @@ function uploadMediaUrl(projectName: string, upload: FreeCreationUpload): string
   return upload.url ?? API.getFileUrl(projectName, upload.path);
 }
 
-function canvasSnapshot(
-  viewport: { x: number; y: number; scale: number },
+function sharedCanvasState(
   positions: Record<string, Point>,
   hiddenCreationIds: string[],
   hiddenReferenceIds: string[],
   groups: CanvasGroup[],
   showRelations: boolean,
-): string {
-  return JSON.stringify({
-    viewport,
+): CanvasSharedState {
+  return {
     positions,
-    hidden_creation_ids: [...hiddenCreationIds].sort(),
-    hidden_reference_ids: [...hiddenReferenceIds].sort(),
+    hiddenCreationIds: [...hiddenCreationIds].sort(),
+    hiddenReferenceIds: [...hiddenReferenceIds].sort(),
     groups,
-    show_relations: showRelations,
-  });
+    showRelations,
+  };
+}
+
+function sharedCanvasFromResponse(canvas: FreeCreationCanvasState): CanvasSharedState {
+  return sharedCanvasState(
+    canvas.positions,
+    canvas.hidden_creation_ids,
+    canvas.hidden_reference_ids ?? [],
+    canvas.groups ?? [],
+    canvas.show_relations ?? true,
+  );
 }
 
 export function FreeCreationInfiniteCanvas({
@@ -465,12 +511,23 @@ export function FreeCreationInfiniteCanvas({
   const pointerRef = useRef<PointerOperation | null>(null);
   const hydratedRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
+  const viewportSaveTimerRef = useRef<number | null>(null);
   const revisionRef = useRef(0);
-  const lastSavedSnapshotRef = useRef("");
+  const nodeRevisionsRef = useRef<Record<string, number>>({});
+  const lastSavedSharedRef = useRef<CanvasSharedState | null>(null);
+  const lastSavedViewportRef = useRef("");
+  const seenPatchIdsRef = useRef(new Set<string>());
+  const lastCanvasEventSequenceRef = useRef(0);
   const disposedRef = useRef(false);
   const viewportAnimationTimerRef = useRef<number | null>(null);
   const nativeNodeDragRef = useRef(false);
-  const historyRef = useRef<CanvasHistoryState[]>([]);
+  const mediaPlaybackRef = useRef(new Map<string, { currentTime: number; playing: boolean }>());
+  const pointerFrameRef = useRef<number | null>(null);
+  const pendingPointerRef = useRef<{ pointerId: number; clientX: number; clientY: number } | null>(null);
+  const historyRef = useRef(new CanvasCommandHistory<CanvasHistoryState>({
+    maxCommands: 50,
+    maxBytes: 16 * 1024 * 1024,
+  }));
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const workspaceOperationRef = useRef<Promise<void>>(Promise.resolve());
   const pendingWorkspaceOperationsRef = useRef(0);
@@ -482,6 +539,7 @@ export function FreeCreationInfiniteCanvas({
   const [hiddenUploadIds, setHiddenUploadIds] = useState<string[]>([]);
   const hiddenUploadIdsRef = useRef<string[]>([]);
   const groupsRef = useRef<CanvasGroup[]>([]);
+  const showRelationsRef = useRef(true);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
   const [spacePressed, setSpacePressed] = useState(false);
@@ -494,7 +552,35 @@ export function FreeCreationInfiniteCanvas({
   const [groups, setGroups] = useState<CanvasGroup[]>([]);
   const [showRelations, setShowRelations] = useState(true);
   const [viewportAnimating, setViewportAnimating] = useState(false);
+  const [viewportSize, setViewportSize] = useState({ width: 1280, height: 720 });
+  const [lod, setLod] = useState<CanvasLod>("detail");
+  const canvasEvents = useFreeCreationStore((state) => state.canvasEvents);
   const canvasReady = hydratedProject === projectName;
+
+  const restoreVideoPlayback = useCallback((id: string, video: HTMLVideoElement, fallbackTime = 0) => {
+    const saved = mediaPlaybackRef.current.get(id);
+    const time = saved?.currentTime ?? fallbackTime;
+    if (video.duration > time && Math.abs(video.currentTime - time) > 0.05) video.currentTime = time;
+    if (saved?.playing) void video.play().catch(() => undefined);
+  }, []);
+
+  const rememberVideoPlayback = useCallback((id: string, video: HTMLVideoElement) => {
+    mediaPlaybackRef.current.set(id, { currentTime: video.currentTime, playing: !video.paused });
+  }, []);
+
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const updateSize = () => {
+      const rect = surface.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) setViewportSize({ width: rect.width, height: rect.height });
+    };
+    updateSize();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     positionsRef.current = positions;
@@ -512,22 +598,57 @@ export function FreeCreationInfiniteCanvas({
     groupsRef.current = groups;
   }, [groups]);
 
-  const pushHistory = useCallback((
-    state?: CanvasHistoryState,
-    restoreCreationIds: string[] = [],
-    restoreReferenceIds: string[] = [],
-  ) => {
-    const snapshot = state ?? {
+  useEffect(() => {
+    showRelationsRef.current = showRelations;
+  }, [showRelations]);
+
+  const currentSharedState = useCallback(() => sharedCanvasState(
+    positionsRef.current,
+    hiddenIdsRef.current,
+    hiddenUploadIdsRef.current,
+    groupsRef.current,
+    showRelationsRef.current,
+  ), []);
+
+  const applySharedState = useCallback((state: CanvasSharedState) => {
+    positionsRef.current = state.positions;
+    hiddenIdsRef.current = state.hiddenCreationIds;
+    hiddenUploadIdsRef.current = state.hiddenReferenceIds;
+    groupsRef.current = state.groups;
+    showRelationsRef.current = state.showRelations;
+    setPositions(state.positions);
+    setHiddenIds(state.hiddenCreationIds);
+    setHiddenUploadIds(state.hiddenReferenceIds);
+    setGroups(state.groups);
+    setShowRelations(state.showRelations);
+  }, []);
+
+  const captureHistoryState = useCallback((options: {
+    deletedCreationIds?: string[];
+    deletedReferenceIds?: string[];
+  } = {}): CanvasHistoryState => ({
       positions: { ...positionsRef.current },
       hiddenCreationIds: [...hiddenIdsRef.current],
       hiddenUploadIds: [...hiddenUploadIdsRef.current],
       groups: groupsRef.current.map((group) => ({ ...group, member_ids: [...group.member_ids] })),
-      restoreCreationIds,
-      restoreReferenceIds,
-    };
-    historyRef.current = [...historyRef.current.slice(-49), snapshot];
-    return snapshot;
+      showRelations: showRelationsRef.current,
+      ...options,
+  }), []);
+
+  const recordHistory = useCallback((before: CanvasHistoryState, after: CanvasHistoryState) => {
+    historyRef.current.push({ before, after });
   }, []);
+
+  const commitHistoryState = useCallback((before: CanvasHistoryState, after: CanvasHistoryState) => {
+    recordHistory(before, after);
+    applySharedState({
+      positions: after.positions,
+      hiddenCreationIds: after.hiddenCreationIds,
+      hiddenReferenceIds: after.hiddenUploadIds,
+      groups: after.groups,
+      showRelations: after.showRelations,
+    });
+  }, [applySharedState, recordHistory]);
 
   const enqueueWorkspaceOperation = useCallback((operation: () => Promise<void>) => {
     pendingWorkspaceOperationsRef.current += 1;
@@ -597,16 +718,6 @@ export function FreeCreationInfiniteCanvas({
     }),
     [creations, hiddenSet, hiddenUploadSet, positions, uploadsById],
   );
-  const dependencyPaths = useMemo(
-    () => dependencyEdges.map((edge) => {
-      const source = nodeBox(edge.sourceId, positions, uploadsById);
-      const target = nodeBox(edge.targetId, positions, uploadsById);
-      return source && target
-        ? { ...edge, path: dependencyPath(source, target, dependencyLane(edge, dependencyEdges)) }
-        : null;
-    }).filter((edge): edge is CanvasDependencyEdge & { path: string } => Boolean(edge)),
-    [dependencyEdges, positions, uploadsById],
-  );
   const groupFrames = useMemo<CanvasGroupFrame[]>(() => groups.flatMap((group, index) => {
     const members = group.member_ids
       .filter((memberId) => !hiddenSet.has(memberId) && !hiddenUploadSet.has(memberId))
@@ -621,6 +732,145 @@ export function FreeCreationInfiniteCanvas({
     const bottom = Math.max(...members.map((box) => box.y + box.height)) + padding;
     return [{ groupId: group.group_id, labelIndex: index + 1, x: left, y: top, width: right - left, height: bottom - top }];
   }), [groups, hiddenSet, hiddenUploadSet, positions, uploadsById]);
+  const canvasNodes = useMemo<CanvasRenderNode[]>(() => [
+    ...visibleUploads.flatMap((upload) => {
+      const position = positions[upload.reference_id];
+      if (!position) return [];
+      return [{
+        id: upload.reference_id,
+        kind: "upload" as const,
+        minX: position.x,
+        minY: position.y,
+        maxX: position.x + NODE_WIDTH,
+        maxY: position.y + UPLOAD_NODE_HEIGHT,
+        label: upload.original_filename,
+        mediaType: upload.media_type,
+        status: "succeeded",
+        thumbnailUrl: upload.media_type === "image" ? uploadMediaUrl(projectName, upload) : undefined,
+        ...(upload.media_type === "video" ? {
+          thumbnailUrl: API.getFreeCreationReferenceCoverUrl(projectName, upload.reference_id),
+        } : {}),
+      }];
+    }),
+    ...visibleCreations.flatMap((creation) => {
+      const position = positions[creation.creation_id];
+      if (!position) return [];
+      const mediaType = creationMediaType(creation);
+      return [{
+        id: creation.creation_id,
+        kind: "creation" as const,
+        minX: position.x,
+        minY: position.y,
+        maxX: position.x + NODE_WIDTH,
+        maxY: position.y + NODE_HEIGHT,
+        label: creation.prompt || creation.creation_id,
+        mediaType,
+        status: creation.status,
+        thumbnailUrl: creation.status === "succeeded" && mediaType !== "audio"
+          ? mediaType === "video"
+            ? API.getFreeCreationCoverUrl(projectName, creation.creation_id, creation.version)
+            : API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)
+          : undefined,
+      }];
+    }),
+    ...subtitleTracks.flatMap((track, index) => {
+      if (hiddenSet.has(track.creation_id)) return [];
+      const parent = positions[track.creation_id];
+      if (!parent) return [];
+      const siblingIndex = subtitleTracks.slice(0, index).filter((item) => item.creation_id === track.creation_id).length;
+      const position = subtitlePosition(parent, siblingIndex);
+      return [{
+        id: `subtitle:${track.subtitle_id}`,
+        kind: "subtitle" as const,
+        minX: position.x,
+        minY: position.y,
+        maxX: position.x + SUBTITLE_NODE_WIDTH,
+        maxY: position.y + SUBTITLE_NODE_HEIGHT,
+        label: track.cues[0]?.text || track.subtitle_id,
+        mediaType: "text" as const,
+        status: "succeeded",
+      }];
+    }),
+  ], [hiddenSet, positions, projectName, subtitleTracks, visibleCreations, visibleUploads]);
+  const canvasNodesById = useMemo(() => new Map(canvasNodes.map((node) => [node.id, node])), [canvasNodes]);
+  const spatialIndex = useMemo(() => new CanvasSpatialIndex(canvasNodes), [canvasNodes]);
+  const contentBounds = useMemo(() => computeContentBounds(canvasNodes), [canvasNodes]);
+  const selectedBounds = useMemo(() => {
+    const selectedNodes = canvasNodes.filter((node) => selectedSet.has(node.id));
+    return selectedNodes.length ? computeContentBounds(selectedNodes) : null;
+  }, [canvasNodes, selectedSet]);
+  const worldViewport = useMemo(
+    () => viewportWorldRect({ x: pan.x, y: pan.y, scale }, viewportSize),
+    [pan.x, pan.y, scale, viewportSize],
+  );
+  const viewportNodes = useMemo(() => spatialIndex.search(worldViewport), [spatialIndex, worldViewport]);
+  const viewportRenderNodes = useMemo(
+    () => viewportNodes.flatMap((node) => {
+      const renderNode = canvasNodesById.get(node.id);
+      return renderNode ? [renderNode] : [];
+    }),
+    [canvasNodesById, viewportNodes],
+  );
+  useEffect(() => {
+    const nextLod = selectCanvasLod({
+      projectedNodeWidth: NODE_WIDTH * scale,
+      visibleCount: viewportNodes.length,
+      previous: lod,
+    });
+    if (nextLod !== lod) {
+      // LOD is a state machine: the previous band is required for hysteresis.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLod(nextLod);
+    }
+  }, [lod, scale, viewportNodes.length]);
+  useLayoutEffect(() => () => {
+    if (lod !== "detail") return;
+    const videos = surfaceRef.current?.querySelectorAll<HTMLVideoElement>("video[data-canvas-media-id]");
+    for (const video of videos ?? []) {
+      const id = video.dataset.canvasMediaId;
+      if (id) mediaPlaybackRef.current.set(id, { currentTime: video.currentTime, playing: !video.paused });
+    }
+  }, [lod]);
+  const viewportNodeIds = useMemo(() => new Set(viewportNodes.map((node) => node.id)), [viewportNodes]);
+  const domNodeIds = useMemo(() => {
+    if (lod === "detail") return viewportNodeIds;
+    const pinned = selectedIds.filter((id) => positions[id]);
+    if (contextMenu?.nodeId && !pinned.includes(contextMenu.nodeId)) pinned.push(contextMenu.nodeId);
+    return new Set(pinned.slice(0, 160));
+  }, [contextMenu, lod, positions, selectedIds, viewportNodeIds]);
+  const renderedUploads = useMemo(
+    () => visibleUploads.filter((upload) => domNodeIds.has(upload.reference_id)),
+    [domNodeIds, visibleUploads],
+  );
+  const renderedCreations = useMemo(
+    () => visibleCreations.filter((creation) => domNodeIds.has(creation.creation_id)),
+    [domNodeIds, visibleCreations],
+  );
+  const sceneEdges = useMemo(() => [
+    ...dependencyEdges
+      .filter((edge) => viewportNodeIds.has(edge.sourceId) && viewportNodeIds.has(edge.targetId))
+      .map((edge) => ({ ...edge, lane: dependencyLane(edge, dependencyEdges) })),
+    ...subtitleTracks.flatMap((track, index) => {
+      const targetId = `subtitle:${track.subtitle_id}`;
+      if (!viewportNodeIds.has(track.creation_id) || !viewportNodeIds.has(targetId)) return [];
+      const siblingIndex = subtitleTracks.slice(0, index).filter((item) => item.creation_id === track.creation_id).length;
+      return [{ sourceId: track.creation_id, targetId, lane: relationLane(siblingIndex) }];
+    }),
+  ], [dependencyEdges, subtitleTracks, viewportNodeIds]);
+  const sceneGroups = useMemo(() => groupFrames
+    .map((frame) => ({
+      id: frame.groupId,
+      minX: frame.x,
+      minY: frame.y,
+      maxX: frame.x + frame.width,
+      maxY: frame.y + frame.height,
+    }))
+    .filter((frame) => (
+      frame.minX <= worldViewport.maxX
+      && frame.maxX >= worldViewport.minX
+      && frame.minY <= worldViewport.maxY
+      && frame.maxY >= worldViewport.minY
+    )), [groupFrames, worldViewport]);
   const selectedMergeIds = useMemo(() => {
     if (selectedIds.length < 2) return [];
     const selectedCreations = selectedIds
@@ -669,6 +919,19 @@ export function FreeCreationInfiniteCanvas({
     );
   }, [creations]);
 
+  const applyHistoryState = useCallback((state: CanvasHistoryState) => {
+    applySharedState({
+      positions: state.positions,
+      hiddenCreationIds: state.hiddenCreationIds,
+      hiddenReferenceIds: state.hiddenUploadIds,
+      groups: state.groups,
+      showRelations: state.showRelations,
+    });
+    setShowHidden(false);
+    setContextMenu(null);
+    publishSelection([]);
+  }, [applySharedState, publishSelection]);
+
   useEffect(() => {
     const validIds = new Set(allNodes.map((node) => node.id));
     const nextSelection = selectedIds.filter((id) => validIds.has(id));
@@ -686,54 +949,91 @@ export function FreeCreationInfiniteCanvas({
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [allNodes, groups, publishSelection, selectedIds]);
 
+  const restoreDeletedHistoryItems = useCallback(async (state: CanvasHistoryState): Promise<boolean> => {
+    let succeeded = true;
+    if (state.deletedCreationIds?.length) {
+      succeeded = Boolean(onRestoreCreations)
+        && (await onRestoreCreations?.(state.deletedCreationIds)) !== false;
+    }
+    if (state.deletedReferenceIds?.length) {
+      const results = onRestoreUpload
+        ? await Promise.all(state.deletedReferenceIds.map((id) => Promise.resolve(onRestoreUpload(id))))
+        : [false];
+      succeeded = results.every((result) => result !== false) && succeeded;
+    }
+    return succeeded;
+  }, [onRestoreCreations, onRestoreUpload]);
+
+  const deleteHistoryItems = useCallback(async (state: CanvasHistoryState): Promise<boolean> => {
+    const creationIds = state.deletedCreationIds ?? [];
+    const referenceIds = state.deletedReferenceIds ?? [];
+    if (!creationIds.length && !referenceIds.length) return true;
+    if (onDeleteItems) {
+      return (await onDeleteItems({ creationIds, referenceIds })) !== false;
+    }
+    const results: Array<boolean | undefined> = [];
+    if (creationIds.length) results.push(await onDeleteCreations?.(creationIds));
+    if (referenceIds.length) {
+      results.push(...await Promise.all(referenceIds.map((id) => Promise.resolve(onDeleteUpload?.(id)))));
+    }
+    return results.every((result) => result !== false);
+  }, [onDeleteCreations, onDeleteItems, onDeleteUpload]);
+
   const undoCanvasChange = useCallback(async () => {
-    if (pendingWorkspaceOperationsRef.current > 0) return;
-    const previous = historyRef.current[historyRef.current.length - 1];
-    if (!previous) return;
+    const command = historyRef.current.undo();
+    if (!command) return;
     await enqueueWorkspaceOperation(async () => {
-      let succeeded = true;
-      if (previous.restoreCreationIds?.length) {
-        succeeded = Boolean(onRestoreCreations)
-          && (await onRestoreCreations?.(previous.restoreCreationIds)) !== false
-          && succeeded;
+      if (!(await restoreDeletedHistoryItems(command.after))) {
+        historyRef.current.redo();
+        return;
       }
-      if (previous.restoreReferenceIds?.length) {
-        const results = onRestoreUpload
-          ? await Promise.all(previous.restoreReferenceIds.map((referenceId) => Promise.resolve(onRestoreUpload(referenceId))))
-          : [false];
-        succeeded = results.every((result) => result !== false) && succeeded;
-      }
-      if (!succeeded) return;
-      historyRef.current = historyRef.current.slice(0, -1);
-      setPositions(previous.positions);
-      setHiddenIds(previous.hiddenCreationIds);
-      setHiddenUploadIds(previous.hiddenUploadIds);
-      setGroups(previous.groups);
-      setShowHidden(false);
-      setContextMenu(null);
-      publishSelection([]);
+      applyHistoryState(command.before);
     });
-  }, [enqueueWorkspaceOperation, onRestoreCreations, onRestoreUpload, publishSelection]);
+  }, [applyHistoryState, enqueueWorkspaceOperation, restoreDeletedHistoryItems]);
+
+  const redoCanvasChange = useCallback(async () => {
+    const command = historyRef.current.redo();
+    if (!command) return;
+    await enqueueWorkspaceOperation(async () => {
+      if (!(await deleteHistoryItems(command.after))) {
+        historyRef.current.undo();
+        return;
+      }
+      applyHistoryState(command.after);
+    });
+  }, [applyHistoryState, deleteHistoryItems, enqueueWorkspaceOperation]);
 
   useEffect(() => {
     disposedRef.current = false;
     hydratedRef.current = false;
     revisionRef.current = 0;
-    lastSavedSnapshotRef.current = "";
-    historyRef.current = [];
+    nodeRevisionsRef.current = {};
+    lastSavedSharedRef.current = null;
+    lastSavedViewportRef.current = "";
+    seenPatchIdsRef.current.clear();
+    historyRef.current.clear();
     const controller = new AbortController();
     void API.getFreeCreationCanvas(projectName)
       .then(({ canvas }) => {
         if (controller.signal.aborted) return;
-        lastSavedSnapshotRef.current = canvasSnapshot(canvas.viewport, canvas.positions, canvas.hidden_creation_ids, canvas.hidden_reference_ids ?? [], canvas.groups ?? [], canvas.show_relations ?? true);
-        setPositions(canvas.positions);
+        const shared = sharedCanvasFromResponse(canvas);
+        lastSavedSharedRef.current = shared;
+        lastSavedViewportRef.current = JSON.stringify(canvas.viewport);
+        positionsRef.current = canvas.positions;
+        hiddenIdsRef.current = canvas.hidden_creation_ids;
+        hiddenUploadIdsRef.current = canvas.hidden_reference_ids ?? [];
+        groupsRef.current = canvas.groups ?? [];
+        showRelationsRef.current = canvas.show_relations ?? true;
+        setPositions(shared.positions);
         setPan({ x: canvas.viewport.x, y: canvas.viewport.y });
         setScale(canvas.viewport.scale);
-        setHiddenIds(canvas.hidden_creation_ids);
-        setHiddenUploadIds(canvas.hidden_reference_ids ?? []);
-        setGroups(canvas.groups ?? []);
-        setShowRelations(canvas.show_relations ?? true);
+        setHiddenIds(shared.hiddenCreationIds);
+        setHiddenUploadIds(shared.hiddenReferenceIds);
+        setGroups(shared.groups);
+        setShowRelations(shared.showRelations);
         revisionRef.current = canvas.revision;
+        nodeRevisionsRef.current = canvas.node_revisions ?? {};
+        lastCanvasEventSequenceRef.current = useFreeCreationStore.getState().canvasEvents.at(-1)?.sequence ?? 0;
         hydratedRef.current = true;
         setHydratedProject(projectName);
       })
@@ -747,6 +1047,9 @@ export function FreeCreationInfiniteCanvas({
   useEffect(() => () => {
     disposedRef.current = true;
     if (viewportAnimationTimerRef.current !== null) window.clearTimeout(viewportAnimationTimerRef.current);
+    if (pointerFrameRef.current !== null) window.cancelAnimationFrame(pointerFrameRef.current);
+    if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+    if (viewportSaveTimerRef.current !== null) window.clearTimeout(viewportSaveTimerRef.current);
   }, []);
 
   const visiblePlacementBounds = useCallback((): CanvasBounds => {
@@ -781,10 +1084,25 @@ export function FreeCreationInfiniteCanvas({
       return current?.x !== arranged?.x || current?.y !== arranged?.y;
     });
     if (!changed) return;
-    pushHistory();
-    setPositions((current) => ({ ...current, ...next }));
+    const before = captureHistoryState();
+    commitHistoryState(before, { ...before, positions: { ...before.positions, ...next } });
     setContextMenu(null);
-  }, [creations, pushHistory, readOnly, selectedIds, uploads, visibleCreations, visibleUploads]);
+  }, [captureHistoryState, commitHistoryState, creations, readOnly, selectedIds, uploads, visibleCreations, visibleUploads]);
+
+  const fitView = useCallback((scope: "all" | "selected") => {
+    const bounds = scope === "selected" ? selectedBounds : contentBounds;
+    if (!bounds) return;
+    const camera = fitCameraToBounds(bounds, viewportSize, {
+      minScale: MIN_SCALE,
+      maxScale: MAX_SCALE,
+      padding: 72,
+    });
+    setViewportAnimating(true);
+    setPan({ x: camera.x, y: camera.y });
+    setScale(camera.scale);
+    if (viewportAnimationTimerRef.current !== null) window.clearTimeout(viewportAnimationTimerRef.current);
+    viewportAnimationTimerRef.current = window.setTimeout(() => setViewportAnimating(false), 240);
+  }, [contentBounds, selectedBounds, viewportSize]);
 
   const focusCanvasPosition = useCallback((position: Point) => {
     const surface = surfaceRef.current;
@@ -807,64 +1125,168 @@ export function FreeCreationInfiniteCanvas({
     const next = { ...positions };
     const bounds = visiblePlacementBounds();
     let focusTarget: Point | null = null;
-    missing.forEach((node, index) => {
-      const occupied = Object.values(next);
-      const result = occupied.length === 0 && index === 0
-        ? { position: initialPosition(0), visible: true }
-        : findOpenCanvasPosition(occupied, bounds);
-      next[node.id] = result.position;
-      if (!result.visible) focusTarget = result.position;
-    });
+    if (missing.length > 32) {
+      const placementIndex = new CanvasSpatialIndex(allNodes.flatMap((node) => {
+        const position = next[node.id];
+        if (!position) return [];
+        const height = node.kind === "upload" ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
+        return [{
+          id: node.id,
+          kind: node.kind,
+          minX: position.x - PLACEMENT_PADDING,
+          minY: position.y - PLACEMENT_PADDING,
+          maxX: position.x + NODE_WIDTH + PLACEMENT_PADDING,
+          maxY: position.y + height + PLACEMENT_PADDING,
+        }];
+      }));
+      let slot = 0;
+      for (const node of missing) {
+        let candidate = initialPosition(slot);
+        while (placementIndex.search({
+          minX: candidate.x,
+          minY: candidate.y,
+          maxX: candidate.x + NODE_WIDTH,
+          maxY: candidate.y + NODE_HEIGHT,
+        }).length) {
+          slot += 1;
+          candidate = initialPosition(slot);
+        }
+        next[node.id] = candidate;
+        placementIndex.insert({
+          id: node.id,
+          kind: node.kind,
+          minX: candidate.x - PLACEMENT_PADDING,
+          minY: candidate.y - PLACEMENT_PADDING,
+          maxX: candidate.x + NODE_WIDTH + PLACEMENT_PADDING,
+          maxY: candidate.y + (node.kind === "upload" ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT) + PLACEMENT_PADDING,
+        });
+        slot += 1;
+      }
+    } else {
+      missing.forEach((node, index) => {
+        const occupied = Object.values(next);
+        const result = occupied.length === 0 && index === 0
+          ? { position: initialPosition(0), visible: true }
+          : findOpenCanvasPosition(occupied, bounds);
+        next[node.id] = result.position;
+        if (!result.visible) focusTarget = result.position;
+      });
+    }
+    // New nodes arrive from the project event stream, so placement synchronizes external state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPositions(next);
     if (focusTarget) focusCanvasPosition(focusTarget);
   }, [allNodes, canvasReady, focusCanvasPosition, positions, visiblePlacementBounds]);
 
   useEffect(() => {
+    if (!hydratedRef.current) return;
+    const events = canvasEvents.filter((event) => event.sequence > lastCanvasEventSequenceRef.current);
+    if (!events.length) return;
+    for (const event of events) {
+      lastCanvasEventSequenceRef.current = Math.max(lastCanvasEventSequenceRef.current, event.sequence);
+      if (event.projectName !== projectName || seenPatchIdsRef.current.has(event.patch.patch_id)) continue;
+      const baseline = lastSavedSharedRef.current;
+      if (!baseline) continue;
+      const desired = currentSharedState();
+      const pendingPatch = buildCanvasPatch(baseline, desired, {
+        patchId: createCanvasPatchId(),
+        baseRevision: revisionRef.current,
+        nodeRevisions: nodeRevisionsRef.current,
+      });
+      seenPatchIdsRef.current.add(event.patch.patch_id);
+      const remote = applyCanvasPatch(baseline, event.patch);
+      lastSavedSharedRef.current = remote;
+      revisionRef.current = Math.max(revisionRef.current, event.patch.revision);
+      for (const target of canvasPatchTargets(event.patch)) {
+        nodeRevisionsRef.current[target] = event.patch.revision;
+      }
+      applySharedState(pendingPatch
+        ? rebaseCanvasState(remote, desired, pendingPatch, nodeRevisionsRef.current).state
+        : remote);
+    }
+  }, [applySharedState, canvasEvents, currentSharedState, projectName]);
+
+  useEffect(() => {
     if (!hydratedRef.current || readOnly) return;
-    const viewport = { x: pan.x, y: pan.y, scale };
-    const snapshot = canvasSnapshot(viewport, positions, hiddenIds, hiddenUploadIds, groups, showRelations);
-    if (snapshot === lastSavedSnapshotRef.current) return;
     if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
-      void (async () => {
+      void enqueueWorkspaceOperation(async () => {
+        const before = lastSavedSharedRef.current;
+        if (!before || disposedRef.current) return;
+        const desired = currentSharedState();
+        const attempt = buildCanvasPatch(before, desired, {
+          patchId: createCanvasPatchId(),
+          baseRevision: revisionRef.current,
+          nodeRevisions: nodeRevisionsRef.current,
+        });
+        if (!attempt) return;
         try {
-          const { canvas } = await API.saveFreeCreationCanvas(projectName, {
-            viewport,
-            positions,
-            hidden_creation_ids: hiddenIds,
-            hidden_reference_ids: hiddenUploadIds,
-            groups,
-            show_relations: showRelations,
-            expected_revision: revisionRef.current,
-          });
+          const { canvas, patch } = await API.patchFreeCreationCanvas(projectName, attempt);
+          if (disposedRef.current) return;
           revisionRef.current = canvas.revision;
-          lastSavedSnapshotRef.current = snapshot;
+          nodeRevisionsRef.current = canvas.node_revisions ?? nodeRevisionsRef.current;
+          lastSavedSharedRef.current = sharedCanvasFromResponse(canvas);
+          if (patch) {
+            seenPatchIdsRef.current.add(patch.patch_id);
+          }
         } catch (error) {
           if (disposedRef.current) return;
-          useAppStore.getState().pushToast(errMsg(error), "error");
           try {
             const { canvas } = await API.getFreeCreationCanvas(projectName);
             if (disposedRef.current) return;
+            const remote = sharedCanvasFromResponse(canvas);
+            const rebased = rebaseCanvasState(
+              remote,
+              currentSharedState(),
+              attempt,
+              canvas.node_revisions ?? {},
+            );
             revisionRef.current = canvas.revision;
-            lastSavedSnapshotRef.current = canvasSnapshot(canvas.viewport, canvas.positions, canvas.hidden_creation_ids, canvas.hidden_reference_ids ?? [], canvas.groups ?? [], canvas.show_relations ?? true);
-            setPositions(canvas.positions);
-            setPan({ x: canvas.viewport.x, y: canvas.viewport.y });
-            setScale(canvas.viewport.scale);
-            setHiddenIds(canvas.hidden_creation_ids);
-            setHiddenUploadIds(canvas.hidden_reference_ids ?? []);
-            setGroups(canvas.groups ?? []);
-            setShowRelations(canvas.show_relations ?? true);
+            nodeRevisionsRef.current = canvas.node_revisions ?? {};
+            lastSavedSharedRef.current = remote;
+            applySharedState(rebased.state);
+            if (rebased.conflictIds.length) {
+              useAppStore.getState().pushToast(errMsg(error), "warning");
+            }
           } catch {
-            // The next local change retries synchronization.
+            useAppStore.getState().pushToast(errMsg(error), "error");
           }
         }
-      })();
-    }, 650);
+      });
+    }, 350);
     return () => {
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
     };
-  }, [groups, hiddenIds, hiddenUploadIds, pan.x, pan.y, positions, projectName, readOnly, scale, showRelations]);
+  }, [
+    applySharedState,
+    currentSharedState,
+    enqueueWorkspaceOperation,
+    groups,
+    hiddenIds,
+    hiddenUploadIds,
+    positions,
+    projectName,
+    readOnly,
+    showRelations,
+  ]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const viewport = { x: pan.x, y: pan.y, scale };
+    const snapshot = JSON.stringify(viewport);
+    if (snapshot === lastSavedViewportRef.current) return;
+    if (viewportSaveTimerRef.current !== null) window.clearTimeout(viewportSaveTimerRef.current);
+    viewportSaveTimerRef.current = window.setTimeout(() => {
+      void API.saveFreeCreationCanvasViewport(projectName, viewport)
+        .then(({ viewport: savedViewport }) => {
+          lastSavedViewportRef.current = JSON.stringify(savedViewport);
+        })
+        .catch(() => undefined);
+    }, 500);
+    return () => {
+      if (viewportSaveTimerRef.current !== null) window.clearTimeout(viewportSaveTimerRef.current);
+    };
+  }, [pan.x, pan.y, projectName, scale]);
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
@@ -883,6 +1305,14 @@ export function FreeCreationInfiniteCanvas({
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !event.shiftKey && !isEditableTarget(event.target)) {
         event.preventDefault();
         if (!readOnly) void undoCanvasChange().catch(() => undefined);
+      }
+      if (
+        (event.ctrlKey || event.metaKey)
+        && (event.key.toLowerCase() === "y" || (event.shiftKey && event.key.toLowerCase() === "z"))
+        && !isEditableTarget(event.target)
+      ) {
+        event.preventDefault();
+        if (!readOnly) void redoCanvasChange().catch(() => undefined);
       }
       if (event.key === "Escape" && !isEditableTarget(event.target)) {
         setContextMenu(null);
@@ -904,7 +1334,7 @@ export function FreeCreationInfiniteCanvas({
       window.removeEventListener("blur", clearSpace);
       document.removeEventListener("visibilitychange", clearSpace);
     };
-  }, [publishSelection, readOnly, undoCanvasChange, visibleCreations, visibleUploads]);
+  }, [publishSelection, readOnly, redoCanvasChange, undoCanvasChange, visibleCreations, visibleUploads]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -990,6 +1420,17 @@ export function FreeCreationInfiniteCanvas({
       return;
     }
     if (event.button !== 0) return;
+    if (lod !== "detail") {
+      const rect = surfaceRef.current?.getBoundingClientRect();
+      const worldX = (event.clientX - (rect?.left ?? 0) - pan.x) / scale;
+      const worldY = (event.clientY - (rect?.top ?? 0) - pan.y) / scale;
+      const hit = spatialIndex.search({ minX: worldX - 1, minY: worldY - 1, maxX: worldX + 1, maxY: worldY + 1 })[0];
+      if (hit) {
+        if (hit.kind === "upload") beginUploadDrag(event, hit.id);
+        else beginNodeDrag(event, hit.id);
+        return;
+      }
+    }
     const point = { x: event.clientX, y: event.clientY };
     pointerRef.current = { kind: "marquee", pointerId: event.pointerId, start: point, current: point, additive: event.shiftKey };
     setMarquee({ start: point, current: point });
@@ -997,42 +1438,74 @@ export function FreeCreationInfiniteCanvas({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const updatePointer = (event: React.PointerEvent<HTMLDivElement>) => {
+  const hitTestCanvas = useCallback((clientX: number, clientY: number) => {
+    const rect = surfaceRef.current?.getBoundingClientRect();
+    const worldX = (clientX - (rect?.left ?? 0) - pan.x) / scale;
+    const worldY = (clientY - (rect?.top ?? 0) - pan.y) / scale;
+    return spatialIndex.search({ minX: worldX - 1, minY: worldY - 1, maxX: worldX + 1, maxY: worldY + 1 })[0] ?? null;
+  }, [pan.x, pan.y, scale, spatialIndex]);
+
+  const applyPointerUpdate = (pointerId: number, clientX: number, clientY: number) => {
     const operation = pointerRef.current;
-    if (!operation || operation.pointerId !== event.pointerId) return;
+    if (!operation || operation.pointerId !== pointerId) return;
     if (operation.kind === "pan") {
       setPan({
-        x: operation.origin.x + event.clientX - operation.start.x,
-        y: operation.origin.y + event.clientY - operation.start.y,
+        x: operation.origin.x + clientX - operation.start.x,
+        y: operation.origin.y + clientY - operation.start.y,
       });
       return;
     }
     if (operation.kind === "nodes") {
-      const dx = (event.clientX - operation.start.x) / scale;
-      const dy = (event.clientY - operation.start.y) / scale;
-      setPositions((current) => ({
-        ...current,
-        ...Object.fromEntries(Object.entries(operation.origins).map(([id, origin]) => [id, { x: origin.x + dx, y: origin.y + dy }])),
-      }));
+      const dx = (clientX - operation.start.x) / scale;
+      const dy = (clientY - operation.start.y) / scale;
+      const updates = Object.fromEntries(
+        Object.entries(operation.origins).map(([id, origin]) => [id, { x: origin.x + dx, y: origin.y + dy }]),
+      );
+      positionsRef.current = { ...positionsRef.current, ...updates };
+      setPositions(positionsRef.current);
       return;
     }
-    const current = { x: event.clientX, y: event.clientY };
+    const current = { x: clientX, y: clientY };
     pointerRef.current = { ...operation, current };
     setMarquee({ start: operation.start, current });
   };
 
+  const updatePointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    const operation = pointerRef.current;
+    if (!operation || operation.pointerId !== event.pointerId) return;
+    pendingPointerRef.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY };
+    if (pointerFrameRef.current !== null) return;
+    pointerFrameRef.current = window.requestAnimationFrame(() => {
+      pointerFrameRef.current = null;
+      const pending = pendingPointerRef.current;
+      pendingPointerRef.current = null;
+      if (pending) applyPointerUpdate(pending.pointerId, pending.clientX, pending.clientY);
+    });
+  };
+
   const finishPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (pointerFrameRef.current !== null) {
+      window.cancelAnimationFrame(pointerFrameRef.current);
+      pointerFrameRef.current = null;
+    }
+    pendingPointerRef.current = null;
+    applyPointerUpdate(event.pointerId, event.clientX, event.clientY);
     const operation = pointerRef.current;
     if (!operation || operation.pointerId !== event.pointerId) return;
     if (operation.kind === "marquee") {
       const left = Math.min(operation.start.x, operation.current.x);
       const top = Math.min(operation.start.y, operation.current.y);
-      const selectionRect = new DOMRect(left, top, Math.abs(operation.current.x - operation.start.x), Math.abs(operation.current.y - operation.start.y));
-      const hitIds = [...visibleUploads.map((item) => item.reference_id), ...visibleCreations.map((item) => item.creation_id)]
-        .filter((id) => {
-          const node = nodeRefs.current.get(id);
-          return node ? intersects(selectionRect, node.getBoundingClientRect()) : false;
-        });
+      const rect = surfaceRef.current?.getBoundingClientRect();
+      const localLeft = left - (rect?.left ?? 0);
+      const localTop = top - (rect?.top ?? 0);
+      const width = Math.max(2, Math.abs(operation.current.x - operation.start.x));
+      const height = Math.max(2, Math.abs(operation.current.y - operation.start.y));
+      const hitIds = spatialIndex.search({
+        minX: (localLeft - pan.x) / scale,
+        minY: (localTop - pan.y) / scale,
+        maxX: (localLeft + width - pan.x) / scale,
+        maxY: (localTop + height - pan.y) / scale,
+      }).map((node) => node.id);
       publishSelection(operation.additive ? [...new Set([...selectedIds, ...hitIds])] : hitIds);
     } else if (operation.kind === "nodes") {
       const moved = Object.entries(operation.origins).some(([id, origin]) => {
@@ -1040,13 +1513,23 @@ export function FreeCreationInfiniteCanvas({
         return current && (current.x !== origin.x || current.y !== origin.y);
       });
       if (moved) {
-        pushHistory({
-          positions: { ...positionsRef.current, ...operation.origins },
-          hiddenCreationIds: [...hiddenIdsRef.current],
-          hiddenUploadIds: [...hiddenUploadIdsRef.current],
-          groups: groupsRef.current.map((group) => ({ ...group, member_ids: [...group.member_ids] })),
-        });
+        const after = captureHistoryState();
+        recordHistory(
+          { ...after, positions: { ...after.positions, ...operation.origins } },
+          after,
+        );
       }
+    } else if (operation.kind === "pan") {
+      const next = clampCameraToBounds(
+        {
+          x: operation.origin.x + event.clientX - operation.start.x,
+          y: operation.origin.y + event.clientY - operation.start.y,
+          scale,
+        },
+        contentBounds,
+        viewportSize,
+      );
+      setPan({ x: next.x, y: next.y });
     }
     pointerRef.current = null;
     setMarquee(null);
@@ -1056,11 +1539,28 @@ export function FreeCreationInfiniteCanvas({
     event.preventDefault();
     if (event.ctrlKey || event.metaKey) return;
     if (event.altKey) {
-      setScale((current) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, current - event.deltaY * 0.002)));
+      const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale - event.deltaY * 0.002));
+      const rect = surfaceRef.current?.getBoundingClientRect();
+      const cursorX = event.clientX - (rect?.left ?? 0);
+      const cursorY = event.clientY - (rect?.top ?? 0);
+      const worldX = (cursorX - pan.x) / scale;
+      const worldY = (cursorY - pan.y) / scale;
+      const next = clampCameraToBounds({
+        x: cursorX - worldX * nextScale,
+        y: cursorY - worldY * nextScale,
+        scale: nextScale,
+      }, contentBounds, viewportSize);
+      setScale(next.scale);
+      setPan({ x: next.x, y: next.y });
       return;
     }
-    setPan((current) => ({ x: current.x - event.deltaX, y: current.y - event.deltaY }));
-  }, []);
+    const next = clampCameraToBounds({
+      x: pan.x - event.deltaX,
+      y: pan.y - event.deltaY,
+      scale,
+    }, contentBounds, viewportSize);
+    setPan({ x: next.x, y: next.y });
+  }, [contentBounds, pan.x, pan.y, scale, viewportSize]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
@@ -1106,19 +1606,25 @@ export function FreeCreationInfiniteCanvas({
   };
 
   const hideNodes = (nodeIds: string[]) => {
-    pushHistory();
+    const before = captureHistoryState();
     const nodeSet = new Set(nodeIds);
-    setHiddenIds((current) => [...new Set([...current, ...nodeIds.filter((id) => creations.some((item) => item.creation_id === id))])]);
-    setHiddenUploadIds((current) => [...new Set([...current, ...nodeIds.filter((id) => uploads.some((item) => item.reference_id === id))])]);
+    commitHistoryState(before, {
+      ...before,
+      hiddenCreationIds: [...new Set([...before.hiddenCreationIds, ...nodeIds.filter((id) => creationsById.has(id))])],
+      hiddenUploadIds: [...new Set([...before.hiddenUploadIds, ...nodeIds.filter((id) => uploadsById.has(id))])],
+    });
     publishSelection(selectedIds.filter((id) => !nodeSet.has(id)));
     setContextMenu(null);
   };
 
   const restoreNodes = (nodeIds: string[]) => {
-    pushHistory();
+    const before = captureHistoryState();
     const nodeSet = new Set(nodeIds);
-    setHiddenIds((current) => current.filter((id) => !nodeSet.has(id)));
-    setHiddenUploadIds((current) => current.filter((id) => !nodeSet.has(id)));
+    commitHistoryState(before, {
+      ...before,
+      hiddenCreationIds: before.hiddenCreationIds.filter((id) => !nodeSet.has(id)),
+      hiddenUploadIds: before.hiddenUploadIds.filter((id) => !nodeSet.has(id)),
+    });
     setContextMenu(null);
   };
 
@@ -1137,35 +1643,29 @@ export function FreeCreationInfiniteCanvas({
       || ((creationTargets.length === 0 || Boolean(onDeleteCreations))
         && (referenceTargets.length === 0 || Boolean(onDeleteUpload)));
     if ((!creationTargets.length && !referenceTargets.length) || !canDeleteSelection) return;
-    const historyEntry = pushHistory(undefined, creationTargets, referenceTargets);
+    const before = captureHistoryState();
     const targetSet = new Set([...creationTargets, ...referenceTargets]);
+    const after = {
+      ...before,
+      hiddenCreationIds: before.hiddenCreationIds.filter((id) => !targetSet.has(id)),
+      hiddenUploadIds: before.hiddenUploadIds.filter((id) => !targetSet.has(id)),
+      deletedCreationIds: creationTargets,
+      deletedReferenceIds: referenceTargets,
+    };
     publishSelection(selectedIds.filter((id) => !targetSet.has(id)));
-    setHiddenIds((current) => current.filter((id) => !targetSet.has(id)));
-    setHiddenUploadIds((current) => current.filter((id) => !targetSet.has(id)));
+    applySharedState({
+      positions: after.positions,
+      hiddenCreationIds: after.hiddenCreationIds,
+      hiddenReferenceIds: after.hiddenUploadIds,
+      groups: after.groups,
+      showRelations: after.showRelations,
+    });
     setContextMenu(null);
     void enqueueWorkspaceOperation(async () => {
-      if (onDeleteItems) {
-        const result = await onDeleteItems({
-          creationIds: creationTargets,
-          referenceIds: referenceTargets,
-        });
-        if (result === false) {
-          historyRef.current = historyRef.current.filter((entry) => entry !== historyEntry);
-        }
-        return;
-      }
-      const results: Array<boolean | undefined> = [];
-      if (creationTargets.length) results.push(await onDeleteCreations?.(creationTargets));
-      if (referenceTargets.length) {
-        results.push(...await Promise.all(
-          referenceTargets.map((referenceId) => Promise.resolve(onDeleteUpload?.(referenceId))),
-        ));
-      }
-      if (results.some((result) => result === false)) {
-        historyRef.current = historyRef.current.filter((entry) => entry !== historyEntry);
-      }
+      if (await deleteHistoryItems(after)) recordHistory(before, after);
+      else applyHistoryState(before);
     }).catch(() => {
-      historyRef.current = historyRef.current.filter((entry) => entry !== historyEntry);
+      applyHistoryState(before);
     });
   };
 
@@ -1219,19 +1719,27 @@ export function FreeCreationInfiniteCanvas({
     const availableIds = new Set(allNodes.map((node) => node.id));
     const memberIds = [...new Set(contextSelectionIds.filter((id) => availableIds.has(id)))];
     if (memberIds.length < 2) return;
-    pushHistory();
-    setGroups((current) => [...current, {
+    const before = captureHistoryState();
+    commitHistoryState(before, { ...before, groups: [...before.groups, {
       group_id: createCanvasGroupId(),
       member_ids: memberIds,
-    }]);
+    }] });
     setContextMenu(null);
   };
 
   const ungroupSelection = () => {
     if (!activeContextGroup) return;
-    pushHistory();
-    setGroups((current) => current.filter((group) => group.group_id !== activeContextGroup.group_id));
+    const before = captureHistoryState();
+    commitHistoryState(before, {
+      ...before,
+      groups: before.groups.filter((group) => group.group_id !== activeContextGroup.group_id),
+    });
     setContextMenu(null);
+  };
+
+  const toggleRelations = () => {
+    const before = captureHistoryState();
+    commitHistoryState(before, { ...before, showRelations: !before.showRelations });
   };
 
   const renderActions = (creation: FreeCreation) => {
@@ -1321,7 +1829,43 @@ export function FreeCreationInfiniteCanvas({
       onDrop={(event) => void handleFileDrop(event)}
       onContextMenu={(event) => {
         event.preventDefault();
-        if (!(event.target as HTMLElement).closest("[data-canvas-node='true']")) setContextMenu(null);
+        if ((event.target as HTMLElement).closest("[data-canvas-node='true']")) return;
+        if (lod === "detail" || readOnly) {
+          setContextMenu(null);
+          return;
+        }
+        const hit = hitTestCanvas(event.clientX, event.clientY);
+        if (!hit || hit.kind === "subtitle") {
+          setContextMenu(null);
+          return;
+        }
+        publishSelection(selectedSet.has(hit.id) ? selectedIds : [hit.id]);
+        const rect = surfaceRef.current?.getBoundingClientRect();
+        setContextMenu({
+          kind: hit.kind,
+          nodeId: hit.id,
+          x: Math.min(event.clientX - (rect?.left ?? 0), (rect?.width ?? 260) - 190),
+          y: Math.min(event.clientY - (rect?.top ?? 0), (rect?.height ?? 200) - 150),
+        });
+      }}
+      onDoubleClick={(event) => {
+        if (lod === "detail" || (event.target as HTMLElement).closest("[data-canvas-node='true']")) return;
+        const hit = hitTestCanvas(event.clientX, event.clientY);
+        if (!hit) return;
+        if (hit.kind === "subtitle") {
+          const track = subtitleTracks.find((item) => `subtitle:${item.subtitle_id}` === hit.id);
+          if (track) onEditSubtitle?.(track.creation_id);
+          return;
+        }
+        if (hit.kind === "upload") {
+          const upload = uploadsById.get(hit.id);
+          if (upload) onPreview?.({ kind: "upload", upload });
+          return;
+        }
+        const creation = creationsById.get(hit.id);
+        if (creation?.status === "succeeded" && creation.media_path) {
+          onPreview?.({ kind: "creation", creation });
+        }
       }}
       style={{ cursor: "default", touchAction: "none" }}
       data-testid="free-creation-canvas"
@@ -1342,8 +1886,10 @@ export function FreeCreationInfiniteCanvas({
         <span className="min-w-12 text-center text-[11px] text-[var(--color-text-muted)]">{Math.round(scale * 100)}%</span>
         <button type="button" onClick={() => setScale((value) => Math.max(MIN_SCALE, value - 0.1))} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_zoom_out")} aria-label={t("free_creation_zoom_out")}><ZoomOut className="h-4 w-4" aria-hidden /></button>
         <button type="button" onClick={() => { setPan({ x: 0, y: 0 }); setScale(1); }} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_reset_canvas")} aria-label={t("free_creation_reset_canvas")}><LocateFixed className="h-4 w-4" aria-hidden /></button>
+        <button type="button" onClick={() => fitView("all")} disabled={!canvasNodes.length} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40" title={t("free_creation_fit_all")} aria-label={t("free_creation_fit_all")}><Maximize2 className="h-4 w-4" aria-hidden /></button>
+        <button type="button" onClick={() => fitView("selected")} disabled={!selectedBounds} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40" title={t("free_creation_fit_selected")} aria-label={t("free_creation_fit_selected")}><ScanSearch className="h-4 w-4" aria-hidden /></button>
         <button type="button" onClick={() => arrangeNodes("all")} disabled={readOnly || allNodes.length < 1} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40" title={t("free_creation_arrange_all")} aria-label={t("free_creation_arrange_all")}><LayoutGrid className="h-4 w-4" aria-hidden /></button>
-        <button type="button" onClick={() => setShowRelations((value) => !value)} className={`focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${showRelations ? "bg-[var(--color-accent-dim)] text-[var(--color-accent-2)]" : ""}`} title={t(showRelations ? "free_creation_hide_relations" : "free_creation_show_relations")} aria-label={t(showRelations ? "free_creation_hide_relations" : "free_creation_show_relations")}><Link2 className="h-4 w-4" aria-hidden /></button>
+        <button type="button" onClick={toggleRelations} className={`focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${showRelations ? "bg-[var(--color-accent-dim)] text-[var(--color-accent-2)]" : ""}`} title={t(showRelations ? "free_creation_hide_relations" : "free_creation_show_relations")} aria-label={t(showRelations ? "free_creation_hide_relations" : "free_creation_show_relations")}><Link2 className="h-4 w-4" aria-hidden /></button>
         <div className="relative">
           <button
             type="button"
@@ -1362,6 +1908,7 @@ export function FreeCreationInfiniteCanvas({
               <div className="grid gap-1.5">
                 {[
                   [t("free_creation_shortcut_undo"), "Ctrl/Cmd + Z"],
+                  [t("free_creation_shortcut_redo"), "Ctrl/Cmd + Y"],
                   [t("free_creation_shortcut_select_all"), "Ctrl/Cmd + A"],
                   [t("free_creation_shortcut_reference"), t("free_creation_shortcut_combo_reference")],
                   [t("free_creation_shortcut_preview"), t("free_creation_shortcut_combo_preview")],
@@ -1382,44 +1929,36 @@ export function FreeCreationInfiniteCanvas({
         {hiddenCount && !readOnly ? <button type="button" onClick={() => restoreNodes([...hiddenIds, ...hiddenUploadIds])} className="focus-ring grid h-8 min-w-8 place-items-center rounded px-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title={t("free_creation_restore_all_hidden", { count: hiddenCount })} aria-label={t("free_creation_restore_all_hidden", { count: hiddenCount })}><RotateCcw className="h-4 w-4" aria-hidden /></button> : null}
       </div>
 
+      <CanvasSceneLayer
+        camera={{ x: pan.x, y: pan.y, scale }}
+        viewport={viewportSize}
+        nodes={viewportRenderNodes}
+        edges={sceneEdges}
+        groups={sceneGroups}
+        selectedIds={selectedSet}
+        lod={lod}
+        showRelations={showRelations}
+      />
+      <div className="sr-only" aria-hidden>
+        {sceneGroups.map((group) => <span key={group.id} data-canvas-group={group.id} />)}
+      </div>
+      <CanvasMinimap
+        label={t("free_creation_minimap")}
+        nodes={canvasNodes}
+        bounds={contentBounds}
+        camera={{ x: pan.x, y: pan.y, scale }}
+        viewport={viewportSize}
+        onNavigate={(worldX, worldY) => {
+          setPan({
+            x: viewportSize.width / 2 - worldX * scale,
+            y: viewportSize.height / 2 - worldY * scale,
+          });
+        }}
+      />
+
       <div className="absolute left-0 top-0" style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${scale})`, transformOrigin: "0 0", transition: viewportAnimating ? "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)" : undefined }}>
-        <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1" aria-hidden>
-          {showRelations ? dependencyPaths.map((edge) => (
-            <path
-              key={`${edge.sourceId}-${edge.targetId}`}
-              d={edge.path}
-              fill="none"
-              stroke="var(--color-accent)"
-              strokeOpacity="0.52"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          )) : null}
-          {showRelations ? subtitleTracks.map((track, index) => {
-            const from = nodeBox(track.creation_id, positions, uploadsById);
-            if (!from || hiddenSet.has(track.creation_id)) return null;
-            const siblingIndex = subtitleTracks.slice(0, index).filter((item) => item.creation_id === track.creation_id).length;
-            const subtitle = subtitlePosition({ x: from.x, y: from.y }, siblingIndex);
-            const to: CanvasNodeBox = { x: subtitle.x, y: subtitle.y, width: SUBTITLE_NODE_WIDTH, height: SUBTITLE_NODE_HEIGHT };
-            return <path key={`subtitle-${track.subtitle_id}`} d={dependencyPath(from, to, relationLane(siblingIndex))} fill="none" stroke="var(--color-accent-2)" strokeDasharray="6 5" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.48" strokeWidth="1.5" />;
-          }) : null}
-        </svg>
 
-        {showRelations ? groupFrames.map((frame) => (
-          <div
-            key={frame.groupId}
-            data-canvas-group={frame.groupId}
-            className="pointer-events-none absolute rounded-xl border border-dashed border-[var(--color-accent-2)] bg-[var(--color-accent-dim)]/20"
-            style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
-          >
-            <span className="absolute left-3 top-1.5 rounded bg-[var(--color-surface)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-accent-2)] shadow-sm">
-              {t("free_creation_group_label", { count: frame.labelIndex })}
-            </span>
-          </div>
-        )) : null}
-
-        {visibleUploads.map((upload) => {
+        {renderedUploads.map((upload) => {
           const position = positions[upload.reference_id];
           if (!position) return null;
           const selected = selectedSet.has(upload.reference_id);
@@ -1440,16 +1979,20 @@ export function FreeCreationInfiniteCanvas({
                 <div role="button" tabIndex={0} className="block h-[154px] w-full bg-black" onClick={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} onKeyDown={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
                   {upload.media_type === "image" ? <img src={uploadMediaUrl(projectName, upload)} alt={upload.original_filename} loading="lazy" decoding="async" className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
                     <video
-                      src={uploadMediaUrl(projectName, upload)}
+                      data-canvas-media-id={upload.reference_id}
+                      src={API.getFreeCreationReferenceProxyUrl(projectName, upload.reference_id)}
+                      poster={API.getFreeCreationReferenceCoverUrl(projectName, upload.reference_id)}
                       preload="metadata"
                       muted
                       playsInline
                       className="h-full w-full object-contain"
                       aria-label={upload.original_filename}
                       onLoadedMetadata={(event) => {
-                        const video = event.currentTarget;
-                        if (video.duration > 0.1) video.currentTime = 0.1;
+                        restoreVideoPlayback(upload.reference_id, event.currentTarget, 0.1);
                       }}
+                      onPlay={(event) => rememberVideoPlayback(upload.reference_id, event.currentTarget)}
+                      onPause={(event) => rememberVideoPlayback(upload.reference_id, event.currentTarget)}
+                      onTimeUpdate={(event) => rememberVideoPlayback(upload.reference_id, event.currentTarget)}
                     />
                   ) : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="max-w-[90%] truncate text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto mt-16 h-5 w-5 -translate-y-1/2 text-[var(--color-text-muted)]" aria-hidden />}
                 </div>
@@ -1459,7 +2002,7 @@ export function FreeCreationInfiniteCanvas({
           );
         })}
 
-        {visibleCreations.map((creation) => {
+        {renderedCreations.map((creation) => {
           const position = positions[creation.creation_id];
           if (!position) return null;
           const selected = selectedSet.has(creation.creation_id);
@@ -1508,7 +2051,7 @@ export function FreeCreationInfiniteCanvas({
               </div>
               <div role="button" tabIndex={creation.status === "succeeded" && creation.media_path ? 0 : -1} className="h-[174px] bg-black" onClick={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation")); }} onKeyDown={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation")); }} title={creation.status === "succeeded" && creation.media_path ? t("free_creation_reference_shortcut") : undefined}>
                 {creation.status === "succeeded" && creation.media_path ? mediaType === "video" ? (
-                  <video className="h-full w-full object-contain" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} poster={API.getFreeCreationCoverUrl(projectName, creation.creation_id, creation.version)} preload="metadata" muted playsInline aria-label={creation.prompt ?? creation.creation_id} controls />
+                  <video data-canvas-media-id={creation.creation_id} className="h-full w-full object-contain" src={API.getFreeCreationProxyUrl(projectName, creation.creation_id, creation.version)} poster={API.getFreeCreationCoverUrl(projectName, creation.creation_id, creation.version)} preload="metadata" muted playsInline aria-label={creation.prompt ?? creation.creation_id} controls onLoadedMetadata={(event) => restoreVideoPlayback(creation.creation_id, event.currentTarget)} onPlay={(event) => rememberVideoPlayback(creation.creation_id, event.currentTarget)} onPause={(event) => rememberVideoPlayback(creation.creation_id, event.currentTarget)} onTimeUpdate={(event) => rememberVideoPlayback(creation.creation_id, event.currentTarget)} />
                 ) : mediaType === "audio" ? (
                   <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio className="w-full" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} preload="none" aria-label={creation.prompt ?? creation.creation_id} controls /></div>
                 ) : <img className="h-full w-full object-contain" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} alt={creation.prompt ?? creation.creation_id} loading="lazy" decoding="async" /> : <div className="flex h-full items-center justify-center px-3 text-center text-xs leading-5 text-[var(--color-text-muted)]"><span className="line-clamp-5">{creation.status === "failed" ? creation.error || t("free_creation_failed") : statusLabel}</span></div>}
@@ -1520,6 +2063,7 @@ export function FreeCreationInfiniteCanvas({
         })}
 
         {subtitleTracks.map((track, index) => {
+          if (!domNodeIds.has(`subtitle:${track.subtitle_id}`)) return null;
           const parent = positions[track.creation_id];
           if (!parent || hiddenSet.has(track.creation_id)) return null;
           const siblingIndex = subtitleTracks.slice(0, index).filter((item) => item.creation_id === track.creation_id).length;

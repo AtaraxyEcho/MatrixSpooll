@@ -433,6 +433,7 @@ MESSAGES = {
     "free_creation_reference_invalid": "参考文件路径无效",
     "free_creation_reference_not_found": "参考素材「{id}」不存在或不可用",
     "free_creation_canvas_conflict": "画布已在其他位置更新，请刷新后重试",
+    "free_creation_canvas_invalid": "画布更新内容无效，请重试",
     "free_creation_export_empty": "所选范围内没有可导出的已完成作品",
     "free_creation_reference_type_unsupported": "当前自由创作不支持 {type} 类型的参考文件",
     "free_creation_reference_role_required": "生成前请为每份素材选择用途",

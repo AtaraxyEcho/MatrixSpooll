@@ -467,6 +467,7 @@ MESSAGES = {
     "free_creation_reference_invalid": "The reference file path is invalid",
     "free_creation_reference_not_found": "Reference '{id}' does not exist or is unavailable",
     "free_creation_canvas_conflict": "The canvas changed elsewhere. Refresh and try again",
+    "free_creation_canvas_invalid": "The canvas update is invalid. Please try again",
     "free_creation_export_empty": "The selected scope has no completed work to export",
     "free_creation_reference_type_unsupported": "Free creation does not support {type} reference files",
     "free_creation_reference_role_required": "Choose how each reference will be used before generating",

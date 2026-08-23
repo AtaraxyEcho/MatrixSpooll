@@ -69,6 +69,9 @@ import type {
   FreeCreationRequestSummary,
   CreateFreeCreationRequest,
   FreeCreationCapabilities,
+  FreeCreationCanvasAppliedPatch,
+  FreeCreationCanvasIndex,
+  FreeCreationCanvasPatch,
   FreeCreationCanvasState,
   FreeCreationUpload,
   FreeStoryboardPlan,
@@ -1322,6 +1325,30 @@ class API {
     return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-canvas`);
   }
 
+  static async getFreeCreationCanvasIndex(projectName: string): Promise<FreeCreationCanvasIndex> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-canvas/index`);
+  }
+
+  static async patchFreeCreationCanvas(
+    projectName: string,
+    patch: FreeCreationCanvasPatch,
+  ): Promise<{ success: boolean; canvas: FreeCreationCanvasState; patch: FreeCreationCanvasAppliedPatch | null }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-canvas`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  }
+
+  static async saveFreeCreationCanvasViewport(
+    projectName: string,
+    viewport: FreeCreationCanvasState["viewport"],
+  ): Promise<{ success: boolean; viewport: FreeCreationCanvasState["viewport"] }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-canvas/viewport`, {
+      method: "PUT",
+      body: JSON.stringify(viewport),
+    });
+  }
+
   static async saveFreeCreationCanvas(
     projectName: string,
     canvas: Omit<FreeCreationCanvasState, "revision" | "updated_at"> & { expected_revision?: number },
@@ -1475,6 +1502,22 @@ class API {
     const endpoint = `/projects/${projectPathSegment(project)}/creations/${encodeURIComponent(creationId)}/cover`;
     const withVersion = version == null || version === "" ? endpoint : `${endpoint}?v=${encodeURIComponent(String(version))}`;
     return withAuthQuery(`${API_BASE}${withVersion}`);
+  }
+
+  static getFreeCreationReferenceCoverUrl(project: ProjectRef, referenceId: string): string {
+    const endpoint = `/projects/${projectPathSegment(project)}/free-creation-references/${encodeURIComponent(referenceId)}/cover`;
+    return withAuthQuery(`${API_BASE}${endpoint}`);
+  }
+
+  static getFreeCreationProxyUrl(project: ProjectRef, creationId: string, version?: string | number | null): string {
+    const endpoint = `/projects/${projectPathSegment(project)}/creations/${encodeURIComponent(creationId)}/proxy`;
+    const withVersion = version == null || version === "" ? endpoint : `${endpoint}?v=${encodeURIComponent(String(version))}`;
+    return withAuthQuery(`${API_BASE}${withVersion}`);
+  }
+
+  static getFreeCreationReferenceProxyUrl(project: ProjectRef, referenceId: string): string {
+    const endpoint = `/projects/${projectPathSegment(project)}/free-creation-references/${encodeURIComponent(referenceId)}/proxy`;
+    return withAuthQuery(`${API_BASE}${endpoint}`);
   }
 
   /**

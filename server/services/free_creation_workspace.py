@@ -19,6 +19,7 @@ from lib.formal_write import project_metadata_lock
 from lib.json_io import atomic_write_bytes, atomic_write_json, load_json_or_none
 from lib.path_safety import safe_join
 from lib.version_manager import VersionManager
+from server.services.free_creation_index import invalidate_free_creation_index
 
 ReferenceType = Literal["upload", "creation"]
 ExportScope = Literal["selected", "request", "all"]
@@ -369,6 +370,9 @@ def default_canvas_state() -> dict[str, Any]:
         "hidden_reference_ids": [],
         "groups": [],
         "show_relations": True,
+        "node_revisions": {},
+        "recent_patch_ids": [],
+        "last_patch": None,
         "updated_at": None,
     }
 
@@ -483,6 +487,7 @@ def save_reference_upload(project_path: Path, *, original_filename: str, content
         except BaseException:
             media_path.unlink(missing_ok=True)
             raise
+    invalidate_free_creation_index(project_path)
     return record
 
 
@@ -580,6 +585,13 @@ def list_reference_uploads(project_path: Path) -> list[dict[str, Any]]:
     return records
 
 
+def load_reference_upload(project_path: Path, reference_id: str) -> dict[str, Any] | None:
+    record = load_json_or_none(_reference_record_path(project_path, reference_id))
+    if not isinstance(record, dict) or record.get("detached_at") or record.get("deleted_at"):
+        return None
+    return record
+
+
 def restore_reference_upload(project_path: Path, reference_id: str) -> dict[str, Any]:
     """Restore a detached or soft-deleted upload for an undo operation."""
 
@@ -591,6 +603,7 @@ def restore_reference_upload(project_path: Path, reference_id: str) -> dict[str,
         record.pop("detached_at", None)
         record.pop("deleted_at", None)
         atomic_write_json(record_path, record)
+    invalidate_free_creation_index(project_path)
     return record
 
 
@@ -604,6 +617,7 @@ def delete_reference_upload(project_path: Path, reference_id: str) -> None:
     with project_metadata_lock(project_path):
         record["deleted_at"] = _now()
         atomic_write_json(record_path, record)
+    invalidate_free_creation_index(project_path)
 
 
 def _creation_version_resource_type(creation: dict[str, Any]) -> str:
@@ -835,6 +849,7 @@ __all__ = [
     "extract_reference_text",
     "list_creation_requests",
     "list_reference_uploads",
+    "load_reference_upload",
     "list_storyboard_plans",
     "list_subtitle_tracks",
     "load_canvas_state",

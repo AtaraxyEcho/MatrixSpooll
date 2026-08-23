@@ -484,6 +484,7 @@ MESSAGES = {
     "free_creation_reference_invalid": "Đường dẫn tệp tham chiếu không hợp lệ",
     "free_creation_reference_not_found": "Tài liệu tham chiếu '{id}' không tồn tại hoặc không khả dụng",
     "free_creation_canvas_conflict": "Canvas đã được cập nhật ở nơi khác. Hãy làm mới rồi thử lại",
+    "free_creation_canvas_invalid": "Nội dung cập nhật canvas không hợp lệ. Vui lòng thử lại",
     "free_creation_export_empty": "Phạm vi đã chọn không có tác phẩm hoàn tất để xuất",
     "free_creation_reference_type_unsupported": "Sáng tạo tự do chưa hỗ trợ tệp tham chiếu loại {type}",
     "free_creation_reference_role_required": "Hãy chọn mục đích cho từng tài liệu trước khi tạo",
