@@ -9,6 +9,10 @@ export const ROUTE_APP_SETTINGS = "/app/settings";
 export const ROUTE_APP_ASSETS = "/app/assets";
 export const ROUTE_ADMIN_LOGIN = "/admin/login";
 export const ROUTE_ADMIN_MANAGER = "/app/admin/manager";
+export const ROUTE_ADMIN_USERS = `${ROUTE_ADMIN_MANAGER}/users`;
+export const ROUTE_ADMIN_SESSIONS = `${ROUTE_ADMIN_MANAGER}/sessions`;
+export const ROUTE_ADMIN_LOGS = `${ROUTE_ADMIN_MANAGER}/logs`;
+export const ROUTE_ADMIN_TASKS = `${ROUTE_ADMIN_MANAGER}/tasks`;
 
 /** 无子路由的单页顶层路由——精确匹配，前缀不算数。 */
 export const APP_TOP_LEVEL_ROUTES = [ROUTE_APP, ROUTE_APP_PROJECTS, ROUTE_APP_SETTINGS, ROUTE_APP_ASSETS] as const;

@@ -67,6 +67,7 @@ packages = ["lib", "server"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers --basetemp=.pytest-tmp"
+cache_dir = ".pytest-tmp/.pytest_cache"
 asyncio_mode = "auto"
 markers = [
     "unit: 快速、隔离、不触达真实 I/O 或外部服务的测试",

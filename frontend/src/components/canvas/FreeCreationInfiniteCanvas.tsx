@@ -230,6 +230,16 @@ function relationLane(index: number): number {
   return index % 2 === 0 ? index / 2 : -(index + 1) / 2;
 }
 
+export function dependencyLane(edge: CanvasDependencyEdge, edges: readonly CanvasDependencyEdge[]): number {
+  const siblings = edges
+    .filter((candidate) => candidate.targetId === edge.targetId)
+    .sort((left, right) => left.sourceId.localeCompare(right.sourceId));
+  const index = siblings.findIndex(
+    (candidate) => candidate.sourceId === edge.sourceId && candidate.targetId === edge.targetId,
+  );
+  return relationLane(index < 0 ? 0 : index);
+}
+
 export function createCanvasGroupId(): string {
   const randomUuid = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
@@ -588,11 +598,11 @@ export function FreeCreationInfiniteCanvas({
     [creations, hiddenSet, hiddenUploadSet, positions, uploadsById],
   );
   const dependencyPaths = useMemo(
-    () => dependencyEdges.map((edge, index) => {
+    () => dependencyEdges.map((edge) => {
       const source = nodeBox(edge.sourceId, positions, uploadsById);
       const target = nodeBox(edge.targetId, positions, uploadsById);
       return source && target
-        ? { ...edge, path: dependencyPath(source, target, relationLane(index)) }
+        ? { ...edge, path: dependencyPath(source, target, dependencyLane(edge, dependencyEdges)) }
         : null;
     }).filter((edge): edge is CanvasDependencyEdge & { path: string } => Boolean(edge)),
     [dependencyEdges, positions, uploadsById],
@@ -1429,7 +1439,7 @@ export function FreeCreationInfiniteCanvas({
               ) : (
                 <div role="button" tabIndex={0} className="block h-[154px] w-full bg-black" onClick={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} onKeyDown={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
                   {upload.media_type === "image" ? <img src={uploadMediaUrl(projectName, upload)} alt={upload.original_filename} loading="lazy" decoding="async" className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
-                    <video src={uploadMediaUrl(projectName, upload)} preload="none" className="h-full w-full object-contain" aria-label={upload.original_filename} />
+                    <video src={uploadMediaUrl(projectName, upload)} preload="metadata" className="h-full w-full object-contain" aria-label={upload.original_filename} />
                   ) : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="max-w-[90%] truncate text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto mt-16 h-5 w-5 -translate-y-1/2 text-[var(--color-text-muted)]" aria-hidden />}
                 </div>
               )}
@@ -1487,7 +1497,7 @@ export function FreeCreationInfiniteCanvas({
               </div>
               <div role="button" tabIndex={creation.status === "succeeded" && creation.media_path ? 0 : -1} className="h-[174px] bg-black" onClick={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation")); }} onKeyDown={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation")); }} title={creation.status === "succeeded" && creation.media_path ? t("free_creation_reference_shortcut") : undefined}>
                 {creation.status === "succeeded" && creation.media_path ? mediaType === "video" ? (
-                  <video className="h-full w-full object-contain" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} preload="none" aria-label={creation.prompt ?? creation.creation_id} controls />
+                  <video className="h-full w-full object-contain" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} poster={API.getFreeCreationCoverUrl(projectName, creation.creation_id, creation.version)} preload="metadata" muted playsInline aria-label={creation.prompt ?? creation.creation_id} controls />
                 ) : mediaType === "audio" ? (
                   <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio className="w-full" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} preload="none" aria-label={creation.prompt ?? creation.creation_id} controls /></div>
                 ) : <img className="h-full w-full object-contain" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} alt={creation.prompt ?? creation.creation_id} loading="lazy" decoding="async" /> : <div className="flex h-full items-center justify-center px-3 text-center text-xs leading-5 text-[var(--color-text-muted)]"><span className="line-clamp-5">{creation.status === "failed" ? creation.error || t("free_creation_failed") : statusLabel}</span></div>}

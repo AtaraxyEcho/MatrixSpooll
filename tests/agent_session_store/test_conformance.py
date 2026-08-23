@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import uuid as _uuid
 
 import pytest
 from claude_agent_sdk.testing import run_session_store_conformance
@@ -12,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from lib.agent_session_store.store import DbSessionStore
 from lib.db.base import Base
+from tests.agent_session_store.conftest import _PG_TEST_SCHEMA, _reset_pg_schema, _seed_test_sessions
 
 pytestmark = pytest.mark.unit
 
@@ -30,24 +30,21 @@ async def test_db_session_store_passes_sdk_conformance():
     The SDK's conformance suite invokes ``make_store`` once per contract for
     isolation, and reuses the same ``_KEY`` ({project_key="proj",
     session_id="sess"}) across multiple contracts. We therefore build a brand
-    new database (in-memory SQLite, or a fresh PG schema when DATABASE_URL
-    is a postgresql+asyncpg URL) per invocation so contracts don't bleed state.
+    new database (in-memory SQLite, or the reset shared PG test schema when
+    DATABASE_URL is a postgresql+asyncpg URL) per invocation so contracts
+    don't bleed state.
     """
 
     pg_url = _pg_url_from_env()
     engines: list = []
-    schemas: list[str] = []
 
     async def make_store():
         if pg_url:
-            schema = f"conf_{_uuid.uuid4().hex[:12]}"
             engine = create_async_engine(
                 pg_url,
-                connect_args={"server_settings": {"search_path": schema}},
+                connect_args={"server_settings": {"search_path": _PG_TEST_SCHEMA}},
             )
-            async with engine.begin() as conn:
-                await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
-            schemas.append(schema)
+            await _reset_pg_schema(engine)
         else:
             engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         engines.append(engine)
@@ -63,20 +60,21 @@ async def test_db_session_store_passes_sdk_conformance():
                 await conn.execute(
                     text(
                         "INSERT INTO users (id, username, role, is_active, created_at, updated_at) "
-                        "VALUES ('conformance', 'conformance', 'user', true, NOW(), NOW()) "
+                        "VALUES ('conformance', 'conformance', 'member', true, NOW(), NOW()) "
                         "ON CONFLICT (id) DO NOTHING"
                     )
                 )
         factory = async_sessionmaker(engine, expire_on_commit=False)
+        await _seed_test_sessions(factory, user_id="conformance")
         return DbSessionStore(factory, user_id="conformance")
 
     try:
         await run_session_store_conformance(make_store)
     finally:
-        # On PG, drop the per-store schemas before disposing the engines.
+        # On PG, drop the shared test schema before disposing the engines.
         if pg_url:
-            for engine, schema in zip(engines, schemas, strict=True):
+            for engine in engines[-1:]:
                 async with engine.begin() as conn:
-                    await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+                    await conn.execute(text(f'DROP SCHEMA IF EXISTS "{_PG_TEST_SCHEMA}" CASCADE'))
         for engine in engines:
             await engine.dispose()

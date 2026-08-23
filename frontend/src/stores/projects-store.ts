@@ -163,7 +163,9 @@ export const useProjectsStore = create<ProjectsState>((set, get) => {
           currentProjectName === curName || (currentProjectName === null && !hasLoadedAnyProject);
         if (!supersededByOtherProject && !signal.aborted && isCurrentProject) {
           get().setCurrentProject(
-            res.name ?? curName,
+            // Keep the route's stable project reference for every subsequent
+            // request. The API's ``name`` is display-only and may repeat.
+            curName,
             res.project,
             res.scripts ?? {},
             res.asset_fingerprints,

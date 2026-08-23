@@ -28,7 +28,7 @@ class AgentSessionUserMessageLink(TimestampMixin, UserOwnedMixin, Base):
     )
     session_id: Mapped[str] = mapped_column(
         String,
-        ForeignKey("agent_sessions.id", ondelete="CASCADE"),
+        ForeignKey("agent_sessions.sdk_session_id", ondelete="CASCADE"),
         nullable=False,
     )
     # 事件日志用户条目 payload 里的 uuid（形如 user-<hex>）。

@@ -625,7 +625,9 @@ class EventLogStore:
     ) -> list[dict[str, Any]]:
         now_dt = utc_now()
         async with self._session_factory() as session:
-            project_id = await session.scalar(select(AgentSession.project_id).where(AgentSession.id == session_id))
+            project_id = await session.scalar(
+                select(AgentSession.project_id).where(AgentSession.sdk_session_id == session_id)
+            )
             if project_id is None:
                 raise ValueError(f"agent session is not registered: {session_id}")
             actor_id = await resolve_actor_user_id(session, actor_user_id or self._user_id)
@@ -764,14 +766,22 @@ class EventLogStore:
         now_dt = utc_now()
         try:
             async with self._session_factory() as session:
-                project_id = await session.scalar(select(AgentSession.project_id).where(AgentSession.id == session_id))
+                project_id = await session.scalar(
+                    select(AgentSession.project_id).where(AgentSession.sdk_session_id == session_id)
+                )
+                if project_id is None:
+                    # Ignore stale SDK callbacks for a session that was never
+                    # registered.  Do not create an orphan link with a null
+                    # project identity.
+                    return
+                actor_id = await resolve_actor_user_id(session, actor_user_id or self._user_id)
                 session.add(
                     AgentSessionUserMessageLink(
                         project_id=project_id,
                         session_id=session_id,
                         user_entry_uuid=user_entry_uuid,
                         sdk_entry_uuid=sdk_entry_uuid,
-                        user_id=actor_user_id or self._user_id,
+                        user_id=actor_id,
                         created_at=now_dt,
                         updated_at=now_dt,
                     )

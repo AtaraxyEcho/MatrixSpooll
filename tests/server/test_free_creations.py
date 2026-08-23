@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
+from starlette.requests import Request
 
 from lib.api_errors import BadRequestError
 from lib.artifact_manifest import ArtifactKey, ProjectArtifactManifestAdapter
@@ -27,6 +28,7 @@ from server.routers.free_creations import (
     _validate_reference_roles,
     _validate_references,
     get_free_creation_capabilities,
+    get_free_creation_cover,
     get_model_capabilities,
     retry_free_creation,
 )
@@ -79,6 +81,49 @@ from server.services.free_creation_workspace import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+async def test_free_creation_cover_uses_the_stored_thumbnail_path(tmp_path: Path, monkeypatch) -> None:
+    creation_id = "c_0123456789abcdef0123"
+    cover = tmp_path / "free_creation" / "covers" / f"{creation_id}.jpg"
+    cover.parent.mkdir(parents=True)
+    cover.write_bytes(b"jpeg-cover")
+    write_creation_metadata(
+        tmp_path,
+        creation_id,
+        {
+            "creation_id": creation_id,
+            "output_type": "video",
+            "media_type": "video",
+            "status": "succeeded",
+            "cover_path": cover.relative_to(tmp_path).as_posix(),
+        },
+    )
+    monkeypatch.setattr(
+        free_creation_router_module,
+        "_load_free_project",
+        lambda _project_name: ({"content_mode": "free"}, tmp_path),
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": f"/projects/demo/creations/{creation_id}/cover",
+            "query_string": b"v=3",
+            "headers": [],
+        }
+    )
+
+    response = await get_free_creation_cover(
+        "demo",
+        creation_id,
+        request,
+        CurrentUserInfo(id="user", sub="user", role="member"),
+    )
+
+    assert response.media_type == "image/jpeg"
+    assert Path(getattr(response, "path")) == cover
+    assert "immutable" in response.headers["cache-control"]
 
 
 def test_localize_creation_exposes_specific_failure_in_request_language() -> None:

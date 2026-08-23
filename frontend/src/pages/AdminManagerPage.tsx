@@ -1,368 +1,77 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Loader2, LockKeyhole, LogOut, RefreshCw, ShieldCheck, UserPlus, UserRound, UserX } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Download, FileClock, KeyRound, Laptop, Loader2, LockKeyhole, LogOut, Menu, RefreshCw, Search, ShieldCheck, UserPlus, UserRound, UserX, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useAuthStore } from "@/stores/auth-store";
-import { getToken } from "@/utils/auth";
-import { ROUTE_ADMIN_LOGIN, ROUTE_APP } from "@/app-routes";
+import { API } from "@/api";
+import { ROUTE_ADMIN_LOGIN, ROUTE_ADMIN_LOGS, ROUTE_ADMIN_MANAGER, ROUTE_ADMIN_SESSIONS, ROUTE_ADMIN_TASKS, ROUTE_ADMIN_USERS, ROUTE_APP } from "@/app-routes";
 import { FieldLabel } from "@/components/ui/FieldLabel";
-import {
-  ACCENT_BTN_CLS,
-  ACCENT_BUTTON_STYLE,
-  CARD_STYLE,
-  DROPDOWN_PANEL_STYLE,
-  INPUT_CLS,
-} from "@/components/ui/darkroom-tokens";
+import { ACCENT_BTN_CLS, ACCENT_BUTTON_STYLE, CARD_STYLE, DROPDOWN_PANEL_STYLE, INPUT_CLS } from "@/components/ui/darkroom-tokens";
+import { useAuthStore } from "@/stores/auth-store";
+import type { AdminAuditEvent, AdminSession } from "@/types/admin";
+import type { TaskItem, TaskStatus } from "@/types/task";
+import { getToken } from "@/utils/auth";
+import { downloadBlob } from "@/utils/download";
 
 type Role = "admin" | "member";
+export type AdminSection = "users" | "sessions" | "logs" | "tasks";
 
-interface AdminUser {
-  id: string;
-  username: string;
-  role: Role;
-  is_superadmin: boolean;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-interface CreateResponse {
-  user: AdminUser;
-  temporary_password?: string | null;
-}
-
-interface AdminUsersResponse {
-  users: AdminUser[];
-  total: number;
-  page: number;
-  page_size: number;
-}
-
+interface AdminUser { id: string; username: string; role: Role; is_superadmin: boolean; is_active: boolean; created_at: string; updated_at: string; }
+interface AdminUsersResponse { users: AdminUser[]; total: number; page: number; page_size: number; }
+interface CreateResponse { user: AdminUser; temporary_password?: string | null; }
 const USER_PAGE_SIZE = 10;
+const PAGE_SIZE = 10;
 
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value));
+function formatDate(value: string): string { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value)); }
+function formatDateTime(value: string): string { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
+async function readError(response: Response, fallback: string): Promise<Error> { const payload = await response.json().catch(() => ({})) as { detail?: unknown }; return new Error(typeof payload.detail === "string" ? payload.detail : fallback); }
+
+function RoleSelect({ id, value, onChange, ariaLabel, className = "" }: { id?: string; value: Role; onChange: (role: Role) => void; ariaLabel: string; className?: string }) {
+  const { t } = useTranslation("admin"); const [open, setOpen] = useState(false); const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null); const buttonRef = useRef<HTMLButtonElement>(null); const containerRef = useRef<HTMLDivElement>(null); const menuRef = useRef<HTMLDivElement>(null);
+  const updatePosition = useCallback(() => { const rect = buttonRef.current?.getBoundingClientRect(); if (!rect) return; const width = Math.max(rect.width, 148); const height = 100; setPosition({ top: rect.bottom + height + 8 < window.innerHeight ? rect.bottom + 6 : Math.max(8, rect.top - height - 6), left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)), width }); }, []);
+  useEffect(() => { if (!open) return; const close = (event: PointerEvent) => { const target = event.target as Node; if (!containerRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false); }; const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); }; document.addEventListener("pointerdown", close); document.addEventListener("keydown", escape); window.addEventListener("resize", updatePosition); document.addEventListener("scroll", updatePosition, true); return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); window.removeEventListener("resize", updatePosition); document.removeEventListener("scroll", updatePosition, true); }; }, [open, updatePosition]);
+  const options: Array<{ value: Role; label: string }> = [{ value: "member", label: t("role_member") }, { value: "admin", label: t("role_admin") }]; const selected = options.find((item) => item.value === value) ?? options[0];
+  return <div ref={containerRef} className={`relative ${className}`}><button type="button" ref={buttonRef} id={id} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => { if (open) setOpen(false); else { updatePosition(); setOpen(true); } }} className="inline-flex min-h-9 w-full items-center justify-between gap-1.5 rounded-md border border-hairline-soft bg-bg-grad-a/55 px-2 py-1.5 text-left text-xs text-text outline-none transition-colors hover:border-accent/45 focus:border-accent/60 focus:ring-2 focus:ring-accent/20"><span className="inline-flex min-w-0 items-center gap-2">{value === "admin" ? <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-accent-2" aria-hidden /> : <UserRound className="h-3.5 w-3.5 shrink-0 text-text-4" aria-hidden />}<span className="truncate">{selected.label}</span></span><ChevronDown className={`h-3.5 w-3.5 shrink-0 text-text-4 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden /></button>{open && position && createPortal(<div ref={menuRef} role="listbox" aria-label={ariaLabel} className="fixed z-[100] overflow-hidden rounded-lg border border-hairline-soft p-1 shadow-xl" style={{ ...DROPDOWN_PANEL_STYLE, top: position.top, left: position.left, width: position.width }}>{options.map((option) => <button key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => { onChange(option.value); setOpen(false); }} className="flex min-h-9 w-full items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-xs text-text-2 transition-colors hover:bg-accent/10 hover:text-text"><span className="inline-flex items-center gap-2">{option.value === "admin" ? <ShieldCheck className="h-3.5 w-3.5 text-accent-2" aria-hidden /> : <UserRound className="h-3.5 w-3.5 text-text-4" aria-hidden />}{option.label}</span>{option.value === value && <Check className="h-3.5 w-3.5 text-accent-2" aria-hidden />}</button>)}</div>, document.body)}</div>;
 }
 
-async function readError(response: Response, fallback: string): Promise<Error> {
-  const payload = await response.json().catch(() => ({})) as { detail?: unknown };
-  return new Error(typeof payload.detail === "string" ? payload.detail : fallback);
+interface SectionProps { request: (path: string, init?: RequestInit) => Promise<Response>; onError: (message: string) => void; onNotice: (message: string) => void; }
+
+function UsersSection({ request, onError, onNotice }: SectionProps) {
+  const { t } = useTranslation("admin"); const [users, setUsers] = useState<AdminUser[]>([]); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [createOpen, setCreateOpen] = useState(false); const [page, setPage] = useState(1); const [total, setTotal] = useState(0); const [search, setSearch] = useState(""); const [createUsername, setCreateUsername] = useState(""); const [password, setPassword] = useState(""); const [role, setRole] = useState<Role>("member");
+  const load = useCallback(async (targetPage = page) => { setLoading(true); try { const query = new URLSearchParams({ page: String(targetPage), page_size: String(USER_PAGE_SIZE) }); if (search.trim()) query.set("username", search.trim()); const response = await request(`/admin/users?${query.toString()}`); const payload = await response.json() as AdminUsersResponse; setUsers(payload.users); setTotal(payload.total); setPage(payload.page); } catch (error) { onError(error instanceof Error ? error.message : t("request_failed")); } finally { setLoading(false); } }, [onError, page, request, search, t]); useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, [load]);
+  const handleCreate = async (event: FormEvent) => { event.preventDefault(); setSaving(true); try { const response = await request("/admin/users", { method: "POST", body: JSON.stringify({ username: createUsername, password: password || undefined, role }) }); const payload = await response.json() as CreateResponse; setCreateUsername(""); setPassword(""); setRole("member"); setCreateOpen(false); onNotice(payload.temporary_password ? t("password_success", { password: payload.temporary_password }) : t("create_success")); await load(); } catch (error) { onError(error instanceof Error ? error.message : t("request_failed")); } finally { setSaving(false); } };
+  const update = async (user: AdminUser, patch: Partial<Pick<AdminUser, "role" | "is_active">>) => { try { await request(`/admin/users/${encodeURIComponent(user.id)}`, { method: "PATCH", body: JSON.stringify(patch) }); await load(); } catch (error) { onError(error instanceof Error ? error.message : t("request_failed")); } }; const resetPassword = async (user: AdminUser) => { try { const response = await request(`/admin/users/${encodeURIComponent(user.id)}/reset-password`, { method: "POST", body: "{}" }); const payload = await response.json() as { temporary_password: string }; onNotice(t("password_success", { password: payload.temporary_password })); } catch (error) { onError(error instanceof Error ? error.message : t("request_failed")); } };
+  const pages = Math.max(1, Math.ceil(total / USER_PAGE_SIZE));
+  return <SectionFrame icon={<UserRound className="h-4 w-4 text-accent-2" aria-hidden />} title={t("nav_users")} description={t("users_description")} action={<div className="flex items-center gap-2"><button type="button" onClick={() => setCreateOpen(true)} className="inline-flex min-h-9 items-center gap-2 rounded-md border border-accent/35 bg-accent/10 px-3 text-xs text-accent-2 hover:bg-accent/15"><UserPlus className="h-3.5 w-3.5" aria-hidden />{t("create_user")}</button><button type="button" onClick={() => void load()} className="icon-button" title={t("refresh")} aria-label={t("refresh")}><RefreshCw className="h-4 w-4" aria-hidden /></button></div>}><form className="flex flex-wrap items-end gap-3 border-b border-hairline-soft p-5" onSubmit={(event) => { event.preventDefault(); setPage(1); void load(1); }}><div className="w-full max-w-[320px]"><FieldLabel htmlFor="admin-user-search">{t("search_users")}</FieldLabel><input id="admin-user-search" value={search} onChange={(event) => setSearch(event.target.value)} className={INPUT_CLS} placeholder={t("search_users_placeholder")} /></div><button type="submit" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-hairline-soft px-3 text-xs text-text-2 hover:border-accent/45 hover:text-text"><Search className="h-3.5 w-3.5" aria-hidden />{t("audit_filter")}</button></form>{createOpen ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-labelledby="admin-create-user-title"><form onSubmit={(event) => { void handleCreate(event); }} className="w-full max-w-lg rounded-xl border border-hairline-soft bg-bg p-6 shadow-2xl"><div className="mb-5 flex items-start justify-between gap-4"><div><h2 id="admin-create-user-title" className="text-base font-semibold text-text">{t("create_user")}</h2><p className="mt-1 text-xs text-text-4">{t("create_user_description")}</p></div><button type="button" className="icon-button" title={t("cancel")} aria-label={t("cancel")} onClick={() => setCreateOpen(false)}><X className="h-4 w-4" aria-hidden /></button></div><div className="grid gap-4"><div className="max-w-[360px]"><FieldLabel htmlFor="admin-new-username" required>{t("username")}</FieldLabel><input id="admin-new-username" value={createUsername} onChange={(event) => setCreateUsername(event.target.value)} className={INPUT_CLS} required /></div><div className="max-w-[360px]"><FieldLabel htmlFor="admin-new-password">{t("password")}</FieldLabel><input id="admin-new-password" type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} className={INPUT_CLS} placeholder={t("password_optional")} /></div><div className="max-w-[220px]"><FieldLabel htmlFor="admin-new-role">{t("role")}</FieldLabel><RoleSelect id="admin-new-role" ariaLabel={t("role")} value={role} onChange={setRole} /></div></div><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={() => setCreateOpen(false)} className="rounded-md border border-hairline-soft px-3 py-2 text-xs text-text-3 hover:text-text">{t("cancel")}</button><button type="submit" disabled={saving} className={`${ACCENT_BTN_CLS} justify-center`} style={ACCENT_BUTTON_STYLE}>{saving ? <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden /> : <UserPlus className="h-4 w-4" aria-hidden />}{t("save_user")}</button></div></form></div> : null}{loading ? <LoadingState label={t("loading")} /> : users.length === 0 ? <EmptyState label={t("empty")} /> : <><div className="overflow-x-auto"><table className="w-full min-w-[700px] text-left text-sm"><thead className="border-b border-hairline-soft bg-bg-grad-a/50 text-xs text-text-4"><tr><th className="px-5 py-3">{t("username")}</th><th className="px-5 py-3">{t("role")}</th><th className="px-5 py-3">{t("status")}</th><th className="px-5 py-3">{t("created_at")}</th><th className="px-5 py-3 text-right">{t("actions")}</th></tr></thead><tbody className="divide-y divide-hairline-soft">{users.map((user) => <tr key={user.id}><td className="px-5 py-4 font-medium"><span className="inline-flex items-center gap-2"><UserRound className="h-4 w-4 text-text-4" aria-hidden />{user.username}</span></td><td className="px-5 py-4">{user.is_superadmin ? <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-[11px] text-accent-2"><ShieldCheck className="h-3.5 w-3.5" aria-hidden />{t("super_admin")}<LockKeyhole className="h-3 w-3 opacity-70" aria-hidden /></span> : <RoleSelect ariaLabel={t("role_for_user", { username: user.username })} value={user.role} onChange={(next) => void update(user, { role: next })} className="w-[124px]" />}</td><td className="px-5 py-4"><span className={user.is_active ? "text-emerald-300" : "text-text-4"}>{user.is_active ? t("active") : t("disabled")}</span></td><td className="px-5 py-4 text-text-4">{formatDate(user.created_at)}</td><td className="px-5 py-4"><div className="flex justify-end gap-2"><button type="button" disabled={user.is_superadmin} title={user.is_superadmin ? t("protected") : user.is_active ? t("disable") : t("enable")} aria-label={user.is_superadmin ? t("protected") : user.is_active ? t("disable") : t("enable")} onClick={() => void update(user, { is_active: !user.is_active })} className="icon-button">{user.is_active ? <UserX className="h-3.5 w-3.5" aria-hidden /> : <Check className="h-3.5 w-3.5" aria-hidden />}</button><button type="button" disabled={user.is_superadmin} title={t("reset_password")} aria-label={t("reset_password")} onClick={() => void resetPassword(user)} className="icon-button"><KeyRound className="h-3.5 w-3.5" aria-hidden /></button></div></td></tr>)}</tbody></table></div><Pagination page={page} pages={pages} onPageChange={setPage} label={t("pagination_page", { page, total: pages })} /></>}</SectionFrame>;
 }
 
-function RoleSelect({
-  id,
-  value,
-  onChange,
-  ariaLabel,
-  className = "",
-}: {
-  id?: string;
-  value: Role;
-  onChange: (role: Role) => void;
-  ariaLabel: string;
-  className?: string;
-}) {
-  const { t } = useTranslation("admin");
-  const [open, setOpen] = useState(false);
-  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  const updateMenuPosition = useCallback(() => {
-    const button = buttonRef.current;
-    if (!button) return;
-    const rect = button.getBoundingClientRect();
-    const menuWidth = Math.max(rect.width, 148);
-    const menuHeight = 96;
-    const top = rect.bottom + 6 + menuHeight <= window.innerHeight
-      ? rect.bottom + 6
-      : Math.max(8, rect.top - menuHeight - 6);
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8));
-    setMenuPosition({ top, left, width: menuWidth });
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!containerRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
-    };
-    const closeOnKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOnPointerDown);
-    document.addEventListener("keydown", closeOnKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnPointerDown);
-      document.removeEventListener("keydown", closeOnKeyDown);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    window.addEventListener("resize", updateMenuPosition);
-    document.addEventListener("scroll", updateMenuPosition, true);
-    return () => {
-      window.removeEventListener("resize", updateMenuPosition);
-      document.removeEventListener("scroll", updateMenuPosition, true);
-    };
-  }, [open, updateMenuPosition]);
-
-  const options: Array<{ value: Role; label: string }> = [
-    { value: "member", label: t("role_member") },
-    { value: "admin", label: t("role_admin") },
-  ];
-  const selected = options.find((option) => option.value === value) ?? options[0];
-
-  return (
-    <div ref={containerRef} className={`relative ${className}`}>
-      <button
-        type="button"
-        id={id}
-        ref={buttonRef}
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title={selected.label}
-        onClick={() => {
-          if (open) {
-            setOpen(false);
-          } else {
-            updateMenuPosition();
-            setOpen(true);
-          }
-        }}
-        className="inline-flex min-h-9 w-full items-center justify-between gap-1.5 rounded-md border border-hairline-soft bg-bg-grad-a/55 px-2 py-1.5 text-left text-xs text-text outline-none transition-colors hover:border-accent/45 focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
-      >
-        <span className="inline-flex min-w-0 items-center gap-2">
-          {value === "admin" ? (
-            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-accent-2" aria-hidden />
-          ) : (
-            <UserRound className="h-3.5 w-3.5 shrink-0 text-text-4" aria-hidden />
-          )}
-          <span className="max-w-[82px] truncate">{selected.label}</span>
-        </span>
-        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-text-4 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
-      </button>
-      {open && menuPosition && createPortal(
-        <div
-          ref={menuRef}
-          role="listbox"
-          aria-label={ariaLabel}
-          className="fixed z-[100] overflow-hidden rounded-lg border border-hairline-soft p-1 shadow-xl"
-          style={{ ...DROPDOWN_PANEL_STYLE, top: menuPosition.top, left: menuPosition.left, width: menuPosition.width }}
-        >
-          {options.map((option) => {
-            const selectedOption = option.value === value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="option"
-                aria-selected={selectedOption}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-                className="flex min-h-9 w-full items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-xs text-text-2 transition-colors hover:bg-accent/10 hover:text-text"
-              >
-                <span className="inline-flex items-center gap-2">
-                  {option.value === "admin" ? (
-                    <ShieldCheck className="h-3.5 w-3.5 text-accent-2" aria-hidden />
-                  ) : (
-                    <UserRound className="h-3.5 w-3.5 text-text-4" aria-hidden />
-                  )}
-                  {option.label}
-                </span>
-                {selectedOption && <Check className="h-3.5 w-3.5 text-accent-2" aria-hidden />}
-              </button>
-            );
-          })}
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
+function SessionsSection({ onError, onNotice }: Pick<SectionProps, "onError" | "onNotice">) {
+  const { t } = useTranslation("admin"); const [sessions, setSessions] = useState<AdminSession[]>([]); const [username, setUsername] = useState(""); const [page, setPage] = useState(1); const [total, setTotal] = useState(0); const [loading, setLoading] = useState(true);
+  const load = useCallback(async (targetPage = 1) => { setLoading(true); try { const response = await API.listAdminSessions({ page: targetPage, pageSize: PAGE_SIZE, username }); setSessions(response.sessions); setTotal(response.total); setPage(response.page); } catch (error) { onError(error instanceof Error ? error.message : t("request_failed")); } finally { setLoading(false); } }, [onError, t, username]); useEffect(() => { const timer = window.setTimeout(() => { void load(1); }, 0); return () => window.clearTimeout(timer); }, [load]); const revoke = async (item: AdminSession) => { try { await API.revokeAdminSession(item.id); onNotice(t("session_revoke_success")); await load(page); } catch (error) { onError(error instanceof Error ? error.message : t("request_failed")); } }; const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  return <SectionFrame icon={<Laptop className="h-4 w-4 text-accent-2" aria-hidden />} title={t("nav_sessions")} description={t("sessions_description")} action={<button type="button" onClick={() => void load()} className="icon-button" title={t("refresh")} aria-label={t("refresh")}><RefreshCw className="h-4 w-4" aria-hidden /></button>}><form className="flex flex-wrap items-end gap-3 border-b border-hairline-soft p-5" onSubmit={(event) => { event.preventDefault(); void load(1); }}><div className="w-full max-w-[320px]"><FieldLabel htmlFor="session-username">{t("username")}</FieldLabel><input id="session-username" value={username} onChange={(event) => setUsername(event.target.value)} className={INPUT_CLS} placeholder={t("session_username_placeholder")} /></div><button type="submit" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-hairline-soft px-3 text-xs text-text-2 hover:border-accent/45 hover:text-text"><Search className="h-3.5 w-3.5" aria-hidden />{t("audit_filter")}</button></form>{loading ? <LoadingState label={t("sessions_loading")} /> : sessions.length === 0 ? <EmptyState label={t("sessions_empty")} /> : <><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="border-b border-hairline-soft bg-bg-grad-a/50 text-text-4"><tr><th className="px-5 py-3">{t("username")}</th><th className="px-5 py-3">{t("session_device")}</th><th className="px-5 py-3">{t("session_ip")}</th><th className="px-5 py-3">{t("session_agent")}</th><th className="px-5 py-3">{t("status")}</th><th className="px-5 py-3">{t("session_expires")}</th><th className="px-5 py-3 text-right">{t("actions")}</th></tr></thead><tbody className="divide-y divide-hairline-soft">{sessions.map((item) => <tr key={item.id}><td className="px-5 py-4 font-medium text-text">{item.username}</td><td className="px-5 py-4 font-mono text-text-3">{item.device_id}</td><td className="px-5 py-4 font-mono text-text-3">{item.ip_address || "-"}</td><td className="max-w-[260px] truncate px-5 py-4 text-text-4" title={item.user_agent || undefined}>{item.user_agent || "-"}</td><td className="px-5 py-4"><StatusBadge status="active" label={t("session_active")} /></td><td className="whitespace-nowrap px-5 py-4 text-text-4">{formatDateTime(item.expires_at)}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => void revoke(item)} title={t("revoke_session")} aria-label={t("revoke_session")} className="icon-button"><LogOut className="h-3.5 w-3.5" aria-hidden /></button></td></tr>)}</tbody></table></div><Pagination page={page} pages={pages} onPageChange={(next) => void load(next)} label={t("pagination_page", { page, total: pages })} /></>}</SectionFrame>;
 }
 
-export function AdminManagerPage() {
-  const { t, i18n } = useTranslation("admin");
-  const [, navigate] = useLocation();
-  const token = useAuthStore((state) => state.token) ?? getToken();
-  const logout = useAuthStore((state) => state.logout);
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [role, setRole] = useState<Role>("member");
-  const [page, setPage] = useState(1);
-  const [totalUsers, setTotalUsers] = useState(0);
+function LogsSection({ onError }: Pick<SectionProps, "onError">) {
+  const { t } = useTranslation("admin"); const [events, setEvents] = useState<AdminAuditEvent[]>([]); const [total, setTotal] = useState(0); const [page, setPage] = useState(1); const [action, setAction] = useState(""); const [projectName, setProjectName] = useState(""); const [actorUsername, setActorUsername] = useState(""); const [loading, setLoading] = useState(true); const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const load = useCallback(async (targetPage = 1) => { setLoading(true); try { const response = await API.listAdminAuditEvents({ page: targetPage, pageSize: PAGE_SIZE, action, projectName, actorUsername }); setEvents(response.events); setTotal(response.total); setPage(response.page); } catch (error) { onError(error instanceof Error ? error.message : t("request_failed")); } finally { setLoading(false); } }, [action, actorUsername, onError, projectName, t]); useEffect(() => { const timer = window.setTimeout(() => { void load(1); }, 0); return () => window.clearTimeout(timer); }, [load]); const downloadDiagnostics = async () => { setDiagnosticsLoading(true); try { const result = await API.downloadDiagnostics(); downloadBlob(result.blob, result.filename); } catch (error) { onError(error instanceof Error ? error.message : t("request_failed")); } finally { setDiagnosticsLoading(false); } }; const actionLabels: Record<string, string> = { "system.users.create": "audit_op_user_create", "system.users.update": "audit_op_user_update", "system.users.reset_password": "audit_op_password_reset", "system.users.revoke_sessions": "audit_op_sessions_revoke", "system.sessions.revoke": "audit_op_session_revoke", "system.tasks.cancel": "audit_op_task_cancel", "system.tasks.retry": "audit_op_task_retry", "project.members.add": "audit_op_member_add", "project.members.update": "audit_op_member_update", "project.members.remove": "audit_op_member_remove", "project.transfer": "audit_op_project_transfer", "project.delete": "audit_op_project_delete" }; const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  return <SectionFrame icon={<FileClock className="h-4 w-4 text-accent-2" aria-hidden />} title={t("nav_logs")} description={t("logs_description")} action={<button type="button" disabled={diagnosticsLoading} onClick={() => void downloadDiagnostics()} className="inline-flex min-h-9 items-center gap-2 rounded-md border border-hairline-soft px-3 text-xs text-text-2 hover:border-accent/45 hover:text-text disabled:opacity-50">{diagnosticsLoading ? <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden /> : <Download className="h-3.5 w-3.5" aria-hidden />}{t("download_diagnostics")}</button>}><form className="grid gap-3 border-b border-hairline-soft p-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end" onSubmit={(event) => { event.preventDefault(); void load(1); }}><div><FieldLabel htmlFor="audit-action">{t("audit_action")}</FieldLabel><input id="audit-action" value={action} onChange={(event) => setAction(event.target.value)} className={INPUT_CLS} placeholder={t("audit_action_placeholder")} /></div><div><FieldLabel htmlFor="audit-project-name">{t("audit_project")}</FieldLabel><input id="audit-project-name" value={projectName} onChange={(event) => setProjectName(event.target.value)} className={INPUT_CLS} placeholder={t("audit_project_placeholder")} /></div><div><FieldLabel htmlFor="audit-actor">{t("audit_actor")}</FieldLabel><input id="audit-actor" value={actorUsername} onChange={(event) => setActorUsername(event.target.value)} className={INPUT_CLS} placeholder={t("audit_actor_placeholder")} /></div><button type="submit" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-hairline-soft px-3 text-xs text-text-2 hover:border-accent/45 hover:text-text"><Search className="h-3.5 w-3.5" aria-hidden />{t("audit_filter")}</button></form>{loading ? <LoadingState label={t("audit_loading")} /> : events.length === 0 ? <EmptyState label={t("audit_empty")} /> : <><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="border-b border-hairline-soft bg-bg-grad-a/50 text-text-4"><tr><th className="px-5 py-3">{t("audit_time")}</th><th className="px-5 py-3">{t("audit_actor")}</th><th className="px-5 py-3">{t("audit_action")}</th><th className="px-5 py-3">{t("audit_resource")}</th><th className="px-5 py-3">{t("audit_details")}</th></tr></thead><tbody className="divide-y divide-hairline-soft">{events.map((event) => <tr key={event.id}><td className="whitespace-nowrap px-5 py-4 text-text-4">{formatDateTime(event.created_at)}</td><td className="px-5 py-4 text-text-2">{event.actor_username || t("audit_system_actor")}</td><td className="px-5 py-4 text-text-2">{t(actionLabels[event.action] ?? "audit_op_unknown")}</td><td className="px-5 py-4 text-text-3">{event.project_name || event.resource_id || event.resource_type}</td><td className="max-w-[360px] px-5 py-4 text-text-4"><code className="block whitespace-pre-wrap break-all text-[10px] leading-4">{Object.keys(event.details).length ? Object.entries(event.details).map(([key, value]) => `${t(`audit_detail_${key}`, { defaultValue: key })}: ${String(value)}`).join(" · ") : t("audit_no_details")}</code></td></tr>)}</tbody></table></div><Pagination page={page} pages={pages} onPageChange={(next) => void load(next)} label={t("pagination_page", { page, total: pages })} /></>}</SectionFrame>;
+}
 
-  const request = useCallback(async (path: string, init?: RequestInit) => {
-    const response = await fetch(`/api/v1${path}`, {
-      ...init,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "Accept-Language": i18n.language || "zh",
-        Authorization: token ? `Bearer ${token}` : "",
-        ...(init?.headers ?? {}),
-      },
-    });
-    if (!response.ok) throw await readError(response, t("request_failed"));
-    return response;
-  }, [i18n.language, t, token]);
+function TasksSection({ onError, onNotice }: Pick<SectionProps, "onError" | "onNotice">) {
+  const { t } = useTranslation("admin"); const [tasks, setTasks] = useState<TaskItem[]>([]); const [stats, setStats] = useState<{ queued?: number; running?: number; failed?: number; total?: number }>({}); const [status, setStatus] = useState(""); const [projectName, setProjectName] = useState(""); const [taskType, setTaskType] = useState(""); const [page, setPage] = useState(1); const [total, setTotal] = useState(0); const [loading, setLoading] = useState(true);
+  const load = useCallback(async (targetPage = 1) => { setLoading(true); try { const [response, statResponse] = await Promise.all([API.listAdminTasks({ page: targetPage, pageSize: PAGE_SIZE, status, projectName, taskType }), API.getAdminTaskStats()]); setTasks(response.items); setTotal(response.total); setPage(response.page); setStats(statResponse.stats); } catch (error) { onError(error instanceof Error ? error.message : t("request_failed")); } finally { setLoading(false); } }, [onError, projectName, status, t, taskType]); useEffect(() => { const timer = window.setTimeout(() => { void load(1); }, 0); return () => window.clearTimeout(timer); }, [load]); const cancel = async (task: TaskItem) => { try { await API.cancelAdminTask(task.task_id); onNotice(t("task_cancelled")); await load(); } catch (error) { onError(error instanceof Error ? error.message : t("request_failed")); } }; const retry = async (task: TaskItem) => { try { await API.retryAdminTask(task.task_id); onNotice(t("task_retried")); await load(); } catch (error) { onError(error instanceof Error ? error.message : t("request_failed")); } }; const statusLabel: Record<TaskStatus, string> = { queued: t("task_queued"), running: t("task_running"), cancelling: t("task_cancelling"), succeeded: t("task_succeeded"), failed: t("task_failed"), cancelled: t("task_cancelled_status") }; const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  return <SectionFrame icon={<ClipboardList className="h-4 w-4 text-accent-2" aria-hidden />} title={t("nav_tasks")} description={t("tasks_description")} action={<button type="button" onClick={() => void load()} className="icon-button" title={t("refresh")} aria-label={t("refresh")}><RefreshCw className="h-4 w-4" aria-hidden /></button>}><div className="grid grid-cols-2 gap-px border-b border-hairline-soft bg-hairline-soft sm:grid-cols-4">{[["queued", stats.queued], ["running", stats.running], ["failed", stats.failed], ["total", stats.total]].map(([key, value]) => <div key={key} className="bg-bg p-4"><div className="text-[10px] uppercase tracking-[0.12em] text-text-4">{t(`task_${key}`)}</div><div className="mt-1 font-mono text-xl text-text">{value ?? 0}</div></div>)}</div><form className="grid gap-3 border-b border-hairline-soft p-5 md:grid-cols-[180px_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end" onSubmit={(event) => { event.preventDefault(); void load(1); }}><div><FieldLabel htmlFor="task-status">{t("status")}</FieldLabel><select id="task-status" value={status} onChange={(event) => setStatus(event.target.value)} className={`${INPUT_CLS} appearance-none`}><option value="">{t("task_all_statuses")}</option>{(["queued", "running", "cancelling", "succeeded", "failed", "cancelled"] as const).map((item) => <option key={item} value={item}>{statusLabel[item]}</option>)}</select></div><div><FieldLabel htmlFor="task-project">{t("audit_project")}</FieldLabel><input id="task-project" value={projectName} onChange={(event) => setProjectName(event.target.value)} className={INPUT_CLS} placeholder={t("task_project_placeholder")} /></div><div><FieldLabel htmlFor="task-type">{t("task_type")}</FieldLabel><input id="task-type" value={taskType} onChange={(event) => setTaskType(event.target.value)} className={INPUT_CLS} placeholder={t("task_type_placeholder")} /></div><button type="submit" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-hairline-soft px-3 text-xs text-text-2 hover:border-accent/45 hover:text-text"><Search className="h-3.5 w-3.5" aria-hidden />{t("audit_filter")}</button></form>{loading ? <LoadingState label={t("tasks_loading")} /> : tasks.length === 0 ? <EmptyState label={t("tasks_empty")} /> : <><div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-xs"><thead className="border-b border-hairline-soft bg-bg-grad-a/50 text-text-4"><tr><th className="px-5 py-3">{t("task_id")}</th><th className="px-5 py-3">{t("audit_project")}</th><th className="px-5 py-3">{t("task_type")}</th><th className="px-5 py-3">{t("status")}</th><th className="px-5 py-3">{t("task_updated")}</th><th className="px-5 py-3 text-right">{t("actions")}</th></tr></thead><tbody className="divide-y divide-hairline-soft">{tasks.map((task) => <tr key={task.task_id}><td className="max-w-[220px] truncate px-5 py-4 font-mono text-text-3" title={task.task_id}>{task.task_id}</td><td className="max-w-[190px] truncate px-5 py-4 text-text-2">{task.project_name}</td><td className="px-5 py-4 text-text-3">{task.task_type}</td><td className="px-5 py-4"><StatusBadge status={task.status} label={statusLabel[task.status]} /></td><td className="whitespace-nowrap px-5 py-4 text-text-4">{formatDateTime(task.updated_at)}</td><td className="px-5 py-4"><div className="flex justify-end gap-2">{["queued", "running", "cancelling"].includes(task.status) ? <button type="button" onClick={() => void cancel(task)} title={t("task_cancel_action")} aria-label={t("task_cancel_action")} className="icon-button"><X className="h-3.5 w-3.5" aria-hidden /></button> : null}{["failed", "cancelled"].includes(task.status) ? <button type="button" onClick={() => void retry(task)} title={t("task_retry_action")} aria-label={t("task_retry_action")} className="icon-button"><RefreshCw className="h-3.5 w-3.5" aria-hidden /></button> : null}</div></td></tr>)}</tbody></table></div><Pagination page={page} pages={pages} onPageChange={(next) => void load(next)} label={t("pagination_page", { page, total: pages })} /></>}</SectionFrame>;
+}
 
-  const loadUsers = useCallback(async () => {
-    if (!token) {
-      navigate(`${ROUTE_ADMIN_LOGIN}?from=${encodeURIComponent("/app/admin/manager")}`);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      const response = await request(`/admin/users?page=${page}&page_size=${USER_PAGE_SIZE}`);
-      const payload = await response.json() as AdminUsersResponse;
-      setUsers(payload.users);
-      setTotalUsers(payload.total);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : t("request_failed");
-      if (message === t("request_failed")) {
-        setError(message);
-      } else {
-        setError(message);
-      }
-      if (message.toLowerCase().includes("administrator") || message.includes("管理员")) {
-        navigate(ROUTE_ADMIN_LOGIN);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [navigate, page, request, t, token]);
+function StatusBadge({ status, label }: { status: string; label: string }) { return <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] ${status === "active" || status === "succeeded" ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-300" : status === "failed" ? "border-red-400/25 bg-red-400/10 text-red-200" : "border-hairline-soft bg-bg-grad-a/40 text-text-3"}`}>{label}</span>; }
+function LoadingState({ label }: { label: string }) { return <div className="flex items-center justify-center gap-2 p-12 text-sm text-text-3"><Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden />{label}</div>; }
+function EmptyState({ label }: { label: string }) { return <div className="p-12 text-center text-sm text-text-4">{label}</div>; }
+function Pagination({ page, pages, onPageChange, label }: { page: number; pages: number; onPageChange: (page: number) => void; label: string }) { const { t } = useTranslation("admin"); return <div className="flex items-center justify-between border-t border-hairline-soft px-5 py-3"><span className="font-mono text-[11px] text-text-3">{label}</span><div className="flex items-center gap-1.5"><button type="button" disabled={page <= 1} onClick={() => onPageChange(page - 1)} className="icon-button" title={t("previous_page")} aria-label={t("previous_page")}><ChevronLeft className="h-4 w-4" aria-hidden /></button><button type="button" disabled={page >= pages} onClick={() => onPageChange(page + 1)} className="icon-button" title={t("next_page")} aria-label={t("next_page")}><ChevronRight className="h-4 w-4" aria-hidden /></button></div></div>; }
+function SectionFrame({ icon, title, description, action, children }: { icon: ReactNode; title: string; description: string; action?: ReactNode; children: ReactNode }) { return <section className="overflow-hidden rounded-xl border border-hairline-soft" style={CARD_STYLE}><div className="flex items-start justify-between gap-4 border-b border-hairline-soft p-5"><div><div className="flex items-center gap-2 text-sm font-semibold">{icon}{title}</div><p className="mt-1 text-xs text-text-4">{description}</p></div>{action}</div>{children}</section>; }
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void loadUsers();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [loadUsers]);
-
-  const handleCreate = async (event: FormEvent) => {
-    event.preventDefault();
-    setSaving(true);
-    setError("");
-    setNotice("");
-    try {
-      const response = await request("/admin/users", {
-        method: "POST",
-        body: JSON.stringify({ username, password: password || undefined, role }),
-      });
-      const payload = await response.json() as CreateResponse;
-      setUsername("");
-      setPassword("");
-      setRole("member");
-      setNotice(payload.temporary_password ? t("password_success", { password: payload.temporary_password }) : t("create_success"));
-      await loadUsers();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("request_failed"));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const updateUser = async (user: AdminUser, patch: Partial<Pick<AdminUser, "role" | "is_active">>) => {
-    setError("");
-    setNotice("");
-    try {
-      await request(`/admin/users/${encodeURIComponent(user.id)}`, { method: "PATCH", body: JSON.stringify(patch) });
-      await loadUsers();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("request_failed"));
-    }
-  };
-
-  const resetPassword = async (user: AdminUser) => {
-    setError("");
-    try {
-      const response = await request(`/admin/users/${encodeURIComponent(user.id)}/reset-password`, { method: "POST", body: "{}" });
-      const payload = await response.json() as { temporary_password: string };
-      setNotice(t("password_success", { password: payload.temporary_password }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("request_failed"));
-    }
-  };
-
-  const revokeSessions = async (user: AdminUser) => {
-    setError("");
-    try {
-      await request(`/admin/users/${encodeURIComponent(user.id)}/revoke-sessions`, { method: "POST" });
-      setNotice(t("sessions_revoked"));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("request_failed"));
-    }
-  };
-
-  const totalPages = Math.max(1, Math.ceil(totalUsers / USER_PAGE_SIZE));
-  const firstVisibleUser = totalUsers === 0 ? 0 : (page - 1) * USER_PAGE_SIZE + 1;
-  const lastVisibleUser = Math.min(page * USER_PAGE_SIZE, totalUsers);
-
-  return (
-    <div className="min-h-screen bg-bg text-text">
-      <header className="app-topbar-surface">
-        <div className="app-topbar-content app-topbar-content--wide app-topbar-inner flex items-center justify-between gap-4 px-6">
-          <div className="min-w-0">
-            <div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-accent-2">{t("admin_portal")}</div>
-            <h1 className="font-editorial mt-1 truncate text-2xl text-text">{t("manager_title")}</h1>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Link href={ROUTE_APP} className="rounded-md border border-hairline-soft px-3 py-2 text-xs text-text-3 hover:text-text">
-              {t("back_to_workspace")}
-            </Link>
-            <button type="button" onClick={() => { logout(); navigate(ROUTE_ADMIN_LOGIN); }} className="inline-flex items-center gap-2 rounded-md border border-hairline-soft px-3 py-2 text-xs text-text-3 hover:text-text">
-              <LogOut className="h-3.5 w-3.5" aria-hidden />
-              {t("logout")}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto w-full max-w-6xl space-y-6 px-6 py-8">
-        <div className="flex items-end justify-between gap-4">
-          <p className="text-sm text-text-3">{t("manager_subtitle")}</p>
-          <button type="button" onClick={() => void loadUsers()} className="inline-flex items-center gap-2 rounded-md border border-hairline-soft px-3 py-2 text-xs text-text-3 hover:text-text">
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-            {t("refresh")}
-          </button>
-        </div>
-
-        {error && <p role="alert" className="rounded-md border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</p>}
-        {notice && <p role="status" className="rounded-md border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-accent-2">{notice}</p>}
-
-        <section className="rounded-xl border border-hairline-soft p-5" style={CARD_STYLE}>
-          <div className="mb-4 flex items-center gap-2 text-sm font-semibold"><UserPlus className="h-4 w-4 text-accent-2" aria-hidden />{t("create_user")}</div>
-          <form onSubmit={(event) => { void handleCreate(event); }} className="grid gap-4 md:grid-cols-[1fr_1fr_180px_auto] md:items-end">
-            <div><FieldLabel htmlFor="admin-new-username" required>{t("username")}</FieldLabel><input id="admin-new-username" value={username} onChange={(event) => setUsername(event.target.value)} className={INPUT_CLS} required /></div>
-            <div><FieldLabel htmlFor="admin-new-password">{t("password")}</FieldLabel><input id="admin-new-password" type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} className={INPUT_CLS} placeholder={t("password_optional")} /></div>
-            <div><FieldLabel htmlFor="admin-new-role">{t("role")}</FieldLabel><RoleSelect id="admin-new-role" ariaLabel={t("role")} value={role} onChange={setRole} className="w-full" /></div>
-            <button type="submit" disabled={saving} className={`${ACCENT_BTN_CLS} justify-center`} style={ACCENT_BUTTON_STYLE}>{saving ? <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden /> : <UserPlus className="h-4 w-4" aria-hidden />}{t("save_user")}</button>
-          </form>
-        </section>
-
-        <section className="overflow-hidden rounded-xl border border-hairline-soft" style={CARD_STYLE}>
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 p-12 text-sm text-text-3"><Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden />{t("loading")}</div>
-          ) : users.length === 0 ? (
-            <div className="p-12 text-center text-sm text-text-3">{t("empty")}</div>
-          ) : (
-            <><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="border-b border-hairline-soft bg-bg-grad-a/50 text-xs text-text-4"><tr><th className="px-5 py-3">{t("username")}</th><th className="px-5 py-3">{t("role")}</th><th className="px-5 py-3">{t("status")}</th><th className="px-5 py-3">{t("created_at")}</th><th className="px-5 py-3 text-right">{t("actions")}</th></tr></thead><tbody className="divide-y divide-hairline-soft">{users.map((user) => <tr key={user.id} className={user.is_superadmin ? "align-middle bg-accent/5" : "align-middle"}><td className="px-5 py-4 font-medium"><span className="inline-flex items-center gap-2"><UserRound className="h-4 w-4 text-text-4" aria-hidden />{user.username}</span></td><td className="px-5 py-4">{user.is_superadmin ? (<span className="inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-[11px] font-medium text-accent-2"><ShieldCheck className="h-3.5 w-3.5" aria-hidden />{t("super_admin")}<LockKeyhole className="h-3 w-3 opacity-70" aria-hidden /></span>) : (<RoleSelect ariaLabel={t("role_for_user", { username: user.username })} value={user.role} onChange={(nextRole) => void updateUser(user, { role: nextRole })} className="w-[118px]" />)}</td><td className="px-5 py-4"><span className={user.is_active ? "text-emerald-300" : "text-text-4"}>{user.is_active ? t("active") : t("disabled")}</span></td><td className="px-5 py-4 text-text-4">{formatDate(user.created_at)}</td><td className="px-5 py-4"><div className="flex justify-end gap-2"><button disabled={user.is_superadmin} type="button" title={user.is_superadmin ? t("protected") : user.is_active ? t("disable") : t("enable")} onClick={() => void updateUser(user, { is_active: !user.is_active })} className="rounded-md border border-hairline-soft p-2 text-text-3 hover:border-accent/40 hover:text-text disabled:cursor-not-allowed disabled:opacity-40">{user.is_active ? <UserX className="h-3.5 w-3.5" aria-hidden /> : <Check className="h-3.5 w-3.5" aria-hidden />}</button><button disabled={user.is_superadmin} type="button" title={t("reset_password")} onClick={() => void resetPassword(user)} className="rounded-md border border-hairline-soft p-2 text-text-3 hover:border-accent/40 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"><KeyRound className="h-3.5 w-3.5" aria-hidden /></button><button disabled={user.is_superadmin} type="button" title={t("revoke_sessions")} onClick={() => void revokeSessions(user)} className="rounded-md border border-hairline-soft p-2 text-text-3 hover:border-accent/40 hover:text-text disabled:cursor-not-allowed disabled:opacity-40"><LogOut className="h-3.5 w-3.5" aria-hidden /></button></div></td></tr>)}</tbody></table></div><div className="flex items-center justify-between gap-4 border-t border-hairline-soft px-5 py-3"><span className="text-xs text-text-4">{t("pagination_summary", { start: firstVisibleUser, end: lastVisibleUser, total: totalUsers })}</span><div className="flex items-center gap-1.5"><button type="button" aria-label={t("previous_page")} title={t("previous_page")} disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline-soft text-text-3 transition-colors hover:border-accent/45 hover:text-text disabled:cursor-not-allowed disabled:opacity-35"><ChevronLeft className="h-4 w-4" aria-hidden /></button><span className="min-w-[72px] text-center font-mono text-[11px] text-text-3">{t("pagination_page", { page, total: totalPages })}</span><button type="button" aria-label={t("next_page")} title={t("next_page")} disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline-soft text-text-3 transition-colors hover:border-accent/45 hover:text-text disabled:cursor-not-allowed disabled:opacity-35"><ChevronRight className="h-4 w-4" aria-hidden /></button></div></div></>
-          )}
-        </section>
-      </main>
-    </div>
-  );
+export function AdminManagerPage({ section = "users" }: { section?: AdminSection }) {
+  const { t, i18n } = useTranslation("admin"); const [, navigate] = useLocation(); const token = useAuthStore((state) => state.token) ?? getToken(); const logout = useAuthStore((state) => state.logout); const [mobileOpen, setMobileOpen] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
+  const request = useCallback(async (path: string, init?: RequestInit) => { const response = await fetch(`/api/v1${path}`, { ...init, headers: { Accept: "application/json", "Content-Type": "application/json", "Accept-Language": i18n.language || "zh", Authorization: token ? `Bearer ${token}` : "", ...(init?.headers ?? {}) } }); if (!response.ok) throw await readError(response, t("request_failed")); return response; }, [i18n.language, t, token]); useEffect(() => { if (!token) navigate(`${ROUTE_ADMIN_LOGIN}?from=${encodeURIComponent(`${ROUTE_ADMIN_MANAGER}/${section}`)}`); }, [navigate, section, token]); const onError = useCallback((message: string) => { setError(message); setNotice(""); }, []); const onNotice = useCallback((message: string) => { setNotice(message); setError(""); }, []);
+  const items = useMemo(() => [{ section: "users" as const, href: ROUTE_ADMIN_USERS, icon: UserRound, label: t("nav_users") }, { section: "sessions" as const, href: ROUTE_ADMIN_SESSIONS, icon: Laptop, label: t("nav_sessions") }, { section: "logs" as const, href: ROUTE_ADMIN_LOGS, icon: FileClock, label: t("nav_logs") }, { section: "tasks" as const, href: ROUTE_ADMIN_TASKS, icon: ClipboardList, label: t("nav_tasks") }], [t]);
+  return <div className="min-h-screen bg-bg text-text"><header className="app-topbar-surface"><div className="app-topbar-content app-topbar-content--wide app-topbar-inner flex items-center justify-between gap-4 px-4 sm:px-6"><div className="flex min-w-0 items-center gap-3"><button type="button" className="icon-button lg:hidden" title={t("open_navigation")} aria-label={t("open_navigation")} onClick={() => setMobileOpen(true)}><Menu className="h-4 w-4" aria-hidden /></button><div className="min-w-0"><div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-accent-2">{t("admin_portal")}</div><h1 className="font-editorial mt-1 truncate text-2xl text-text">{t("manager_title")}</h1></div></div><div className="flex shrink-0 items-center gap-2"><Link href={ROUTE_APP} className="hidden rounded-md border border-hairline-soft px-3 py-2 text-xs text-text-3 hover:text-text sm:inline-flex">{t("back_to_workspace")}</Link><button type="button" onClick={() => { logout(); navigate(ROUTE_ADMIN_LOGIN); }} className="icon-button" title={t("logout")} aria-label={t("logout")}><LogOut className="h-4 w-4" aria-hidden /></button></div></div></header><div className="mx-auto flex w-full max-w-[1500px]"><aside className={`${mobileOpen ? "fixed inset-y-0 left-0 z-50 flex" : "hidden"} w-64 shrink-0 flex-col border-r border-hairline-soft bg-bg p-4 lg:static lg:flex lg:min-h-[calc(100vh-65px)]`}><div className="mb-5 flex items-center justify-between px-2 lg:hidden"><span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-4">{t("admin_portal")}</span><button type="button" className="icon-button" title={t("close_navigation")} aria-label={t("close_navigation")} onClick={() => setMobileOpen(false)}><X className="h-4 w-4" aria-hidden /></button></div><nav className="space-y-1" aria-label={t("admin_navigation")}>{items.map((item) => { const Icon = item.icon; const active = item.section === section; return <Link key={item.section} href={item.href} onClick={() => setMobileOpen(false)} className={`flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors ${active ? "bg-accent/12 text-accent-2" : "text-text-3 hover:bg-bg-grad-a/60 hover:text-text"}`}><Icon className="h-4 w-4" aria-hidden />{item.label}</Link>; })}</nav></aside>{mobileOpen ? <button type="button" aria-label={t("close_navigation")} className="fixed inset-0 z-40 bg-black/40 lg:hidden" onClick={() => setMobileOpen(false)} /> : null}<main className="min-w-0 flex-1 space-y-5 px-4 py-6 sm:px-6 lg:px-8">{error ? <p role="alert" className="rounded-md border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</p> : null}{notice ? <p role="status" className="rounded-md border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-accent-2">{notice}</p> : null}{section === "users" ? <UsersSection request={request} onError={onError} onNotice={onNotice} /> : section === "sessions" ? <SessionsSection onError={onError} onNotice={onNotice} /> : section === "logs" ? <LogsSection onError={onError} /> : <TasksSection onError={onError} onNotice={onNotice} />}</main></div></div>;
 }

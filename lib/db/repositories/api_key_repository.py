@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select, update
 
@@ -45,6 +46,7 @@ class ApiKeyRepository(BaseRepository):
         """Create a new API key record."""
         actor_id = await resolve_actor_user_id(self.session, user_id)
         row = ApiKey(
+            id=uuid4().hex,
             name=name,
             key_hash=key_hash,
             key_prefix=key_prefix,
@@ -84,7 +86,7 @@ class ApiKeyRepository(BaseRepository):
             "last_used_at": row.last_used_at,
         }
 
-    async def get_by_id(self, key_id: int) -> dict[str, Any] | None:
+    async def get_by_id(self, key_id: str) -> dict[str, Any] | None:
         """Look up a key by its primary key ID. Includes key_hash for cache invalidation."""
         stmt = select(ApiKey).where(ApiKey.id == key_id)
         stmt = self._scope_query(stmt, ApiKey)
@@ -96,7 +98,7 @@ class ApiKeyRepository(BaseRepository):
         d["key_hash"] = row.key_hash
         return d
 
-    async def revoke(self, key_id: int) -> bool:
+    async def revoke(self, key_id: str) -> bool:
         """Revoke an active key by ID."""
         result = await self.session.execute(
             update(ApiKey)

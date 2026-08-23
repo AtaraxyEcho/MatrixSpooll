@@ -34,7 +34,11 @@ import {
   ROUTE_APP,
   ROUTE_APP_ASSETS,
   ROUTE_ADMIN_LOGIN,
+  ROUTE_ADMIN_LOGS,
   ROUTE_ADMIN_MANAGER,
+  ROUTE_ADMIN_SESSIONS,
+  ROUTE_ADMIN_TASKS,
+  ROUTE_ADMIN_USERS,
   ROUTE_APP_PROJECTS,
   ROUTE_APP_SETTINGS,
   WORKSPACE_ROUTE_SETTINGS,
@@ -305,8 +309,20 @@ export function AppRoutes() {
         <Route path={ROUTE_ADMIN_LOGIN}>
           <LoginPage adminOnly />
         </Route>
+        <Route path={ROUTE_ADMIN_USERS}>
+          <AdminManagerPage section="users" />
+        </Route>
+        <Route path={ROUTE_ADMIN_SESSIONS}>
+          <AdminManagerPage section="sessions" />
+        </Route>
+        <Route path={ROUTE_ADMIN_LOGS}>
+          <AdminManagerPage section="logs" />
+        </Route>
+        <Route path={ROUTE_ADMIN_TASKS}>
+          <AdminManagerPage section="tasks" />
+        </Route>
         <Route path={ROUTE_ADMIN_MANAGER}>
-          <AdminManagerPage />
+          <Redirect to={ROUTE_ADMIN_USERS} />
         </Route>
 
         {/* Root redirects to projects list */}

@@ -27,6 +27,12 @@ from lib.script_editor import ScriptEditError
 
 logger = logging.getLogger(__name__)
 
+_LOCALIZED_VALIDATION_MESSAGES = {
+    "aspect_ratio must be a positive width:height ratio": "request_invalid",
+    "free content mode does not accept generation_mode or grid_storyboard": "request_invalid",
+    "generation_mode is required for fixed workflow projects": "request_invalid",
+}
+
 
 def script_edit_detail(exc: ScriptEditError, _t: Callable[..., str]) -> str:
     """``ScriptEditError`` → 用户可见 detail 的单点映射。
@@ -100,7 +106,12 @@ def register_error_handlers(
             return JSONResponse(status_code=422, content={"detail": _t("assistant_image_too_large")})
         if "assistant_images_total_too_large" in error_types:
             return JSONResponse(status_code=422, content={"detail": _t("assistant_images_total_too_large")})
-        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
+        errors = []
+        for error in exc.errors():
+            message = error.get("msg")
+            key = _LOCALIZED_VALIDATION_MESSAGES.get(message)
+            errors.append({**error, "msg": _t(key) if key else message})
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
     @app.exception_handler(TaskSpecValidationError)
     async def _handle_task_spec_error(request: Request, exc: TaskSpecValidationError) -> JSONResponse:

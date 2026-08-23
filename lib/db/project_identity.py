@@ -15,10 +15,13 @@ from lib.db.models.task import Task
 
 
 async def resolve_project_id(session: AsyncSession, project_name: str) -> str | None:
-    """Resolve a file-backed project name to its stable registry ID."""
+    """Resolve a project ID, storage key, or display name to its registry ID."""
     direct = await session.get(ProjectRegistry, project_name)
     if direct is not None:
         return direct.id
+    by_storage = await session.scalar(select(ProjectRegistry.id).where(ProjectRegistry.storage_key == project_name))
+    if by_storage is not None:
+        return by_storage
     ids = list((await session.scalars(select(ProjectRegistry.id).where(ProjectRegistry.name == project_name))).all())
     if len(ids) > 1:
         raise ValueError(f"project name is ambiguous; use project_id: {project_name}")
@@ -74,7 +77,7 @@ async def backfill_project_record_ids(session: AsyncSession) -> int:
     ):
         session_project_id = (
             select(AgentSession.project_id)
-            .where(AgentSession.id == model.session_id)
+            .where(AgentSession.sdk_session_id == model.session_id)
             .correlate(model)
             .scalar_subquery()
         )

@@ -32,7 +32,7 @@ export function FreeCreationLayout({ children }: FreeCreationLayoutProps) {
     <div className="flex h-screen flex-col" style={{ color: "var(--color-text)" }}>
       <TaskFailureListener projectName={sseProjectName} />
       <ScriptGenerationNoticeListener />
-      <GlobalHeader variant="free" onNavigateBack={() => setLocation("~/app/projects")} />
+      <GlobalHeader variant="free" onNavigateBack={() => setLocation("~/app")} />
       {demoMode ? <DemoReadOnlyBanner /> : null}
       <MigrationRepairBanner />
       <main className="relative min-h-0 flex-1 overflow-hidden">

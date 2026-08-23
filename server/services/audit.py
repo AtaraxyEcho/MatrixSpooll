@@ -17,6 +17,9 @@ class AuditAction(StrEnum):
     USER_UPDATE = "system.users.update"
     USER_RESET_PASSWORD = "system.users.reset_password"
     USER_REVOKE_SESSIONS = "system.users.revoke_sessions"
+    SESSION_REVOKE = "system.sessions.revoke"
+    TASK_CANCEL = "system.tasks.cancel"
+    TASK_RETRY = "system.tasks.retry"
     API_KEY_CREATE = "system.api_keys.create"
     API_KEY_REVOKE = "system.api_keys.revoke"
     PROJECT_CREATE = "project.create"
@@ -35,6 +38,8 @@ class AuditResourceType(StrEnum):
     API_KEY = "api_key"
     PROJECT = "project"
     PROJECT_MEMBER = "project_member"
+    SESSION = "session"
+    TASK = "task"
 
 
 def record_audit_event(

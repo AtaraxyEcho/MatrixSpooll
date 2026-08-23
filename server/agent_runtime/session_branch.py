@@ -102,6 +102,13 @@ class SessionBranchService:
         # append 各自提交，中途失败会留下半份 transcript，而 transcript 行不依赖
         # 元数据行就能被 store 的会话枚举看见。
         try:
+            await self._meta_store.create(
+                meta.project_name,
+                new_session_id,
+                fork_parent_session_id=session_id,
+                fork_anchor_uuid=anchor_uuid,
+                actor_user_id=actor_user_id,
+            )
             copied = await copy_session_prefix(
                 store,
                 project_key=project_key,
@@ -112,13 +119,6 @@ class SessionBranchService:
             # 先建新会话行再落指针，指针任何时刻都指向已存在的会话。分叉血统随
             # 建行落库：它是 branch 时刻的不可变事实，与 superseded_by 表达的
             # 「原会话被谁取代」互为反向，后者可被删除接手改写，前者不会。
-            await self._meta_store.create(
-                meta.project_name,
-                new_session_id,
-                fork_parent_session_id=session_id,
-                fork_anchor_uuid=anchor_uuid,
-                actor_user_id=actor_user_id,
-            )
             if not await self._meta_store.mark_superseded(session_id, new_session_id):
                 raise SessionBranchError(f"session {session_id} has already been superseded by another branch")
         except InvalidAnchorError as exc:

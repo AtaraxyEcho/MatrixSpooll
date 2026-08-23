@@ -29,7 +29,7 @@ description: 无人值守驱动 PR 的 review → 修复 → push → 再 review
 
 ### 步骤 1:拉取当前状态
 
-以下命令的 `<repo-root>` 均取目标 PR checkout 根目录：
+以下命令的 `<repo-root>` 均取目标 PR checkout 根目录。仓库测试替身固定返回当前仓库的规范地址 `MockMine/MatrixSpooll`，修改测试脚本中的仓库地址时同步更新本段约定：
 
 ```bash
 bash scripts/poll.sh --repo-root <repo-root> <PR_NUMBER>

@@ -241,8 +241,15 @@ class CreateProjectRequest(BaseModel):
 
 
 class ProjectMemberRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=128)
+    username: str | None = Field(default=None, min_length=1, max_length=128)
+    user_ids: list[str] | None = None
     role: Literal["editor", "viewer"] = "editor"
+
+    @model_validator(mode="after")
+    def _require_one_target(self) -> ProjectMemberRequest:
+        if not self.user_ids and not self.username:
+            raise ValueError("project_member_target_required")
+        return self
 
 
 class ProjectMemberRoleRequest(BaseModel):
@@ -1282,6 +1289,38 @@ async def list_project_members(
     return {"members": members}
 
 
+@router.get("/projects/{name}/member-candidates")
+async def list_project_member_candidates(
+    name: str,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """List active accounts the project owner may still add as members.
+
+    Owner only. Excludes the owner and accounts already on the project, so the
+    UI can render a checkbox list without further filtering.
+    """
+
+    access = await resolve_project_access(name, user, session, required_role="owner")
+    existing_ids = {access.owner_id}
+    member_ids = await session.scalars(
+        select(ProjectMember.user_id).where(ProjectMember.project_id == access.project_id)
+    )
+    existing_ids.update(member_ids.all())
+    accounts = await session.scalars(select(User).where(User.is_active.is_(True)).order_by(User.username.asc()))
+    candidates = [
+        {
+            "user_id": account.id,
+            "username": account.username,
+            "nickname": account.nickname,
+            "avatar_path": account.avatar_path,
+        }
+        for account in accounts.all()
+        if account.id not in existing_ids
+    ]
+    return {"candidates": candidates}
+
+
 @router.post("/projects/{name}/members", status_code=201)
 async def add_project_member(
     name: str,
@@ -1289,35 +1328,61 @@ async def add_project_member(
     user: CurrentUser,
     session: AsyncSession = Depends(get_async_session),
 ):
-    """Add an existing account to a project as viewer or editor."""
+    """Add existing accounts to a project as viewer or editor.
+
+    Accepts either a batch of ``user_ids`` (primary path used by the UI) or a
+    single legacy ``username`` lookup. Invalid, inactive, or already-member
+    targets are skipped; the endpoint returns what was actually added.
+    """
 
     access = await resolve_project_access(name, user, session, required_role="owner")
-    account = await session.scalar(select(User).where(User.username == req.username.strip()))
-    if account is None or not account.is_active:
-        raise NotFoundError("project_member_user_not_found")
-    if account.id == access.owner_id:
-        raise ConflictError("project_member_exists")
-    existing = await session.scalar(
-        select(ProjectMember).where(
-            ProjectMember.project_id == access.project_id,
-            ProjectMember.user_id == account.id,
+
+    target_ids: list[str]
+    if req.user_ids:
+        target_ids = list(dict.fromkeys(uid.strip() for uid in req.user_ids if uid.strip()))
+    else:
+        assert req.username is not None
+        account = await session.scalar(select(User).where(User.username == req.username.strip()))
+        if account is None or not account.is_active:
+            raise NotFoundError("project_member_user_not_found")
+        target_ids = [account.id]
+
+    if not target_ids:
+        raise BadRequestError("project_member_target_required")
+
+    accounts = await session.scalars(select(User).where(User.id.in_(target_ids)))
+    account_map = {account.id: account for account in accounts.all()}
+    existing_ids = set(
+        (
+            await session.scalars(select(ProjectMember.user_id).where(ProjectMember.project_id == access.project_id))
+        ).all()
+    )
+    existing_ids.add(access.owner_id)
+
+    added: list[dict[str, str]] = []
+    for account_id in target_ids:
+        account = account_map.get(account_id)
+        if account is None or not account.is_active or account_id in existing_ids:
+            continue
+        session.add(ProjectMember(project_id=access.project_id, user_id=account.id, role=req.role))
+        record_audit_event(
+            session,
+            actor=user,
+            action=AuditAction.PROJECT_MEMBER_ADD,
+            resource_type=AuditResourceType.PROJECT_MEMBER,
+            resource_id=account.id,
+            project_id=access.project_id,
+            project_name=access.project_name,
+            details={"role": req.role},
         )
-    )
-    if existing is not None:
+        existing_ids.add(account_id)
+        added.append({"user_id": account.id, "username": account.username, "role": req.role})
+
+    if not added:
         raise ConflictError("project_member_exists")
-    session.add(ProjectMember(project_id=access.project_id, user_id=account.id, role=req.role))
-    record_audit_event(
-        session,
-        actor=user,
-        action=AuditAction.PROJECT_MEMBER_ADD,
-        resource_type=AuditResourceType.PROJECT_MEMBER,
-        resource_id=account.id,
-        project_id=access.project_id,
-        project_name=access.project_name,
-        details={"role": req.role},
-    )
+
     await session.commit()
-    return {"user_id": account.id, "username": account.username, "role": req.role}
+    return {"added": added}
 
 
 @router.patch("/projects/{name}/members/{user_id}")

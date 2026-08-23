@@ -82,7 +82,6 @@ htmlcov/
 coverage/
 .pytest_cache/
 .pytest-tmp/
-.tmp/
 
 # File locks (project_manager 原子写产物)
 **/*.lock

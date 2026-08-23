@@ -64,3 +64,12 @@ async def test_append_empty_is_noop(session_factory):
     async with session_factory() as session:
         count = len((await session.execute(select(AgentSessionEntry))).scalars().all())
     assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_append_rejects_unregistered_session_outside_testing(session_factory, monkeypatch):
+    monkeypatch.delenv("TESTING", raising=False)
+    store = DbSessionStore(session_factory, user_id="u1")
+
+    with pytest.raises(ValueError, match="agent session is not registered"):
+        await store.append({"project_key": "proj", "session_id": "unregistered"}, [{"type": "user"}])

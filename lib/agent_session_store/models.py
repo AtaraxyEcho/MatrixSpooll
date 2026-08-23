@@ -22,7 +22,7 @@ class AgentSessionEntry(TimestampMixin, UserOwnedMixin, Base):
     project_key: Mapped[str] = mapped_column(String, nullable=False)
     session_id: Mapped[str] = mapped_column(
         String,
-        ForeignKey("agent_sessions.id", ondelete="CASCADE"),
+        ForeignKey("agent_sessions.sdk_session_id", ondelete="CASCADE"),
         nullable=False,
     )
     subpath: Mapped[str] = mapped_column(String, nullable=False, server_default="")
@@ -68,7 +68,7 @@ class AgentSessionSummary(TimestampMixin, UserOwnedMixin, Base):
     project_key: Mapped[str] = mapped_column(String, primary_key=True)
     session_id: Mapped[str] = mapped_column(
         String,
-        ForeignKey("agent_sessions.id", ondelete="CASCADE"),
+        ForeignKey("agent_sessions.sdk_session_id", ondelete="CASCADE"),
         primary_key=True,
     )
     mtime_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
