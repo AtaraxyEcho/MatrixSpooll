@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth-store";
 import { GlassPopover } from "@/components/ui/GlassPopover";
 import { GlassModal } from "@/components/ui/GlassModal";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { AccountSecuritySection } from "@/components/pages/AccountSecuritySection";
 import { ROUTE_ADMIN_MANAGER } from "@/app-routes";
 import { API } from "@/api";
@@ -28,6 +29,7 @@ export function UserMenu() {
   const token = useAuthStore((s) => s.token);
   const [open, setOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
 
   // 无真实会话时不渲染控件：AUTH_ENABLED=false 时没有可退出的会话，显示无效入口
@@ -40,7 +42,8 @@ export function UserMenu() {
   const roleLabel =
     role === "admin" ? t("admin:role_admin") : role === "member" ? t("admin:role_member") : null;
 
-  const handleLogout = () => {
+  const confirmLogout = () => {
+    setLogoutConfirmOpen(false);
     setOpen(false);
     useAuthStore.getState().logout();
     // 与 AuthGuard 登录回跳口径一致：携带完整原 URL，登录成功后按 safeReturnPath 回跳
@@ -186,7 +189,10 @@ export function UserMenu() {
 
             <button
               type="button"
-              onClick={handleLogout}
+              onClick={() => {
+                setOpen(false);
+                setLogoutConfirmOpen(true);
+              }}
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors focus-ring"
               style={{ color: "var(--color-text-3)" }}
               onMouseEnter={(e) => {
@@ -215,6 +221,17 @@ export function UserMenu() {
           <AccountSecuritySection />
         </div>
       </GlassModal>
+
+      <ConfirmDialog
+        open={logoutConfirmOpen}
+        tone="danger"
+        title={t("common:logout_confirm_title")}
+        description={t("common:logout_confirm_description")}
+        confirmLabel={t("common:logout_confirm_confirm")}
+        cancelLabel={t("common:cancel")}
+        onCancel={() => setLogoutConfirmOpen(false)}
+        onConfirm={confirmLogout}
+      />
     </>
   );
 }

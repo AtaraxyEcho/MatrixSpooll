@@ -80,6 +80,7 @@ async def migrate_local_transcripts_to_store(
                     skipped += 1
                     continue
                 try:
+                    await store.ensure_session(project_cwd.name, info.session_id)
                     await import_session_to_store(info.session_id, store, directory=str(project_cwd))  # type: ignore[arg-type]
                     imported += 1
                 except Exception:

@@ -31,7 +31,7 @@ from lib.project_change_hints import project_change_source
 from lib.project_manager import get_project_manager
 from lib.task_failure import parse_failure, render_failure
 from lib.video_backends.base import VideoCapabilityError
-from server.auth import CurrentUser, CurrentUserFlexible, database_auth_initialized
+from server.auth import CurrentUser, CurrentUserFlexible, CurrentUserInfo, database_auth_initialized, get_current_user
 from server.services.audit import AuditAction, AuditResourceType, record_audit_event
 from server.services.free_creation_deletion import FreeCreationDeletionNotReadyError, delete_free_creation_items
 from server.services.free_creation_merge import (
@@ -84,7 +84,12 @@ from server.services.generation_context import (
     resolve_generation_context,
 )
 from server.services.media_delivery import serve_media_file
-from server.services.project_access import register_project, remove_project_registration
+from server.services.project_access import (
+    register_project,
+    remove_project_registration,
+    resolve_project_access,
+    resolve_project_access_by_id,
+)
 
 router = APIRouter()
 entry_router = APIRouter()
@@ -847,20 +852,45 @@ async def _preflight_free_creation(
     return payload
 
 
+async def _resolve_capability_project(
+    project_name: str | None,
+    project_id: str | None,
+    user: CurrentUserInfo | None,
+    session: AsyncSession | None,
+) -> str | None:
+    """Authorize and normalize an optional project-scoped capability request."""
+
+    if not project_name and not project_id:
+        return None
+    if user is None or session is None:
+        raise BadRequestError("request_invalid")
+    if project_id:
+        access = await resolve_project_access_by_id(project_id, user, session, required_role="viewer")
+        return access.storage_key or access.project_id
+    if project_name:
+        access = await resolve_project_access(project_name, user, session, required_role="viewer")
+        return access.storage_key or access.project_id
+    return None
+
+
 @entry_router.get("/free-creation-capabilities")
 async def get_free_creation_capabilities(
     output_type: Literal["image", "video"] = Query(default="video"),
     model: str | None = Query(default=None, max_length=200),
     reference_kind: Literal["none", "frame", "image", "video", "audio"] = Query(default="none"),
     project_name: str | None = None,
+    project_id: str | None = None,
+    user: CurrentUserInfo | None = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
 ):
     """Return the effective model capabilities used by the free composer."""
 
+    project_ref = await _resolve_capability_project(project_name, project_id, user, session)
     return await _get_generation_capabilities(
         output_type=output_type,
         model=model,
         reference_kind=reference_kind,
-        project_name=project_name,
+        project_name=project_ref,
         validate_reference_mode=True,
     )
 
@@ -870,14 +900,18 @@ async def get_model_capabilities(
     output_type: Literal["image", "video"] = Query(default="video"),
     model: str | None = Query(default=None, max_length=200),
     project_name: str | None = None,
+    project_id: str | None = None,
+    user: CurrentUserInfo | None = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
 ):
     """Return exact model parameters without requiring one generation mode."""
 
+    project_ref = await _resolve_capability_project(project_name, project_id, user, session)
     return await _get_generation_capabilities(
         output_type=output_type,
         model=model,
         reference_kind="none",
-        project_name=project_name,
+        project_name=project_ref,
         validate_reference_mode=False,
     )
 
@@ -1332,7 +1366,10 @@ async def create_free_project(
                 await asyncio.to_thread(manager.delete_project_directory, storage_key)
                 raise
         try:
-            result = await create_free_creation(storage_key, req.creation, user)
+            # Use the stable registry ID for queued-task ownership. The
+            # project manager alias resolves it to ``storage_key`` for files.
+            project_ref = registered_project_id or storage_key
+            result = await create_free_creation(project_ref, req.creation, user)
         except BaseException:
             if database_auth_initialized():
                 async with session.begin():
@@ -2067,6 +2104,39 @@ async def get_free_creation_media(
         path,
         request,
         media_type=media_type,
+        immutable=bool(request.query_params.get("v")),
+    )
+
+
+@self_auth_router.get("/projects/{project_name}/creations/{creation_id}/cover")
+async def get_free_creation_cover(
+    project_name: str,
+    creation_id: CreationId,
+    request: Request,
+    _user: CurrentUserFlexible,
+):
+    """Serve the generated video cover without exposing its filesystem path."""
+
+    _, project_path = await asyncio.to_thread(_load_free_project, project_name)
+    creation = await asyncio.to_thread(load_creation_metadata, project_path, creation_id)
+    if creation is None or creation.get("deleted_at"):
+        raise NotFoundError("free_creation_not_found", id=creation_id)
+    if creation.get("media_type") != "video" and creation.get("output_type") != "video":
+        raise NotFoundError("free_creation_cover_not_found", id=creation_id)
+
+    cover_path = creation.get("cover_path")
+    if not isinstance(cover_path, str) or not cover_path:
+        cover_path = f"free_creation/covers/{creation_id}.jpg"
+    try:
+        path = safe_join(project_path, cover_path)
+    except PathTraversalError as exc:
+        raise NotFoundError("free_creation_cover_not_found", id=creation_id) from exc
+    if not path.is_file():
+        raise NotFoundError("free_creation_cover_not_found", id=creation_id)
+    return serve_media_file(
+        path,
+        request,
+        media_type="image/jpeg",
         immutable=bool(request.query_params.get("v")),
     )
 

@@ -981,6 +981,7 @@ class TaskRepository(BaseRepository):
         status: str | None = None,
         task_type: str | None = None,
         source: str | None = None,
+        user_id: str | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> dict[str, Any]:
@@ -1005,6 +1006,8 @@ class TaskRepository(BaseRepository):
             filters.append(Task.task_type == task_type)
         if source:
             filters.append(Task.source == source)
+        if user_id:
+            filters.append(Task.user_id == user_id)
 
         count_stmt = select(func.count()).select_from(Task).where(*filters)
         count_stmt = self._scope_query(count_stmt, Task)
@@ -1035,6 +1038,7 @@ class TaskRepository(BaseRepository):
         project_names: Sequence[str] | None = None,
         project_id: str | None = None,
         project_ids: Sequence[str] | None = None,
+        user_id: str | None = None,
     ) -> dict[str, int]:
         filters = []
         if project_name and not project_id and project_ids is None and project_names is None:
@@ -1047,6 +1051,8 @@ class TaskRepository(BaseRepository):
             filters.append(Task.project_name == project_name)
         elif project_names is not None:
             filters.append(Task.project_name.in_(list(project_names)))
+        if user_id:
+            filters.append(Task.user_id == user_id)
 
         # Group by status
         stmt = select(Task.status, func.count().label("cnt")).where(*filters).group_by(Task.status)

@@ -77,6 +77,16 @@ import type {
   FreeSubtitleTrack,
   FreeSubtitleCue,
   ProjectRef,
+  ProjectMember,
+  ProjectMemberCandidate,
+  ProjectMemberRole,
+  WorkflowStatus,
+  AdminAuditEventFilters,
+  AdminAuditEventsResponse,
+  AdminSessionsResponse,
+  AdminTaskListResponse,
+  AdminTaskResponse,
+  AdminTaskStats,
 } from "@/types";
 import type { GenerationRoute } from "@/utils/generation-mode";
 import type { GridCapability, GridGeneration } from "@/types/grid";
@@ -916,6 +926,72 @@ class API {
     return { blob, filename };
   }
 
+  static async listAdminAuditEvents(
+    filters: AdminAuditEventFilters = {},
+  ): Promise<AdminAuditEventsResponse> {
+    const query = new URLSearchParams();
+    query.set("page", String(filters.page ?? 1));
+    query.set("page_size", String(filters.pageSize ?? 10));
+    if (filters.action?.trim()) query.set("action", filters.action.trim());
+    if (filters.projectId?.trim()) query.set("project_id", filters.projectId.trim());
+    if (filters.actorUserId?.trim()) query.set("actor_user_id", filters.actorUserId.trim());
+    if (filters.actorUsername?.trim()) query.set("actor_username", filters.actorUsername.trim());
+    if (filters.projectName?.trim()) query.set("project_name", filters.projectName.trim());
+    return this.request(`/admin/audit-events?${query.toString()}`);
+  }
+
+  static async listAdminSessions(filters: {
+    page?: number;
+    pageSize?: number;
+    username?: string;
+  } = {}): Promise<AdminSessionsResponse> {
+    const query = new URLSearchParams({
+      page: String(filters.page ?? 1),
+      page_size: String(filters.pageSize ?? 10),
+    });
+    if (filters.username?.trim()) query.set("username", filters.username.trim());
+    return this.request(`/admin/sessions?${query.toString()}`);
+  }
+
+  static async revokeAdminSession(sessionId: string): Promise<void> {
+    await this.request(`/admin/sessions/${encodeURIComponent(sessionId)}/revoke`, { method: "POST" });
+  }
+
+  static async listAdminTasks(filters: {
+    page?: number;
+    pageSize?: number;
+    status?: string;
+    taskType?: string;
+    projectName?: string;
+    userId?: string;
+  } = {}): Promise<AdminTaskListResponse> {
+    const query = new URLSearchParams({
+      page: String(filters.page ?? 1),
+      page_size: String(filters.pageSize ?? 10),
+    });
+    if (filters.status) query.set("status", filters.status);
+    if (filters.taskType?.trim()) query.set("task_type", filters.taskType.trim());
+    if (filters.projectName?.trim()) query.set("project_name", filters.projectName.trim());
+    if (filters.userId?.trim()) query.set("user_id", filters.userId.trim());
+    return this.request(`/admin/tasks?${query.toString()}`);
+  }
+
+  static async getAdminTaskStats(): Promise<{ stats: AdminTaskStats }> {
+    return this.request("/admin/tasks/stats");
+  }
+
+  static async getAdminTask(taskId: string): Promise<AdminTaskResponse> {
+    return this.request(`/admin/tasks/${encodeURIComponent(taskId)}`);
+  }
+
+  static async cancelAdminTask(taskId: string): Promise<{ task: TaskItem; result: Record<string, unknown> }> {
+    return this.request(`/admin/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" });
+  }
+
+  static async retryAdminTask(taskId: string): Promise<AdminTaskResponse> {
+    return this.request(`/admin/tasks/${encodeURIComponent(taskId)}/retry`, { method: "POST" });
+  }
+
   static async updateSystemConfig(
     patch: SystemConfigPatch,
   ): Promise<GetSystemConfigResponse> {
@@ -953,6 +1029,52 @@ class API {
     asset_fingerprints?: Record<string, number>;
   }> {
     return this.request(`/projects/${projectPathSegment(project)}`, { signal: options.signal });
+  }
+
+  static async listProjectMembers(project: ProjectRef): Promise<{ members: ProjectMember[] }> {
+    return this.request(`/projects/${projectPathSegment(project)}/members`);
+  }
+
+  static async listProjectMemberCandidates(project: ProjectRef): Promise<{ candidates: ProjectMemberCandidate[] }> {
+    return this.request(`/projects/${projectPathSegment(project)}/member-candidates`);
+  }
+
+  static async addProjectMember(
+    project: ProjectRef,
+    userIds: string[],
+    role: Exclude<ProjectMemberRole, "owner">,
+  ): Promise<{ added: Array<Pick<ProjectMember, "user_id" | "username" | "role">> }> {
+    return this.request(`/projects/${projectPathSegment(project)}/members`, {
+      method: "POST",
+      body: JSON.stringify({ user_ids: userIds, role }),
+    });
+  }
+
+  static async updateProjectMember(
+    project: ProjectRef,
+    userId: string,
+    role: Exclude<ProjectMemberRole, "owner">,
+  ): Promise<Pick<ProjectMember, "user_id" | "role">> {
+    return this.request(`/projects/${projectPathSegment(project)}/members/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    });
+  }
+
+  static async removeProjectMember(project: ProjectRef, userId: string): Promise<{ success: boolean }> {
+    return this.request(`/projects/${projectPathSegment(project)}/members/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  static async transferProjectOwner(
+    project: ProjectRef,
+    username: string,
+  ): Promise<Pick<ProjectMember, "user_id" | "username" | "role">> {
+    return this.request(`/projects/${projectPathSegment(project)}/owner-transfer`, {
+      method: "POST",
+      body: JSON.stringify({ username }),
+    });
   }
 
   static async updateProject(
@@ -1344,6 +1466,12 @@ class API {
 
   static getFreeCreationMediaUrl(project: ProjectRef, creationId: string, version?: string | number | null): string {
     const endpoint = `/projects/${projectPathSegment(project)}/creations/${encodeURIComponent(creationId)}/media`;
+    const withVersion = version == null || version === "" ? endpoint : `${endpoint}?v=${encodeURIComponent(String(version))}`;
+    return withAuthQuery(`${API_BASE}${withVersion}`);
+  }
+
+  static getFreeCreationCoverUrl(project: ProjectRef, creationId: string, version?: string | number | null): string {
+    const endpoint = `/projects/${projectPathSegment(project)}/creations/${encodeURIComponent(creationId)}/cover`;
     const withVersion = version == null || version === "" ? endpoint : `${endpoint}?v=${encodeURIComponent(String(version))}`;
     return withAuthQuery(`${API_BASE}${withVersion}`);
   }
@@ -2010,13 +2138,24 @@ class API {
    * `narration_delivery` 与 `confirmed_request_durations` 只作用于这一次求解。
    */
   static async getWorkflowPlan(
-    projectName: string,
+    project: ProjectRef,
     request: WorkflowPlanRequest = {},
     options: { signal?: AbortSignal } = {}
   ): Promise<WorkflowPlan> {
-    return this.request(`/projects/${encodeURIComponent(projectName)}/workflow-plan`, {
+    return this.request(`/projects/${projectPathSegment(project)}/workflow-plan`, {
       method: "POST",
       body: JSON.stringify(request),
+      signal: options.signal,
+    });
+  }
+
+  static async getWorkflowStatus(
+    project: ProjectRef,
+    episode?: number,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<WorkflowStatus> {
+    const query = episode == null ? "" : `?episode=${encodeURIComponent(String(episode))}`;
+    return this.request(`/projects/${projectPathSegment(project)}/workflow-status${query}`, {
       signal: options.signal,
     });
   }
@@ -2911,7 +3050,7 @@ class API {
   }
 
   /** 删除（吊销）指定 API Key。 */
-  static async deleteApiKey(keyId: number): Promise<void> {
+  static async deleteApiKey(keyId: string): Promise<void> {
     return this.request(`/api-keys/${keyId}`, { method: "DELETE" });
   }
 

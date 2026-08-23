@@ -221,6 +221,22 @@ export interface ProjectIdentity {
 
 export type ProjectRef = string | ProjectIdentity;
 
+export type ProjectMemberRole = "owner" | "editor" | "viewer";
+
+export interface ProjectMember {
+  user_id: string;
+  username: string;
+  role: ProjectMemberRole;
+  is_owner: boolean;
+}
+
+export interface ProjectMemberCandidate {
+  user_id: string;
+  username: string;
+  nickname: string | null;
+  avatar_path: string | null;
+}
+
 export type ImportConflictPolicy = "prompt" | "rename" | "overwrite";
 
 export interface ArchiveDiagnostic {

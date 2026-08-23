@@ -5,6 +5,7 @@ import {
   arrangeCanvasNodes,
   buildCanvasDependencyEdges,
   createCanvasGroupId,
+  dependencyLane,
   dependencyPath,
   FreeCreationInfiniteCanvas,
 } from "@/components/canvas/FreeCreationInfiniteCanvas";
@@ -100,6 +101,25 @@ describe("FreeCreationInfiniteCanvas", () => {
     }]);
 
     expect(await screen.findByText(reason)).toBeInTheDocument();
+  });
+
+  it("shows a generated video cover before playback", async () => {
+    const videoCreation: FreeCreation = {
+      ...creation,
+      output_type: "video",
+      media_type: "video",
+      media_path: "creations/c_0123456789abcdef0123.mp4",
+      prompt: "train arriving",
+      version: 3,
+    };
+    const { container } = renderCanvas([videoCreation]);
+
+    await waitFor(() => expect(container.querySelector("video")).not.toBeNull());
+    const video = container.querySelector<HTMLVideoElement>("video");
+    expect(video).toHaveAttribute("preload", "metadata");
+    expect(video?.getAttribute("poster")).toContain(
+      "/projects/demo/creations/c_0123456789abcdef0123/cover?v=3",
+    );
   });
 
   it("keeps the default cursor, reserves blank left drag for selection, and pans with the middle button", async () => {
@@ -534,6 +554,17 @@ describe("FreeCreationInfiniteCanvas", () => {
 
     expect(path).toBe("M 100 40 L 170 40 L 170 160 L 240 160");
     expect(path).not.toMatch(/[CSQ]/);
+  });
+
+  it("assigns relation lanes per target instead of using the global edge order", () => {
+    const edges = [
+      { sourceId: "c_source_b", targetId: "c_target" },
+      { sourceId: "c_other", targetId: "c_other_target" },
+      { sourceId: "c_source_a", targetId: "c_target" },
+    ];
+
+    expect(dependencyLane(edges[2], edges)).toBe(0);
+    expect(dependencyLane(edges[0], edges)).toBe(-1);
   });
 
   it("arranges the canvas from the toolbar and keeps the change undoable", async () => {

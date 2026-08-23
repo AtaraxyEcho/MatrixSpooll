@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from lib.i18n import Translator
 from lib.legal_notice import read_legal_attribution
 from lib.logging_config import resolve_log_dir
+from server.auth import AdminUser
 from server.services.diagnostics import collect_diagnostics
 
 router = APIRouter()
@@ -42,7 +43,7 @@ async def get_legal_attribution(_t: Translator) -> LegalAttributionResponse:
 
 
 @router.get("/system/logs/download")
-async def download_logs(_t: Translator) -> StreamingResponse:
+async def download_logs(_t: Translator, _admin: AdminUser) -> StreamingResponse:
     """打包返回 logs/ 目录所有文件 + diagnostics.txt。"""
     log_dir = resolve_log_dir()
     diagnostics_lines: list[str] = []

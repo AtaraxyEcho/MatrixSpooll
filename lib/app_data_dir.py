@@ -1,7 +1,8 @@
 """Application data root resolution.
 
-Centralizes where MatrixSpooll stores per-deployment data (projects, SQLite DB,
-generated assets, system config). Decoupling this from the repository layout
+Centralizes where MatrixSpooll stores per-deployment data (projects, generated
+assets, system config). Database state is PostgreSQL-managed and is not stored
+under this directory. Decoupling this from the repository layout
 lets the same backend code run under varied deployment shapes that don't keep
 data alongside the source tree.
 

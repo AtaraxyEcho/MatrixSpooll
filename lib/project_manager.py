@@ -349,6 +349,8 @@ class ProjectManager:
         # projects may still live in name-based directories. The server
         # registers this process-local adapter during auth/bootstrap.
         self._project_id_aliases: dict[str, str] = {}
+        self._project_name_aliases: dict[str, str] = {}
+        self._project_alias_metadata: dict[str, tuple[str, str]] = {}
 
     def register_project_id_alias(
         self,
@@ -368,11 +370,33 @@ class ProjectManager:
             raise ValueError("project id cannot be empty")
         storage = self.normalize_project_name(storage_key or normalized_name)
         self._project_id_aliases[normalized_id] = storage
+        self._project_alias_metadata[normalized_id] = (normalized_name, storage)
+
+    def register_project_name_alias(self, project_name: str, storage_key: str) -> None:
+        """Map a database-resolved display name to its physical directory.
+
+        Display names are not globally unique. The alias is kept only while
+        it identifies one directory; ambiguous names must use the stable ID.
+        """
+
+        normalized_name = self.normalize_project_name(project_name)
+        storage = self.normalize_project_name(storage_key)
+        existing = self._project_name_aliases.get(normalized_name)
+        if existing is None or existing == storage:
+            self._project_name_aliases[normalized_name] = storage
+        else:
+            self._project_name_aliases.pop(normalized_name, None)
 
     def remove_project_id_alias(self, project_id: str) -> None:
         """Forget an ID mapping after a project is permanently removed."""
 
-        self._project_id_aliases.pop(str(project_id).strip(), None)
+        normalized_id = str(project_id).strip()
+        self._project_id_aliases.pop(normalized_id, None)
+        metadata = self._project_alias_metadata.pop(normalized_id, None)
+        if metadata is not None:
+            name, storage = metadata
+            if self._project_name_aliases.get(name) == storage:
+                self._project_name_aliases.pop(name, None)
 
     def list_projects(self) -> list[str]:
         """列出所有项目"""
@@ -642,7 +666,7 @@ class ProjectManager:
     def get_project_path(self, name: str) -> Path:
         """获取项目路径（含路径遍历防护）"""
         name = self.normalize_project_name(name)
-        name = self._project_id_aliases.get(name, name)
+        name = self._project_id_aliases.get(name, self._project_name_aliases.get(name, name))
         try:
             project_dir = safe_join(self.projects_root, name)
         except PathTraversalError as exc:

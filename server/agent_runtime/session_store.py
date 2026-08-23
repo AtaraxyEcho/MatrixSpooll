@@ -7,19 +7,22 @@ Wraps SessionRepository with a convenience class.
 from __future__ import annotations
 
 from lib.db import safe_session_factory
-from lib.db.base import DEFAULT_USER_ID
+from lib.db.base import DEFAULT_USER_ID, LEGACY_DEFAULT_USER_ID
 from lib.db.repositories.session_repo import SessionRepository
 from server.agent_runtime.models import SessionMeta, SessionStatus
 
 
 def _dict_to_session(d: dict) -> SessionMeta:
     """Convert a repository dict to a SessionMeta dataclass."""
+    actor_user_id = d.get("actor_user_id") or DEFAULT_USER_ID
+    if actor_user_id == LEGACY_DEFAULT_USER_ID:
+        actor_user_id = DEFAULT_USER_ID
     return SessionMeta(
         id=d["sdk_session_id"],  # DB 内部 id 不暴露，对外统一用 sdk_session_id
         project_name=d["project_name"],
         title=d.get("title") or "",
         status=d["status"],
-        actor_user_id=d.get("actor_user_id") or DEFAULT_USER_ID,
+        actor_user_id=actor_user_id,
         superseded_by=d.get("superseded_by"),
         fork_parent_session_id=d.get("fork_parent_session_id"),
         fork_anchor_uuid=d.get("fork_anchor_uuid"),

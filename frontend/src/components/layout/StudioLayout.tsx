@@ -162,7 +162,7 @@ export function StudioLayout({ children }: StudioLayoutProps) {
     >
       <TaskFailureListener projectName={sseProjectName} />
       <ScriptGenerationNoticeListener />
-      <GlobalHeader onNavigateBack={() => setLocation("~/app/projects")} />
+      <GlobalHeader onNavigateBack={() => setLocation("~/app")} />
       {demoMode ? <DemoReadOnlyBanner /> : null}
       <MigrationRepairBanner />
       <div className="flex flex-1 overflow-hidden">

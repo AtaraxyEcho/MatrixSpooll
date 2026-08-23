@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import uuid as _uuid
 from collections.abc import AsyncIterator
 
 import pytest
@@ -11,6 +10,7 @@ from sqlalchemy import event, pool, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from lib.db.base import Base
+from lib.db.repositories.session_repo import SessionRepository
 
 
 def _pg_url_from_env() -> str | None:
@@ -25,6 +25,22 @@ def _pg_url_from_env() -> str | None:
 # on PG so FK constraints (which SQLite tests bypass via PRAGMA foreign_keys=OFF)
 # don't reject inserts.
 _PG_TEST_USER_IDS = ("default", "u1", "conformance", "e2e", "crash-recover", "long-turn")
+_PG_TEST_SCHEMA = "matrixspooll_test"
+_TEST_SESSIONS = (
+    ("proj", "sess"),
+    ("p", "s1"),
+    ("p", "s2"),
+    ("other", "s3"),
+    ("proj-A", "sess-1"),
+)
+
+
+async def _reset_pg_schema(engine) -> None:
+    """Reset the single PostgreSQL test schema before a test starts."""
+
+    async with engine.begin() as conn:
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{_PG_TEST_SCHEMA}" CASCADE'))
+        await conn.execute(text(f'CREATE SCHEMA "{_PG_TEST_SCHEMA}"'))
 
 
 async def _seed_pg_users(engine) -> None:
@@ -40,25 +56,36 @@ async def _seed_pg_users(engine) -> None:
             )
 
 
+async def _seed_test_sessions(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    user_id: str = "u1",
+) -> None:
+    """Register the fixed sessions used by store unit tests."""
+
+    async with factory() as session:
+        repo = SessionRepository(session)
+        for project_name, sdk_session_id in _TEST_SESSIONS:
+            if await repo.get(sdk_session_id) is None:
+                await repo.create(project_name, sdk_session_id, user_id=user_id)
+
+
 @pytest.fixture
 async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     """Session factory with all tables created.
 
     By default uses in-memory SQLite. When ``DATABASE_URL`` points at PG
-    (postgresql+asyncpg://...), uses a per-test isolated PG schema so
+    (postgresql+asyncpg://...), uses one reset PG schema so
     dialect-specific code paths (partial unique indexes + ON CONFLICT,
     SELECT ... FOR UPDATE) are actually exercised.
     """
     pg_url = _pg_url_from_env()
     if pg_url:
-        # Per-test schema for isolation; tables created against it via search_path.
-        schema = f"test_{_uuid.uuid4().hex[:12]}"
         engine = create_async_engine(
             pg_url,
-            connect_args={"server_settings": {"search_path": schema}},
+            connect_args={"server_settings": {"search_path": _PG_TEST_SCHEMA}},
         )
-        async with engine.begin() as conn:
-            await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+        await _reset_pg_schema(engine)
         async with engine.begin() as conn:
             import lib.agent_session_store.models  # noqa: F401
             import lib.db.models  # noqa: F401
@@ -68,11 +95,12 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
         # Seed the user rows that test cases attribute writes to so FK checks pass.
         await _seed_pg_users(engine)
         factory = async_sessionmaker(engine, expire_on_commit=False)
+        await _seed_test_sessions(factory)
         try:
             yield factory
         finally:
             async with engine.begin() as conn:
-                await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+                await conn.execute(text(f'DROP SCHEMA IF EXISTS "{_PG_TEST_SCHEMA}" CASCADE'))
             await engine.dispose()
         return
 
@@ -84,6 +112,7 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    await _seed_test_sessions(factory)
     yield factory
     await engine.dispose()
 
@@ -118,5 +147,6 @@ async def file_session_factory(tmp_path) -> AsyncIterator[async_sessionmaker[Asy
 
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    await _seed_test_sessions(factory)
     yield factory
     await engine.dispose()

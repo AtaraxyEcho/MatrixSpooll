@@ -25,7 +25,7 @@ def _make_client() -> TestClient:
 
 
 FAKE_ROW = {
-    "id": 1,
+    "id": "key-1",
     "user_id": "default",
     "name": "mykey",
     "key_prefix": "msp-abcd",
@@ -141,7 +141,7 @@ class TestDeleteApiKey:
                 patch("server.routers.api_keys.ApiKeyRepository", return_value=mock_repo),
                 patch("server.routers.api_keys.invalidate_api_key_cache") as mock_invalidate,
             ):
-                resp = client.delete("/api/v1/api-keys/1")
+                resp = client.delete("/api/v1/api-keys/key-1")
                 assert mock_invalidate.call_count == 2
                 mock_invalidate.assert_called_with("abc123hash")
 
@@ -165,6 +165,6 @@ class TestDeleteApiKey:
                 patch("server.routers.api_keys.async_session_factory", return_value=mock_session),
                 patch("server.routers.api_keys.ApiKeyRepository", return_value=mock_repo),
             ):
-                resp = client.delete("/api/v1/api-keys/999")
+                resp = client.delete("/api/v1/api-keys/key-missing")
 
         assert resp.status_code == 404

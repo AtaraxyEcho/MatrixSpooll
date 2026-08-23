@@ -100,6 +100,12 @@ async def resolve_project_access(
         registry = None
         registry_unavailable_in_testing = True
 
+    resolved_by_name = False
+    if registry is None:
+        registry = await session.scalar(
+            select(ProjectRegistry).where(ProjectRegistry.storage_key == project_identifier)
+        )
+
     normalized_name = registry.name if registry is not None else project_identifier
 
     if registry is None and not registry_unavailable_in_testing:
@@ -126,6 +132,7 @@ async def resolve_project_access(
         if len(matches) > 1:
             raise BadRequestError("project_identifier_ambiguous", name=project_identifier)
         registry = matches[0] if matches else None
+        resolved_by_name = registry is not None
         normalized_name = registry.name if registry is not None else project_identifier
 
     # Local development with AUTH_ENABLED=false intentionally preserves the
@@ -170,6 +177,12 @@ async def resolve_project_access(
 
     if registry is None:
         raise NotFoundError("project_not_found", name=normalized_name)
+
+    if resolved_by_name:
+        manager = get_project_manager()
+        register_name_alias = getattr(manager, "register_project_name_alias", None)
+        if callable(register_name_alias):
+            register_name_alias(registry.name, registry.storage_key)
 
     member = await session.scalar(
         select(ProjectMember).where(
@@ -282,12 +295,15 @@ async def register_project(
 
 
 async def find_project_registration(session: AsyncSession, project_ref: str) -> ProjectRegistry | None:
-    """Resolve a registry row from either its stable id or legacy name."""
+    """Resolve a registry row from its stable ID, storage key, or display name."""
 
     identifier = str(project_ref).strip()
     if not identifier:
         return None
     registry = await session.get(ProjectRegistry, identifier)
+    if registry is not None:
+        return registry
+    registry = await session.scalar(select(ProjectRegistry).where(ProjectRegistry.storage_key == identifier))
     if registry is not None:
         return registry
     normalized_name = get_project_manager().normalize_project_name(identifier)

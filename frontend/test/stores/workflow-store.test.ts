@@ -97,11 +97,12 @@ describe("workflow-store", () => {
     };
     let inFlight = 0;
     let maxInFlight = 0;
-    const spy = vi.spyOn(API, "getWorkflowPlan").mockImplementation((project: string) => {
+    const spy = vi.spyOn(API, "getWorkflowPlan").mockImplementation((project) => {
+      const key = typeof project === "string" ? project : project.project_id;
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       return new Promise((resolve) => {
-        pendingByProject[project as "A" | "B"].push((plan) => {
+        pendingByProject[key as "A" | "B"].push((plan) => {
           inFlight -= 1;
           resolve(plan);
         });
@@ -179,11 +180,12 @@ describe("workflow-store", () => {
     };
     let inFlight = 0;
     let maxInFlight = 0;
-    const spy = vi.spyOn(API, "getWorkflowPlan").mockImplementation((project: string) => {
+    const spy = vi.spyOn(API, "getWorkflowPlan").mockImplementation((project) => {
+      const key = typeof project === "string" ? project : project.project_id;
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       return new Promise((resolve) => {
-        pendingByProject[project as "A" | "B"].push((plan) => {
+        pendingByProject[key as "A" | "B"].push((plan) => {
           inFlight -= 1;
           resolve(plan);
         });

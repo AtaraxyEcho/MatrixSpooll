@@ -11,3 +11,4 @@ export * from "./cost";
 export * from "./reference-video";
 export * from "./workflow";
 export * from "./free-creation";
+export * from "./admin";

@@ -73,13 +73,13 @@ Install Docker and Docker Compose, then run:
 
 ```bash
 git clone https://github.com/MockMine/MatrixSpooll.git
-cd MatrixSpooll/deploy
+cd MatrixSpooll/deploy/production
 
 cp .env.example .env
 docker compose up -d
 ```
 
-Open <http://localhost:1241>. The default username is `admin`. If `AUTH_PASSWORD` is empty, MatrixSpooll generates a password on first startup and writes it back to `deploy/.env`.
+Open <http://localhost:1241>. The default username is `admin`. If `AUTH_PASSWORD` is empty, MatrixSpooll generates a password on first startup and writes it back to `deploy/production/.env`.
 
 > Default Compose publishes port `1241` on all host interfaces. Do not expose MatrixSpooll directly to the public Internet; before enabling remote access, configure authentication and use HTTPS, a VPN, or a secure tunnel. See [Reverse Proxy and HTTPS](website/docs/ops/deployment.md).
 

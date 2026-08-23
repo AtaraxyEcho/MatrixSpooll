@@ -40,13 +40,12 @@
 
 根据合同约定，交付以下部署材料：
 
-- `deploy/.env.example`：SQLite 单机部署模板。
-- `deploy/production/.env.example`：PostgreSQL 生产部署模板。
+- `deploy/production/.env.example`：PostgreSQL 部署模板；当前运行环境统一使用 PostgreSQL。
 - Docker 本地构建配置。应用镜像使用本地 `docker compose build` 构建，不依赖 MatrixSpooll 的公共 GHCR 镜像仓库。
 - 健康检查、日志查看、升级、备份和恢复操作说明。
 - 第三方模型供应商配置说明，以及需要客户自行申请的 API 凭据清单。
 
-当前数据库和内部协议中的 `matrixspooll` 标识（例如 `.matrixspooll.db`、`MATRIXSPOOLL_*` 和 PostgreSQL 默认数据库名）属于兼容性标识，交付时不应自行重命名。若客户要求更换这些标识，必须单独制定数据迁移、回滚和兼容性验证方案。
+当前数据库和内部协议中的 `matrixspooll` 标识（例如 `MATRIXSPOOLL_*` 和 PostgreSQL 默认数据库名）属于兼容性标识，交付时不应自行重命名。若客户要求更换这些标识，必须单独制定数据迁移、回滚和兼容性验证方案。
 
 ### 2.3 定制功能范围
 
@@ -104,36 +103,7 @@
 
 ## 4. 部署说明
 
-### 4.1 SQLite 单机部署
-
-在项目根目录执行：
-
-```bash
-cd deploy
-cp .env.example .env
-```
-
-编辑 `.env`，至少设置：
-
-```dotenv
-AUTH_USERNAME=admin
-AUTH_PASSWORD=请设置强密码
-AUTH_TOKEN_SECRET=请设置长期固定的随机密钥
-```
-
-使用本地构建启动：
-
-```bash
-docker compose build
-docker compose up -d
-docker compose ps
-docker compose logs --tail=100 matrixspooll
-curl -f http://localhost:1241/health
-```
-
-默认持久化内容位于 `deploy/projects/`、`deploy/logs/` 和其他 Compose 挂载目录。数据库与项目媒体需要同时备份。
-
-### 4.2 PostgreSQL 生产部署
+### 4.1 PostgreSQL 本地构建部署
 
 在项目根目录执行：
 
@@ -154,6 +124,22 @@ curl -f http://localhost:1241/health
 ```
 
 `pgdata/` 保存 PostgreSQL 数据，`projects/` 保存项目元数据和生成媒体，二者必须分别纳入备份。应用启动时会执行数据库结构迁移，但迁移不能替代部署级备份。
+
+### 4.2 PostgreSQL 远程镜像部署
+
+远程镜像部署使用同一套 PostgreSQL 配置和数据目录，只将应用服务的 `build` 替换为镜像。编辑 `deploy/production/.env` 中的
+`MATRIXSPOOLL_IMAGE`（或使用 Compose 文件中的默认镜像），然后执行：
+
+```bash
+cd deploy/production
+docker compose -f docker-compose-img.yml pull matrixspooll
+docker compose -f docker-compose-img.yml up -d
+docker compose -f docker-compose-img.yml ps
+docker compose -f docker-compose-img.yml logs --tail=200 matrixspooll
+curl -f http://localhost:1241/health
+```
+
+本地构建版和远程镜像版都连接同名的 `matrixspooll` PostgreSQL 数据库，并挂载相同的 `pgdata/`、`projects/`、`logs/` 数据目录；不得在同一部署中混用旧的 SQLite 配置。
 
 ### 4.3 模型和凭据配置
 

@@ -6,6 +6,9 @@ directory. These tables own only the stable identity and access relationship.
 
 from __future__ import annotations
 
+import os
+from uuid import uuid4
+
 import sqlalchemy as sa
 from sqlalchemy import ForeignKey, Index, String, event
 from sqlalchemy.orm import Mapped, mapped_column
@@ -62,9 +65,10 @@ class ProjectMember(TimestampMixin, Base):
 
 @event.listens_for(ProjectRegistry, "before_insert")
 def _default_project_storage_key(_mapper, _connection, target: ProjectRegistry) -> None:
-    """Keep direct ORM/test inserts compatible with the UUID storage rule."""
+    """Ensure direct ORM inserts receive an immutable physical locator."""
 
     if not target.storage_key:
-        # Direct legacy inserts use the existing directory name.  Production
-        # registration always supplies the UUID storage key explicitly.
-        target.storage_key = target.name
+        testing = os.environ.get("TESTING", "").strip().lower() in {"1", "true", "yes", "on"}
+        # Isolated tests still model legacy name-backed directories. Runtime
+        # inserts must never derive a path key from a display name.
+        target.storage_key = target.name if testing else uuid4().hex

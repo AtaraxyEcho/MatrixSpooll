@@ -24,7 +24,7 @@ class AgentSessionEventLogEntry(TimestampMixin, UserOwnedMixin, Base):
     )
     session_id: Mapped[str] = mapped_column(
         String,
-        ForeignKey("agent_sessions.id", ondelete="CASCADE"),
+        ForeignKey("agent_sessions.sdk_session_id", ondelete="CASCADE"),
         nullable=False,
     )
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False)

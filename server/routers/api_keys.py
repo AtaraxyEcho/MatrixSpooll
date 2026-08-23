@@ -53,7 +53,7 @@ class CreateApiKeyRequest(BaseModel):
 
 
 class CreateApiKeyResponse(BaseModel):
-    id: int
+    id: str
     name: str
     key: str  # 完整 key，仅在创建时返回
     key_prefix: str
@@ -62,7 +62,7 @@ class CreateApiKeyResponse(BaseModel):
 
 
 class ApiKeyInfo(BaseModel):
-    id: int
+    id: str
     name: str
     key_prefix: str
     created_at: str
@@ -138,7 +138,7 @@ async def list_api_keys(
 
 @router.delete("/api-keys/{key_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_api_key(
-    key_id: int,
+    key_id: str,
     user: CurrentUser,
     _t: Translator,
 ) -> None:

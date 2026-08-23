@@ -9,11 +9,12 @@ import { useCapabilitiesStore } from "@/stores/capabilities-store";
 import { PROVIDER_NAMES } from "@/components/ui/ProviderIcon";
 import { getProviderModels, getCustomProviderModels } from "@/utils/provider-models";
 import { ModelConfigSection } from "@/components/shared/ModelConfigSection";
+import { ProjectMembersSection } from "@/components/shared/ProjectMembersSection";
 import { executingImageModel, executingVideoModel } from "@/components/shared/LayeredModelFields";
 import { ProviderModelSelect } from "@/components/ui/ProviderModelSelect";
 import { StylePicker, type StylePickerValue } from "@/components/shared/StylePicker";
 import { DEFAULT_TEMPLATE_ID, STYLE_TEMPLATES } from "@/data/style-templates";
-import type { CustomProviderInfo, ProviderInfo } from "@/types";
+import type { CustomProviderInfo, ProjectMemberRole, ProviderInfo } from "@/types";
 import { useModelCandidates } from "@/hooks/useModelCandidates";
 import { ROUTE_META, RouteLockBadge } from "@/components/shared/GenerationRouteCards";
 import { GridStoryboardBar } from "@/components/shared/GridStoryboardBar";
@@ -171,6 +172,7 @@ export function ProjectSettingsPage() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [customProviders, setCustomProviders] = useState<CustomProviderInfo[]>([]);
   const [projectTitle, setProjectTitle] = useState<string>("");
+  const [projectRole, setProjectRole] = useState<ProjectMemberRole | null>(null);
   const [contentMode, setContentMode] = useState<string>("narration");
   const [saving, setSaving] = useState(false);
   const [loadedAgentProfile, setLoadedAgentProfile] = useState<{
@@ -305,6 +307,7 @@ export function ProjectSettingsPage() {
       setSpeechRate(sr);
       setSourceLanguage(sl);
       setProjectTitle(typeof project.title === "string" ? project.title : "");
+      setProjectRole(projectRes.current_role ?? null);
       setContentMode(typeof project.content_mode === "string" ? project.content_mode : "narration");
 
       // model_settings 的 key 用执行模型（细分项 ‖ 项目默认 ‖ 全局细分 ‖ 全局默认），与
@@ -619,8 +622,8 @@ export function ProjectSettingsPage() {
 
       {/* ─── Scrollable body ─── */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-6 py-7 pb-24 space-y-5">
-          <div>
+        <div className="mx-auto w-full max-w-[1440px] px-6 py-7 pb-24 lg:px-8">
+          <div className="mb-5">
             <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.16em] text-text-3">
               {t("model_config")}
             </div>
@@ -629,80 +632,20 @@ export function ProjectSettingsPage() {
             </p>
           </div>
 
-          {agentProfile && (
-            <SectionCard
-              kicker={t("agent_profile_title")}
-              title={t("agent_profile_title")}
-              description={t("agent_profile_description")}
-              footer={agentProfile.customized ? (
-                <button
-                  type="button"
-                  onClick={() => voidCall(handleOpenAgentProfileReset())}
-                  className={GHOST_BTN_LG_CLS}
-                >
-                  {t("agent_profile_reset")}
-                </button>
-              ) : undefined}
-            >
-              {agentProfile.customized ? (
-                <div className="space-y-2">
-                  <p className="text-[12px] text-warm">{t("agent_profile_customized")}</p>
-                  <ul className="space-y-1" aria-label={t("agent_profile_affected_files")}>
-                    {agentProfile.customized_files.map((file) => (
-                      <li key={file} className="font-mono text-[11px] text-text-3">{file}</li>
-                    ))}
-                  </ul>
+          <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
+            {/* 左主栏：引擎与模型 / 视觉风格 / Agent 资料 */}
+            <div className="min-w-0 space-y-5 lg:col-span-7 xl:col-span-8">
+              {!options && (
+                <div className="flex items-center gap-2 py-6 text-text-3">
+                  <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin text-accent-2" aria-hidden />
+                  <span className="font-mono text-[11px] uppercase tracking-[0.14em]">
+                    {t("loading_config")}
+                  </span>
                 </div>
-              ) : (
-                <p className="text-[12px] text-text-3">{t("agent_profile_builtin")}</p>
               )}
-            </SectionCard>
-          )}
 
-          {/* Style picker (independent save flow, mutually exclusive template / custom) */}
-          {styleValue && (
-            <SectionCard
-              kicker="Visual Style"
-              title={t("project_style_section_title")}
-              footer={
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    // handleSaveStyle 在 onClick 时才执行，ref 写入是合法的；规则误报。
-                    // eslint-disable-next-line react-hooks/refs
-                    onClick={voidPromise(handleSaveStyle)}
-                    disabled={isStyleSaveDisabled}
-                    className={ACCENT_BTN_CLS}
-                    style={ACCENT_BUTTON_STYLE}
-                  >
-                    {savingStyle && (
-                      <Loader2 aria-hidden className="h-3.5 w-3.5 motion-safe:animate-spin" />
-                    )}
-                    {savingStyle ? t("style_saving") : t("style_save")}
-                  </button>
-                  {hasInitialStyle && !isStyleCleared && !savingStyle && (
-                    <button
-                      type="button"
-                      onClick={handleClearStyle}
-                      className="rounded-[7px] px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                    >
-                      {t("style_clear")}
-                    </button>
-                  )}
-                  {isStyleCleared && !savingStyle && styleIsDirty && (
-                    <p className="text-[11.5px] text-text-3">{t("style_cleared_hint")}</p>
-                  )}
-                </div>
-              }
-            >
-              <StylePicker value={styleValue} onChange={setStyleValue} />
-            </SectionCard>
-          )}
-
-          {options && (
-            <>
-              {/* Model config (video + duration + image + text) */}
-              <SectionCard kicker="Engine Routing" title={t("model_config")}>
+              {options && (
+                <SectionCard kicker="Engine Routing" title={t("model_config")}>
                 <ModelConfigSection
                   projectName={projectName}
                   value={{
@@ -765,7 +708,82 @@ export function ProjectSettingsPage() {
                   enable={contentMode === "ad" ? { duration: false } : undefined}
                 />
               </SectionCard>
+              )}
 
+              {styleValue && (
+                <SectionCard
+                  kicker="Visual Style"
+                  title={t("project_style_section_title")}
+                  footer={
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        // handleSaveStyle 在 onClick 时才执行，ref 写入是合法的；规则误报。
+                        // eslint-disable-next-line react-hooks/refs
+                        onClick={voidPromise(handleSaveStyle)}
+                        disabled={isStyleSaveDisabled}
+                        className={ACCENT_BTN_CLS}
+                        style={ACCENT_BUTTON_STYLE}
+                      >
+                        {savingStyle && (
+                          <Loader2 aria-hidden className="h-3.5 w-3.5 motion-safe:animate-spin" />
+                        )}
+                        {savingStyle ? t("style_saving") : t("style_save")}
+                      </button>
+                      {hasInitialStyle && !isStyleCleared && !savingStyle && (
+                        <button
+                          type="button"
+                          onClick={handleClearStyle}
+                          className="rounded-[7px] px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                        >
+                          {t("style_clear")}
+                        </button>
+                      )}
+                      {isStyleCleared && !savingStyle && styleIsDirty && (
+                        <p className="text-[11.5px] text-text-3">{t("style_cleared_hint")}</p>
+                      )}
+                    </div>
+                  }
+                >
+                  <StylePicker value={styleValue} onChange={setStyleValue} />
+                </SectionCard>
+              )}
+
+              {agentProfile && (
+                <SectionCard
+                  kicker={t("agent_profile_title")}
+                  title={t("agent_profile_title")}
+                  description={t("agent_profile_description")}
+                  footer={agentProfile.customized ? (
+                    <button
+                      type="button"
+                      onClick={() => voidCall(handleOpenAgentProfileReset())}
+                      className={GHOST_BTN_LG_CLS}
+                    >
+                      {t("agent_profile_reset")}
+                    </button>
+                  ) : undefined}
+                >
+                  {agentProfile.customized ? (
+                    <div className="space-y-2">
+                      <p className="text-[12px] text-warm">{t("agent_profile_customized")}</p>
+                      <ul className="space-y-1" aria-label={t("agent_profile_affected_files")}>
+                        {agentProfile.customized_files.map((file) => (
+                          <li key={file} className="font-mono text-[11px] text-text-3">{file}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <p className="text-[12px] text-text-3">{t("agent_profile_builtin")}</p>
+                  )}
+                </SectionCard>
+              )}
+            </div>
+
+            {/* 右栏：输出形态 / 管线 / 语速 / 配音 / 项目成员 */}
+            <div className="min-w-0 space-y-5 lg:col-span-5 xl:col-span-4">
+              {options && (
+                <>
               {/* Aspect ratio */}
               <SectionCard kicker="Frame Aspect">
                 <fieldset>
@@ -896,17 +914,19 @@ export function ProjectSettingsPage() {
                 </div>
               </SectionCard>
               )}
-            </>
-          )}
+                </>
+              )}
 
-          {!options && (
-            <div className="flex items-center gap-2 py-6 text-text-3">
-              <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin text-accent-2" aria-hidden />
-              <span className="font-mono text-[11px] uppercase tracking-[0.14em]">
-                {t("loading_config")}
-              </span>
+              {/* 项目成员 */}
+              <SectionCard
+                kicker={t("project_members_kicker")}
+                title={t("project_members_title")}
+                description={t("project_members_description")}
+              >
+                <ProjectMembersSection project={projectName} currentRole={projectRole} />
+              </SectionCard>
             </div>
-          )}
+          </div>
         </div>
       </div>
 
@@ -922,7 +942,7 @@ export function ProjectSettingsPage() {
           boxShadow: "0 -8px 28px -12px oklch(0 0 0 / 0.55)",
         }}
       >
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-6 py-3">
+        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-6 py-3 lg:px-8">
           <div className="min-w-0 flex items-center gap-2 text-[11.5px] text-text-3">
             <span
               aria-hidden

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -13,10 +13,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.db import get_async_session
+from lib.db.base import DEFAULT_USER_ID, utc_now
+from lib.db.models.audit import AuditEvent
 from lib.db.models.project import ProjectRegistry
 from lib.db.models.user import User
+from lib.db.models.user_session import UserSession
+from lib.generation_queue import get_generation_queue
 from lib.i18n import Translator
 from server.auth import AdminUser, generate_password, hash_password, revoke_all_user_sessions
+from server.routers.tasks import _localize_task
 from server.services.audit import AuditAction, AuditResourceType, record_audit_event
 
 router = APIRouter(prefix="/admin", tags=["管理员"])
@@ -63,6 +68,61 @@ class AdminUsersResponse(BaseModel):
     page_size: int
 
 
+class AdminAuditEventSummary(BaseModel):
+    id: int
+    actor_user_id: str | None
+    actor_username: str | None
+    action: str
+    resource_type: str
+    resource_id: str | None
+    project_id: str | None
+    project_name: str | None
+    details: dict[str, object]
+    created_at: datetime
+
+
+class AdminAuditEventsResponse(BaseModel):
+    events: list[AdminAuditEventSummary]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminSessionSummary(BaseModel):
+    id: str
+    user_id: str
+    username: str
+    device_id: str
+    ip_address: str | None
+    user_agent: str | None
+    status: Literal["active", "expired", "revoked"]
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+
+
+class AdminSessionsResponse(BaseModel):
+    sessions: list[AdminSessionSummary]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminTaskListResponse(BaseModel):
+    items: list[dict[str, object]]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminTaskResponse(BaseModel):
+    task: dict[str, object]
+
+
+class AdminTaskStatsResponse(BaseModel):
+    stats: dict[str, int]
+
+
 def _normalize_username(value: str) -> str:
     return " ".join(value.strip().split())
 
@@ -105,12 +165,16 @@ async def list_users(
     _admin: AdminUser,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
+    username: str | None = Query(default=None, min_length=1, max_length=80),
     session: AsyncSession = Depends(get_async_session),
 ) -> AdminUsersResponse:
-    total_result = await session.execute(select(func.count()).select_from(User))
+    filters = []
+    if username:
+        filters.append(User.username.ilike(f"%{username.strip()}%"))
+    total_result = await session.execute(select(func.count()).select_from(User).where(*filters))
     total = int(total_result.scalar_one())
     result = await session.execute(
-        select(User).order_by(User.created_at.asc()).offset((page - 1) * page_size).limit(page_size)
+        select(User).where(*filters).order_by(User.created_at.asc()).offset((page - 1) * page_size).limit(page_size)
     )
     return AdminUsersResponse(
         users=[_as_summary(user) for user in result.scalars()],
@@ -118,6 +182,245 @@ async def list_users(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/audit-events", response_model=AdminAuditEventsResponse)
+async def list_audit_events(
+    _admin: AdminUser,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    action: str | None = Query(default=None, min_length=1, max_length=128),
+    project_id: str | None = Query(default=None, min_length=1, max_length=128),
+    actor_user_id: str | None = Query(default=None, min_length=1, max_length=128),
+    actor_username: str | None = Query(default=None, min_length=1, max_length=80),
+    project_name: str | None = Query(default=None, min_length=1, max_length=160),
+    session: AsyncSession = Depends(get_async_session),
+) -> AdminAuditEventsResponse:
+    filters = []
+    if action:
+        filters.append(AuditEvent.action == action)
+    if project_id:
+        filters.append(AuditEvent.project_id == project_id)
+    if actor_user_id:
+        filters.append(AuditEvent.actor_user_id == actor_user_id)
+    if actor_username:
+        filters.append(AuditEvent.actor_username.ilike(f"%{actor_username.strip()}%"))
+    if project_name:
+        filters.append(AuditEvent.project_name.ilike(f"%{project_name.strip()}%"))
+
+    total_result = await session.execute(select(func.count()).select_from(AuditEvent).where(*filters))
+    total = int(total_result.scalar_one())
+    result = await session.execute(
+        select(AuditEvent)
+        .where(*filters)
+        .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return AdminAuditEventsResponse(
+        events=[
+            AdminAuditEventSummary(
+                id=event.id,
+                actor_user_id=event.actor_user_id,
+                actor_username=event.actor_username,
+                action=event.action,
+                resource_type=event.resource_type,
+                resource_id=event.resource_id,
+                project_id=event.project_id,
+                project_name=event.project_name,
+                details=event.details,
+                created_at=event.created_at,
+            )
+            for event in result.scalars()
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+def _session_status(row: UserSession, now: datetime) -> Literal["active", "expired", "revoked"]:
+    if row.revoked_at is not None:
+        return "revoked"
+    expires_at = row.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return "expired" if expires_at <= now else "active"
+
+
+@router.get("/sessions", response_model=AdminSessionsResponse)
+async def list_sessions(
+    _admin: AdminUser,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    username: str | None = Query(default=None, min_length=1, max_length=80),
+    session: AsyncSession = Depends(get_async_session),
+) -> AdminSessionsResponse:
+    now = utc_now()
+    filters = []
+    if username:
+        filters.append(User.username.ilike(f"%{username.strip()}%"))
+    filters.extend([UserSession.revoked_at.is_(None), UserSession.expires_at > now])
+    count = await session.scalar(select(func.count()).select_from(UserSession).join(User).where(*filters))
+    result = await session.execute(
+        select(UserSession, User.username)
+        .join(User, UserSession.user_id == User.id)
+        .where(*filters)
+        .order_by(UserSession.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    sessions = [
+        AdminSessionSummary(
+            id=row.id,
+            user_id=row.user_id,
+            username=username_value,
+            device_id=row.device_id,
+            ip_address=row.ip_address,
+            user_agent=row.user_agent,
+            status=_session_status(row, now),
+            created_at=row.created_at,
+            expires_at=row.expires_at,
+            revoked_at=row.revoked_at,
+        )
+        for row, username_value in result.all()
+    ]
+    return AdminSessionsResponse(sessions=sessions, total=int(count or 0), page=page, page_size=page_size)
+
+
+@router.post("/sessions/{session_id}/revoke", status_code=204)
+async def revoke_session(
+    session_id: str,
+    admin: AdminUser,
+    _t: Translator,
+    session: AsyncSession = Depends(get_async_session),
+) -> None:
+    row = await session.scalar(select(UserSession).where(UserSession.id == session_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail=_t("admin_session_not_found"))
+    if row.revoked_at is None:
+        now = utc_now()
+        row.revoked_at = now
+        row.updated_at = now
+        record_audit_event(
+            session,
+            actor=admin,
+            action=AuditAction.SESSION_REVOKE,
+            resource_type=AuditResourceType.SESSION,
+            resource_id=row.id,
+            details={"user_id": row.user_id, "device_id": row.device_id},
+        )
+        await session.commit()
+
+
+@router.get("/tasks", response_model=AdminTaskListResponse)
+async def list_admin_tasks(
+    _admin: AdminUser,
+    _t: Translator,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    status: str | None = Query(default=None, min_length=1, max_length=32),
+    task_type: str | None = Query(default=None, min_length=1, max_length=80),
+    project_name: str | None = Query(default=None, min_length=1, max_length=160),
+    user_id: str | None = Query(default=None, min_length=1, max_length=128),
+) -> AdminTaskListResponse:
+    payload = await get_generation_queue().list_tasks(
+        status=status,
+        task_type=task_type,
+        project_name=project_name.strip() if project_name else None,
+        user_id=user_id,
+        page=page,
+        page_size=page_size,
+    )
+    return AdminTaskListResponse(
+        items=[_localize_task(item, _t) for item in payload["items"]],
+        total=int(payload["total"]),
+        page=int(payload["page"]),
+        page_size=int(payload["page_size"]),
+    )
+
+
+@router.get("/tasks/stats", response_model=AdminTaskStatsResponse)
+async def admin_task_stats(_admin: AdminUser) -> AdminTaskStatsResponse:
+    return AdminTaskStatsResponse(stats=await get_generation_queue().get_task_stats())
+
+
+@router.get("/tasks/{task_id}", response_model=AdminTaskResponse)
+async def get_admin_task(task_id: str, _admin: AdminUser, _t: Translator) -> AdminTaskResponse:
+    task = await get_generation_queue().get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=_t("admin_task_not_found"))
+    return AdminTaskResponse(task=_localize_task(task, _t))
+
+
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_admin_task(
+    task_id: str,
+    admin: AdminUser,
+    _t: Translator,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, object]:
+    task = await get_generation_queue().get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=_t("admin_task_not_found"))
+    result = await get_generation_queue().cancel_task(task_id)
+    if not result.get("cancelled") and not result.get("cancelling"):
+        raise HTTPException(status_code=409, detail=_t("admin_task_not_active"))
+    record_audit_event(
+        session,
+        actor=admin,
+        action=AuditAction.TASK_CANCEL,
+        resource_type=AuditResourceType.TASK,
+        resource_id=task_id,
+        project_id=task.get("project_id"),
+        project_name=task.get("project_name"),
+        details={"task_type": task.get("task_type"), "status": task.get("status")},
+    )
+    await session.commit()
+    return {"task": _localize_task(task, _t), "result": result}
+
+
+@router.post("/tasks/{task_id}/retry", response_model=AdminTaskResponse, status_code=202)
+async def retry_admin_task(
+    task_id: str,
+    admin: AdminUser,
+    _t: Translator,
+    session: AsyncSession = Depends(get_async_session),
+) -> AdminTaskResponse:
+    task = await get_generation_queue().get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=_t("admin_task_not_found"))
+    if task.get("status") not in {"failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail=_t("admin_task_retry_terminal_only"))
+    payload = task.get("payload")
+    if not isinstance(payload, dict):
+        payload = {}
+    retry_user_id = task.get("user_id")
+    if not isinstance(retry_user_id, str) or not retry_user_id:
+        retry_user_id = DEFAULT_USER_ID
+    retried = await get_generation_queue().enqueue_task(
+        project_name=str(task["project_name"]),
+        task_type=str(task["task_type"]),
+        media_type=str(task["media_type"]),
+        resource_id=str(task["resource_id"]),
+        payload=payload,
+        script_file=task.get("script_file") if isinstance(task.get("script_file"), str) else None,
+        resource_type=task.get("resource_type") if isinstance(task.get("resource_type"), str) else None,
+        source="admin_retry",
+        user_id=retry_user_id,
+    )
+    record_audit_event(
+        session,
+        actor=admin,
+        action=AuditAction.TASK_RETRY,
+        resource_type=AuditResourceType.TASK,
+        resource_id=task_id,
+        project_id=task.get("project_id"),
+        project_name=task.get("project_name"),
+        details={"new_task_id": retried.get("task_id"), "task_type": task.get("task_type")},
+    )
+    await session.commit()
+    return AdminTaskResponse(task=_localize_task(retried, _t))
 
 
 @router.post("/users", response_model=CreateUserResponse, status_code=201)

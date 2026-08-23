@@ -623,6 +623,7 @@ class GenerationQueue:
         status: str | None = None,
         task_type: str | None = None,
         source: str | None = None,
+        user_id: str | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> dict[str, Any]:
@@ -636,6 +637,7 @@ class GenerationQueue:
                 status=status,
                 task_type=task_type,
                 source=source,
+                user_id=user_id,
                 page=page,
                 page_size=page_size,
             )
@@ -646,6 +648,7 @@ class GenerationQueue:
         project_names: Sequence[str] | None = None,
         project_id: str | None = None,
         project_ids: Sequence[str] | None = None,
+        user_id: str | None = None,
     ) -> dict[str, int]:
 
         async with self._task_repo() as repo:
@@ -654,6 +657,7 @@ class GenerationQueue:
                 project_names=project_names,
                 project_id=project_id,
                 project_ids=project_ids,
+                user_id=user_id,
             )
 
     async def acquire_or_renew_worker_lease(

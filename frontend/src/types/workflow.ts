@@ -202,8 +202,9 @@ export interface WorkflowAdmission {
 
 export interface WorkflowProject {
   content_mode: string;
-  generation_mode: string;
+  generation_mode: string | null;
   grid_storyboard: boolean;
+  workflow_applicable?: boolean;
 }
 
 export interface WorkflowTarget {
@@ -224,7 +225,8 @@ export type WorkflowStateName =
   | "ASSET_SHEETS"
   | "STORYBOARD"
   | "VIDEO"
-  | "EXPORT_READY";
+  | "EXPORT_READY"
+  | "CREATIVE";
 
 export interface WorkflowStatus {
   schema_version: 1;

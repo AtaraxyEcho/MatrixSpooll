@@ -4,6 +4,7 @@ Assistant service orchestration using ClaudeSDKClient.
 
 import asyncio
 import copy
+import inspect
 import logging
 import os
 from collections import OrderedDict
@@ -300,16 +301,20 @@ class AssistantService:
             # 旧会话懒生成先行：保证受理条目排在重放重建的历史之后。
             await self.event_log.ensure_backfilled(session_id, self._resolve_project_cwd_safe(meta.project_name))
             user_entry = self._build_user_log_entry(text, echo_blocks)
+            send_kwargs = {
+                "echo_text": text,
+                "echo_content": echo_blocks,
+                "meta": meta,
+                "locale": locale,
+                "user_entry": user_entry,
+                "client_key": client_key,
+            }
+            if "actor_user_id" in inspect.signature(self.session_manager.send_message).parameters:
+                send_kwargs["actor_user_id"] = actor_user_id
             entry = await self.session_manager.send_message(
                 session_id,
                 sdk_prompt if sdk_prompt is not None else text,
-                echo_text=text,
-                echo_content=echo_blocks,
-                meta=meta,
-                locale=locale,
-                user_entry=user_entry,
-                client_key=client_key,
-                actor_user_id=actor_user_id,
+                **send_kwargs,
             )
             return {"status": "accepted", "session_id": session_id, "entry": entry}
         else:
@@ -573,17 +578,21 @@ class AssistantService:
                 # 懒生成先行：改写后的消息要排在复制来的前缀历史之后。
                 await self.event_log.ensure_backfilled(new_session_id, project_cwd)
             user_entry = self._build_user_log_entry(text, echo_blocks)
+            send_kwargs = {
+                "echo_text": text,
+                "echo_content": echo_blocks,
+                "meta": new_meta,
+                "locale": locale,
+                "user_entry": user_entry,
+                "client_key": client_key,
+                "resumable": branched.resumable,
+            }
+            if "actor_user_id" in inspect.signature(self.session_manager.send_message).parameters:
+                send_kwargs["actor_user_id"] = actor_user_id
             entry = await self.session_manager.send_message(
                 new_session_id,
                 sdk_prompt if sdk_prompt is not None else text,
-                echo_text=text,
-                echo_content=echo_blocks,
-                meta=new_meta,
-                locale=locale,
-                user_entry=user_entry,
-                client_key=client_key,
-                resumable=branched.resumable,
-                actor_user_id=actor_user_id,
+                **send_kwargs,
             )
         except BaseException:
             await self._discard_branch(session_id, new_session_id)

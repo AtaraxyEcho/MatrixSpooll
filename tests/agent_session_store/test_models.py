@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from lib.agent_session_store.models import AgentSessionEntry, AgentSessionSummary
+from lib.db.models.session import AgentSession
 
 pytestmark = pytest.mark.integration
 
@@ -14,7 +15,12 @@ pytestmark = pytest.mark.integration
 @pytest.mark.asyncio
 async def test_entry_can_round_trip(session_factory):
     async with session_factory() as session:
+        project_id = await session.scalar(
+            select(AgentSession.project_id).where(AgentSession.sdk_session_id == "sess-1")
+        )
+        assert project_id is not None
         row = AgentSessionEntry(
+            project_id=project_id,
             project_key="proj-A",
             session_id="sess-1",
             subpath="",
@@ -36,7 +42,12 @@ async def test_entry_can_round_trip(session_factory):
 @pytest.mark.asyncio
 async def test_summary_pk_dedup(session_factory):
     async with session_factory() as session:
+        project_id = await session.scalar(
+            select(AgentSession.project_id).where(AgentSession.sdk_session_id == "sess-1")
+        )
+        assert project_id is not None
         s1 = AgentSessionSummary(
+            project_id=project_id,
             project_key="proj-A",
             session_id="sess-1",
             mtime_ms=1,
