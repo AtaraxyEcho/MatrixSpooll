@@ -405,7 +405,7 @@ def test_manifest_blocks_windows_drive_like_artifact_path() -> None:
         ".. /outside.json",
         ". /episode.json",
         "scripts /episode.json",
-        ".arcreel_artifacts.json::$DATA",
+        ".matrixspooll_artifacts.json::$DATA",
         "episode.json:preview",
     ],
 )
@@ -437,7 +437,7 @@ def test_manifest_blocks_non_utf8_artifact_path() -> None:
 
 @pytest.mark.parametrize(
     "artifact_path",
-    [".ARCREEL_ARTIFACTS.JSON", ".arcreel_artifacts.json.", ".artifact_manifest.lock "],
+    [".MATRIXSPOOLL_ARTIFACTS.JSON", ".matrixspooll_artifacts.json.", ".artifact_manifest.lock "],
 )
 def test_manifest_blocks_windows_aliases_of_runtime_paths(artifact_path: str) -> None:
     manifest = ArtifactManifest(InMemoryArtifactManifestAdapter())

@@ -96,6 +96,10 @@ describe("SystemConfigPage", () => {
     } as never);
     vi.spyOn(API, "listCredentials").mockResolvedValue({ credentials: [] });
     vi.spyOn(API, "getUsageStatsGrouped").mockResolvedValue({ stats: [], period: { start: "", end: "" } });
+    vi.spyOn(API, "getLegalAttribution").mockResolvedValue({
+      attribution: "Powered by Upstream — https://example.test/upstream",
+      repository_url: "https://example.test/upstream",
+    });
   });
 
   it("renders the page header", () => {
@@ -188,16 +192,16 @@ describe("SystemConfigPage", () => {
   it("renders the attribution-only About section", async () => {
     renderPage("/app/settings?section=about");
 
-    expect(await screen.findByRole("link", { name: "https://github.com/ArcReel/ArcReel" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "https://example.test/upstream" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /检查更新/ })).not.toBeInTheDocument();
   });
 
-  it("offers a replay action outside the attribution-only About section", () => {
+  it("offers a replay action outside the attribution-only About section", async () => {
     renderPage("/app/settings?section=about");
 
     fireEvent.click(screen.getByRole("button", { name: "重看引导" }));
 
     expect(useOnboardingStore.getState().active).toBe(true);
-    expect(screen.getByRole("link", { name: "https://github.com/ArcReel/ArcReel" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "https://example.test/upstream" })).toBeInTheDocument();
   });
 });

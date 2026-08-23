@@ -40,7 +40,7 @@ function deletingKey(projectName: string, sessionId: string): string {
 // localStorage helpers — 记住每个项目最后使用的会话
 // ---------------------------------------------------------------------------
 
-const LAST_SESSION_KEY = "arcreel:lastSessionByProject";
+const LAST_SESSION_KEY = "matrixspooll:lastSessionByProject";
 
 function getLastSessionId(projectName: string): string | null {
   try {

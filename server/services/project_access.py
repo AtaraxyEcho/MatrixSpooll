@@ -13,12 +13,13 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Depends, Request
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.api_errors import BadRequestError, ForbiddenError, NotFoundError
 from lib.db import async_session_factory, get_async_session
-from lib.db.base import DEFAULT_USER_ID, utc_now
+from lib.db.base import LEGACY_DEFAULT_USER_ID, utc_now
 from lib.db.models.project import ProjectMember, ProjectRegistry
 from lib.db.models.user import User
 from lib.db.project_identity import backfill_project_record_ids
@@ -42,6 +43,9 @@ class ProjectAccess:
     generation_mode: str | None
     owner_id: str
     role: str
+    # Physical project directory key. Legacy/test access may omit it and use
+    # the display name as the historical directory locator.
+    storage_key: str | None = None
 
 
 def _required_role(request: Request, project_name: str) -> str:
@@ -83,27 +87,58 @@ async def resolve_project_access(
     except ValueError as exc:
         raise BadRequestError("invalid_project_name") from exc
 
+    registry_unavailable_in_testing = False
     try:
         registry = await session.get(ProjectRegistry, project_identifier)
-        if registry is None:
-            registry = await session.scalar(select(ProjectRegistry).where(ProjectRegistry.name == project_identifier))
-    except Exception:
-        logger.exception("项目授权查询失败 project=%s", project_identifier)
-        raise
+    except OperationalError:
+        # Older isolated route tests intentionally omit the registry schema.
+        # This compatibility path is gated by TESTING and the legacy actor;
+        # a real deployment still fails closed when its database is unusable.
+        if not (is_testing() and user.id == LEGACY_DEFAULT_USER_ID):
+            logger.exception("项目授权查询失败 project=%s", project_identifier)
+            raise
+        registry = None
+        registry_unavailable_in_testing = True
 
     normalized_name = registry.name if registry is not None else project_identifier
+
+    if registry is None and not registry_unavailable_in_testing:
+        matches = list(
+            (await session.scalars(select(ProjectRegistry).where(ProjectRegistry.name == project_identifier))).all()
+        )
+        if len(matches) > 1 and user.role != "admin":
+            project_ids = [candidate.id for candidate in matches]
+            member_project_ids = set(
+                (
+                    await session.scalars(
+                        select(ProjectMember.project_id).where(
+                            ProjectMember.user_id == user.id,
+                            ProjectMember.project_id.in_(project_ids),
+                        )
+                    )
+                ).all()
+            )
+            matches = [
+                candidate
+                for candidate in matches
+                if candidate.owner_id == user.id or candidate.id in member_project_ids
+            ]
+        if len(matches) > 1:
+            raise BadRequestError("project_identifier_ambiguous", name=project_identifier)
+        registry = matches[0] if matches else None
+        normalized_name = registry.name if registry is not None else project_identifier
 
     # Local development with AUTH_ENABLED=false intentionally preserves the
     # legacy single-user mode. A mini FastAPI app used by older route tests does
     # not run the application lifespan, so it has no opportunity to backfill the
     # registry; keep that isolated test mode compatible with the pre-registry
     # routes without weakening a started production application.
-    legacy_uninitialized = user.id == DEFAULT_USER_ID and not database_auth_initialized()
+    legacy_uninitialized = user.id == LEGACY_DEFAULT_USER_ID and not database_auth_initialized()
     if (
         registry is None
-        and user.id == DEFAULT_USER_ID
+        and user.id == LEGACY_DEFAULT_USER_ID
         and is_testing()
-        and (not is_auth_enabled() or legacy_uninitialized)
+        and (not is_auth_enabled() or legacy_uninitialized or registry_unavailable_in_testing)
     ):
         if legacy_uninitialized and is_auth_enabled():
             project_path = get_project_manager().projects_root / normalized_name
@@ -113,8 +148,9 @@ async def resolve_project_access(
                 project_path=project_path,
                 content_mode=None,
                 generation_mode=None,
-                owner_id=DEFAULT_USER_ID,
+                owner_id=LEGACY_DEFAULT_USER_ID,
                 role="owner",
+                storage_key=normalized_name,
             )
         try:
             project_path = get_project_manager().get_project_path(normalized_name)
@@ -127,8 +163,9 @@ async def resolve_project_access(
             project_path=project_path,
             content_mode=project.get("content_mode"),
             generation_mode=project.get("generation_mode"),
-            owner_id=DEFAULT_USER_ID,
+            owner_id=LEGACY_DEFAULT_USER_ID,
             role="owner",
+            storage_key=normalized_name,
         )
 
     if registry is None:
@@ -140,15 +177,18 @@ async def resolve_project_access(
             ProjectMember.user_id == user.id,
         )
     )
-    effective_role = "owner" if user.role == "admin" else (member.role if member else None)
+    if user.role == "admin" or registry.owner_id == user.id:
+        effective_role = "owner"
+    else:
+        effective_role = member.role if member else None
     if effective_role is None or ROLE_ORDER.get(effective_role, 0) < ROLE_ORDER.get(required_role, 0):
         raise ForbiddenError("project_access_denied", name=normalized_name)
 
     try:
-        project_path = get_project_manager().get_project_path(normalized_name)
+        project_path = get_project_manager().get_project_path(registry.storage_key)
     except (FileNotFoundError, ValueError) as exc:
         raise NotFoundError("project_not_found", name=normalized_name) from exc
-    project = await asyncio.to_thread(get_project_manager().load_project, normalized_name)
+    project = await asyncio.to_thread(get_project_manager().load_project, registry.storage_key)
     return ProjectAccess(
         project_id=registry.id,
         project_name=normalized_name,
@@ -157,6 +197,7 @@ async def resolve_project_access(
         generation_mode=project.get("generation_mode"),
         owner_id=registry.owner_id,
         role=effective_role,
+        storage_key=registry.storage_key,
     )
 
 
@@ -172,7 +213,7 @@ async def resolve_project_access_by_id(
     registry = await session.get(ProjectRegistry, project_id)
     if registry is None:
         raise NotFoundError("project_not_found", id=project_id)
-    return await resolve_project_access(registry.name, user, session, required_role=required_role)
+    return await resolve_project_access(registry.id, user, session, required_role=required_role)
 
 
 async def require_project_request_access(
@@ -211,35 +252,32 @@ async def require_project_flexible_access(
     return await resolve_project_access(target, user, session, required_role=_required_role(request, target))
 
 
-async def register_project(session: AsyncSession, project_name: str, owner_id: str) -> ProjectRegistry:
-    """Register a newly created project and its owner in one transaction."""
+async def register_project(
+    session: AsyncSession,
+    project_name: str,
+    owner_id: str,
+    *,
+    storage_key: str | None = None,
+) -> ProjectRegistry:
+    """Register a newly created project and its owner."""
 
     normalized_name = get_project_manager().normalize_project_name(project_name)
-    existing = await session.scalar(select(ProjectRegistry).where(ProjectRegistry.name == normalized_name))
-    if existing is not None:
-        get_project_manager().register_project_id_alias(existing.id, existing.name)
-        member = await session.scalar(
-            select(ProjectMember).where(
-                ProjectMember.project_id == existing.id,
-                ProjectMember.user_id == existing.owner_id,
-            )
-        )
-        if member is None:
-            session.add(ProjectMember(project_id=existing.id, user_id=existing.owner_id, role="owner"))
-        return existing
-
     now = utc_now()
+    # The database identity is always a generated UUID.  ``storage_key`` is
+    # only the physical directory locator and may intentionally retain a
+    # legacy display-name path during backfill.
+    project_id = uuid4().hex
     registry = ProjectRegistry(
-        id=uuid4().hex,
+        id=project_id,
         name=normalized_name,
+        storage_key=storage_key or project_id,
         owner_id=owner_id,
         created_at=now,
         updated_at=now,
     )
     session.add(registry)
     await session.flush()
-    session.add(ProjectMember(project_id=registry.id, user_id=owner_id, role="owner", created_at=now, updated_at=now))
-    get_project_manager().register_project_id_alias(registry.id, registry.name)
+    get_project_manager().register_project_id_alias(registry.id, registry.name, registry.storage_key)
     return registry
 
 
@@ -253,7 +291,12 @@ async def find_project_registration(session: AsyncSession, project_ref: str) -> 
     if registry is not None:
         return registry
     normalized_name = get_project_manager().normalize_project_name(identifier)
-    return await session.scalar(select(ProjectRegistry).where(ProjectRegistry.name == normalized_name))
+    matches = list(
+        (await session.scalars(select(ProjectRegistry).where(ProjectRegistry.name == normalized_name))).all()
+    )
+    if len(matches) > 1:
+        raise BadRequestError("project_identifier_ambiguous", name=normalized_name)
+    return matches[0] if matches else None
 
 
 async def remove_project_registration(session: AsyncSession, project_ref: str) -> None:
@@ -279,9 +322,9 @@ async def reconcile_staged_project_deletions() -> int:
                     await asyncio.to_thread(manager.finalize_staged_project_deletion, staged_dir)
                     logger.warning("completed interrupted project deletion project=%s", project_name)
                 else:
-                    original_dir = manager.projects_root / registry.name
+                    original_dir = manager.projects_root / registry.storage_key
                     await asyncio.to_thread(manager.restore_staged_project_deletion, original_dir, staged_dir)
-                    manager.register_project_id_alias(registry.id, registry.name)
+                    manager.register_project_id_alias(registry.id, registry.name, registry.storage_key)
                     logger.warning("restored interrupted project deletion project=%s", registry.name)
                 reconciled += 1
 
@@ -302,31 +345,29 @@ async def backfill_project_registry() -> int:
     created = 0
     async with async_session_factory() as session:
         async with session.begin():
-            owner = await session.get(User, DEFAULT_USER_ID)
+            owner = await session.scalar(select(User).where(User.is_superadmin.is_(True)).limit(1))
             if owner is None:
                 logger.warning("项目注册回填跳过：默认用户不存在")
                 return 0
             for name in names:
-                existing = await session.scalar(select(ProjectRegistry).where(ProjectRegistry.name == name))
+                # Prefer the immutable storage locator.  Falling back to a
+                # display-name lookup is safe only when that name is unique.
+                existing = await session.scalar(select(ProjectRegistry).where(ProjectRegistry.storage_key == name))
                 if existing is None:
-                    existing = await register_project(session, name, owner.id)
+                    matches = list(
+                        (await session.scalars(select(ProjectRegistry).where(ProjectRegistry.name == name))).all()
+                    )
+                    if len(matches) > 1:
+                        raise ValueError(f"project registry backfill is ambiguous; storage key required: {name}")
+                    existing = matches[0] if matches else None
+                if existing is None:
+                    # These directories predate UUID-backed storage. Preserve
+                    # their physical locator during backfill; only newly
+                    # created/imported projects are allocated UUID directories.
+                    existing = await register_project(session, name, owner.id, storage_key=name)
                     created += 1
                 else:
-                    get_project_manager().register_project_id_alias(existing.id, existing.name)
-                    member = await session.scalar(
-                        select(ProjectMember).where(
-                            ProjectMember.project_id == existing.id,
-                            ProjectMember.user_id == existing.owner_id,
-                        )
-                    )
-                    if member is None:
-                        session.add(
-                            ProjectMember(
-                                project_id=existing.id,
-                                user_id=existing.owner_id,
-                                role="owner",
-                            )
-                        )
+                    get_project_manager().register_project_id_alias(existing.id, existing.name, existing.storage_key)
             linked_records = await backfill_project_record_ids(session)
     if created:
         logger.info("项目注册回填完成：新增 %d 个项目", created)
@@ -345,8 +386,10 @@ async def list_accessible_projects(
 
     stmt = select(ProjectRegistry)
     if not include_all:
-        stmt = stmt.join(ProjectMember, ProjectMember.project_id == ProjectRegistry.id).where(
-            ProjectMember.user_id == user_id
+        stmt = (
+            stmt.outerjoin(ProjectMember, ProjectMember.project_id == ProjectRegistry.id)
+            .where(or_(ProjectRegistry.owner_id == user_id, ProjectMember.user_id == user_id))
+            .distinct()
         )
     stmt = stmt.order_by(ProjectRegistry.updated_at.desc(), ProjectRegistry.name.asc())
     return list((await session.scalars(stmt)).all())

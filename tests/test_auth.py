@@ -294,10 +294,11 @@ class TestGetCurrentUser:
     async def test_get_current_user_valid_token(self):
         with patch.dict(os.environ, {"AUTH_TOKEN_SECRET": "test-secret-key-that-is-at-least-32-bytes"}):
             token = auth_module.create_token("admin")
-            result = await auth_module.get_current_user(token)
+            result = await auth_module.get_current_user(lambda key, **_kwargs: key, token=token)
             assert isinstance(result, auth_module.CurrentUserInfo)
             assert result.sub == "admin"
-            assert result.id == "default"
+            assert result.id != "default"
+            assert len(result.id) == 32
             assert result.role == "admin"
 
     async def test_get_current_user_invalid_token(self):
@@ -305,20 +306,28 @@ class TestGetCurrentUser:
 
         with patch.dict(os.environ, {"AUTH_TOKEN_SECRET": "test-secret-key-that-is-at-least-32-bytes"}):
             with pytest.raises(HTTPException) as exc_info:
-                await auth_module.get_current_user("invalid-token")
+                await auth_module.get_current_user(lambda key, **_kwargs: key, token="invalid-token")
             assert exc_info.value.status_code == 401
 
     async def test_get_current_user_flexible_header(self):
         with patch.dict(os.environ, {"AUTH_TOKEN_SECRET": "test-secret-key-that-is-at-least-32-bytes"}):
             token = auth_module.create_token("admin")
-            result = await auth_module.get_current_user_flexible(token, None)
+            result = await auth_module.get_current_user_flexible(
+                lambda key, **_kwargs: key,
+                token=token,
+                query_token=None,
+            )
             assert isinstance(result, auth_module.CurrentUserInfo)
             assert result.sub == "admin"
 
     async def test_get_current_user_flexible_query(self):
         with patch.dict(os.environ, {"AUTH_TOKEN_SECRET": "test-secret-key-that-is-at-least-32-bytes"}):
             token = auth_module.create_token("admin")
-            result = await auth_module.get_current_user_flexible(None, token)
+            result = await auth_module.get_current_user_flexible(
+                lambda key, **_kwargs: key,
+                token=None,
+                query_token=token,
+            )
             assert isinstance(result, auth_module.CurrentUserInfo)
             assert result.sub == "admin"
 
@@ -326,5 +335,9 @@ class TestGetCurrentUser:
         import pytest
 
         with pytest.raises(HTTPException) as exc_info:
-            await auth_module.get_current_user_flexible(None, None)
+            await auth_module.get_current_user_flexible(
+                lambda key, **_kwargs: key,
+                token=None,
+                query_token=None,
+            )
         assert exc_info.value.status_code == 401

@@ -7,7 +7,7 @@
   "bump-minor-pre-major": true,
   "packages": {
     ".": {
-      "package-name": "arcreel",
+      "package-name": "matrixspooll",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {

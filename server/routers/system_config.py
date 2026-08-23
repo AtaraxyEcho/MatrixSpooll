@@ -46,8 +46,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _PYPROJECT_PATH = _PROJECT_ROOT / "pyproject.toml"
-_GITHUB_RELEASE_LATEST_URL = "https://api.github.com/repos/ArcReel/ArcReel/releases/latest"
-_GITHUB_USER_AGENT = "ArcReel"
+_GITHUB_RELEASE_LATEST_URL = "https://api.github.com/repos/MockMine/MatrixSpooll/releases/latest"
+_GITHUB_USER_AGENT = "MatrixSpooll"
 _VERSION_CACHE_TTL_SECONDS = 300
 _latest_release_cache: dict[str, datetime | dict[str, str] | None] = {
     "expires_at": None,

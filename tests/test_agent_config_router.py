@@ -80,7 +80,7 @@ async def test_list_preset_providers_returns_catalog(authed_client) -> None:
     assert deepseek["discovery_url"] == "https://api.deepseek.com"
     assert deepseek["default_model"] == "deepseek-v4-pro"
     assert deepseek["icon_key"] == "DeepSeek"
-    assert "arcreel" not in ids
+    assert "matrixspooll" not in ids
     assert all(provider["is_recommended"] is False for provider in data["providers"])
 
 

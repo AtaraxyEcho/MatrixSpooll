@@ -1,6 +1,6 @@
 # AnyFast 本地 Mock
 
-这个 Mock 用来在没有 AnyFast 额度时验证 ArcReel 的请求、异步任务轮询、错误处理和素材引用流程。它是独立的本地工具，不会被生产应用自动挂载，也不会向 `www.anyfast.ai` 发起请求。
+这个 Mock 用来在没有 AnyFast 额度时验证 MatrixSpooll 的请求、异步任务轮询、错误处理和素材引用流程。它是独立的本地工具，不会被生产应用自动挂载，也不会向 `www.anyfast.ai` 发起请求。
 
 ## 启动
 
@@ -10,13 +10,13 @@
 uv run uvicorn scripts.mock_anyfast:app --host 127.0.0.1 --port 1242
 ```
 
-默认 API Key 是 `mock-anyfast-key`。在 ArcReel 的自定义供应商配置中选择 **AnyFast Seedance** 端点，将 Base URL 指向 `http://127.0.0.1:1242`，API Key 填入上述值；不要把这个地址写入生产配置。Kling 兼容端点使用 `http://127.0.0.1:1242/kling`，其协议夹具与 Seedance 端点相互独立。
+默认 API Key 是 `mock-anyfast-key`。在 MatrixSpooll 的自定义供应商配置中选择 **AnyFast Seedance** 端点，将 Base URL 指向 `http://127.0.0.1:1242`，API Key 填入上述值；不要把这个地址写入生产配置。Kling 兼容端点使用 `http://127.0.0.1:1242/kling`，其协议夹具与 Seedance 端点相互独立。
 
 也可以通过环境变量修改：
 
 ```bash
-ARCREEL_MOCK_ANYFAST_API_KEY=local-key
-ARCREEL_MOCK_ANYFAST_SCENARIO=success
+MATRIXSPOOLL_MOCK_ANYFAST_API_KEY=local-key
+MATRIXSPOOLL_MOCK_ANYFAST_SCENARIO=success
 uv run uvicorn scripts.mock_anyfast:app --host 127.0.0.1 --port 1242
 ```
 
@@ -26,23 +26,23 @@ uv run uvicorn scripts.mock_anyfast:app --host 127.0.0.1 --port 1242
 | --- | --- |
 | `POST /v1/chat/completions` | 返回 OpenAI Chat Completions 结构和确定性的助手文本 |
 | `POST /v1/images/generations` | 返回 1x1 PNG 的 `b64_json`，不需要额外下载 |
-| `POST /v1/audio/speech` | 返回短 PCM WAV；这是 ArcReel 配音链的便利夹具，不属于已核对的 AnyFast Seedance 契约 |
+| `POST /v1/audio/speech` | 返回短 PCM WAV；这是 MatrixSpooll 配音链的便利夹具，不属于已核对的 AnyFast Seedance 契约 |
 | `POST /v1/video/generations` | 接受 Seedance 文本、图片、视频、音频内容，返回 `id/task_id` |
 | `GET /v1/video/generations/{id}` | 按轮询推进 `NOT_START → IN_PROGRESS → SUCCESS`，成功返回 `result_url` |
-| `POST /kling/v1/videos/{text2video,image2video,multi-image2video}` | 同时返回官方顶层 `task_id` 与 ArcReel 适配器读取的 `data.task_id` |
-| `GET /kling/v1/videos/{endpoint}/{id}` | 返回 ArcReel Kling 适配器使用的 `task_status` 和 `task_result.videos[0].url` |
+| `POST /kling/v1/videos/{text2video,image2video,multi-image2video}` | 同时返回官方顶层 `task_id` 与 MatrixSpooll 适配器读取的 `data.task_id` |
+| `GET /kling/v1/videos/{endpoint}/{id}` | 返回 MatrixSpooll Kling 适配器使用的 `task_status` 和 `task_result.videos[0].url` |
 
 Seedance 请求会校验 `content` 中的资源类型、排列顺序和用途：文本、图片、视频、音频必须依次出现，素材用途必须匹配媒体类型，首尾帧模式不能与参考素材模式混用。`first_frame` 和 `last_frame` 各最多一个，尾帧必须与首帧同时存在，并按模型限制参考图片、视频和音频数量。
 
-时长按模型族校验：`seedance-2.0` 为 4–15 秒，`seedance-2.5` 为 4–30 秒；模型、比例和分辨率也会拒绝未知值。这一层模拟 AnyFast 的 HTTP 契约，ArcReel 自身的能力注册表和入队前校验仍然是独立职责。
+时长按模型族校验：`seedance-2.0` 为 4–15 秒，`seedance-2.5` 为 4–30 秒；模型、比例和分辨率也会拒绝未知值。这一层模拟 AnyFast 的 HTTP 契约，MatrixSpooll 自身的能力注册表和入队前校验仍然是独立职责。
 
-Kling 路由是用于 ArcReel 现有 Kling 适配器的兼容夹具，响应同时保留部分官方字段和适配器字段，不作为 AnyFast Kling 响应结构的严格契约测试。
+Kling 路由是用于 MatrixSpooll 现有 Kling 适配器的兼容夹具，响应同时保留部分官方字段和适配器字段，不作为 AnyFast Kling 响应结构的严格契约测试。
 
 ## 场景控制
 
 启动时可以设置全局场景：
 
-| `ARCREEL_MOCK_ANYFAST_SCENARIO` | 行为 |
+| `MATRIXSPOOLL_MOCK_ANYFAST_SCENARIO` | 行为 |
 | --- | --- |
 | `success` | 默认成功流程 |
 | `failure` | 视频第二次轮询进入 `FAILURE` |

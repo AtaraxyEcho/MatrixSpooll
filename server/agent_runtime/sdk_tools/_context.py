@@ -1,7 +1,8 @@
-"""Per-session context shared by ArcReel SDK MCP tool handlers."""
+"""Per-session context shared by MatrixSpooll SDK MCP tool handlers."""
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from pathlib import Path
@@ -11,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from lib.config.resolver import ConfigResolver, VideoCapability, constrain_durations_for_project
 from lib.db import async_session_factory
+from lib.db.base import DEFAULT_USER_ID
 from lib.generation_result import GenerationBatchResult, migration_problem, render_generation_result
 from lib.project_manager import ProjectManager
 from lib.project_migration_failure import MigrationFailureRecord
@@ -18,16 +20,48 @@ from lib.project_migration_failure import MigrationFailureRecord
 logger = logging.getLogger(__name__)
 
 
+async def invoke_with_optional_actor(
+    callable_obj: Any,
+    *args: Any,
+    actor_user_id: str,
+    **kwargs: Any,
+) -> Any:
+    """Pass the actor to production callables without breaking old fakes.
+
+    SDK tool callables are injectable in tests and integrations.  Production
+    implementations accept ``user_id``; older fakes may expose the former
+    signature.  Inspecting the callable avoids retrying after a real
+    implementation-level ``TypeError``.
+    """
+    try:
+        parameters = inspect.signature(callable_obj).parameters.values()
+        accepts_actor = any(
+            parameter.name == "user_id" or parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters
+        )
+    except (TypeError, ValueError):
+        accepts_actor = True
+    if accepts_actor:
+        kwargs["user_id"] = actor_user_id
+    return await callable_obj(*args, **kwargs)
+
+
 class ToolContext:
     """Bind a tool handler to one agent session's project + projects_root.
 
     The agent never names the project explicitly — every tool is closure-bound
-    to ``project_name`` via ``build_arcreel_mcp_server(project_name=...)``.
+    to ``project_name`` via ``build_matrixspooll_mcp_server(project_name=...)``.
     """
 
-    def __init__(self, project_name: str, projects_root: Path, pm: ProjectManager | None = None):
+    def __init__(
+        self,
+        project_name: str,
+        projects_root: Path,
+        pm: ProjectManager | None = None,
+        actor_user_id: str = DEFAULT_USER_ID,
+    ):
         self.project_name = project_name
         self.projects_root = projects_root
+        self.actor_user_id = actor_user_id
         # Avoid ``ProjectManager.from_cwd()`` — the server main process cwd is
         # the repo root, not ``projects/<name>/``. Tests may inject a fake pm.
         self.pm: ProjectManager = pm if pm is not None else ProjectManager(str(projects_root))
@@ -173,13 +207,16 @@ async def reference_unit_duration_tiers(
         project, caps, durations, generation_mode="reference_video", uses_reference_images=True
     )
     i2v_caps, i2v_durations = caps, durations
-    try:
-        resolved = await resolve_video_caps(project, capability="i2v")
-        resolved_durations = [int(d) for d in resolved.get("supported_durations") or []]
-        if resolved_durations:
-            i2v_caps, i2v_durations = resolved, resolved_durations
-    except (ValueError, SQLAlchemyError) as exc:
-        logger.info("i2v 桶能力不可解析，不带图档位回退按 r2v 桶求值：%s", exc)
+    # A resolver fallback has no provider/model identity.  Do not turn that
+    # best-effort path into a second live database dependency.
+    if caps.get("provider_id") and caps.get("model"):
+        try:
+            resolved = await resolve_video_caps(project, capability="i2v")
+            resolved_durations = [int(d) for d in resolved.get("supported_durations") or []]
+            if resolved_durations:
+                i2v_caps, i2v_durations = resolved, resolved_durations
+        except (ValueError, SQLAlchemyError) as exc:
+            logger.info("i2v 桶能力不可解析，不带图档位回退按 r2v 桶求值：%s", exc)
     without_references = constrained_caps_durations(
         project, i2v_caps, i2v_durations, generation_mode="reference_video", uses_reference_images=False
     )

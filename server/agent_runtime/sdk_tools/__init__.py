@@ -1,10 +1,10 @@
-"""ArcReel SDK in-process MCP tools.
+"""MatrixSpooll SDK in-process MCP tools.
 
 Tools registered here run **in the server main process** (not inside the
-agent sandbox), so they can read ``projects/.arcreel.db`` and call provider
+agent sandbox), so they can read ``projects/.matrixspooll.db`` and call provider
 HTTP without poking holes in ``filesystem.denyRead`` / network allowlist.
 
-Each session gets its own MCP server built via :func:`build_arcreel_mcp_server`
+Each session gets its own MCP server built via :func:`build_matrixspooll_mcp_server`
 — ``project_name`` is closure-bound, so the agent cannot redirect tools to a
 different project via prompt injection.
 """
@@ -18,6 +18,7 @@ from typing import Any
 
 from claude_agent_sdk import create_sdk_mcp_server
 
+from lib.db.base import DEFAULT_USER_ID
 from lib.project_migration_guard import project_migration_failure
 from server.agent_runtime.sdk_tools._context import ToolContext, migration_refusal_response
 from server.agent_runtime.sdk_tools.asset_inventory import complete_asset_inventory_tool
@@ -63,16 +64,16 @@ from server.agent_runtime.sdk_tools.text_generation import (
 from server.agent_runtime.sdk_tools.workflow_plan import get_workflow_plan_tool
 from server.agent_runtime.sdk_tools.workflow_status import complete_step1_rebuild_tool
 
-__all__ = ["build_arcreel_mcp_server", "ToolContext", "ARCREEL_MCP_TOOL_IDS"]
+__all__ = ["build_matrixspooll_mcp_server", "ToolContext", "MATRIXSPOOLL_MCP_TOOL_IDS"]
 
-# Single source of truth for the ArcReel in-process MCP tool catalogue.
-# Each id is the **short tool name** (without the ``mcp__arcreel__`` prefix the
+# Single source of truth for the MatrixSpooll in-process MCP tool catalogue.
+# Each id is the **short tool name** (without the ``mcp__matrixspooll__`` prefix the
 # SDK adds at registration). Frontend display names live in
 # ``frontend/src/i18n/{zh,en,vi}/dashboard.ts`` under the ``tool_name_<id>``
 # keys; ``tests/test_frontend_mcp_tool_i18n.py`` cross-checks that every id
 # here has a translation in all locales, so adding a tool without wiring up
 # i18n fails CI.
-ARCREEL_MCP_TOOL_IDS: tuple[str, ...] = (
+MATRIXSPOOLL_MCP_TOOL_IDS: tuple[str, ...] = (
     "complete_asset_inventory",
     "complete_step1_rebuild",
     "get_workflow_plan",
@@ -158,9 +159,11 @@ def _refuse_while_migration_failed(sdk_tool: Any, ctx: ToolContext) -> Any:
     return replace(sdk_tool, handler=_guarded)
 
 
-def build_arcreel_mcp_server(*, project_name: str, projects_root: Path) -> Any:
-    """Build the per-session in-process MCP server with all ArcReel tools."""
-    ctx = ToolContext(project_name=project_name, projects_root=projects_root)
+def build_matrixspooll_mcp_server(
+    *, project_name: str, projects_root: Path, actor_user_id: str = DEFAULT_USER_ID
+) -> Any:
+    """Build the per-session in-process MCP server with all MatrixSpooll tools."""
+    ctx = ToolContext(project_name=project_name, projects_root=projects_root, actor_user_id=actor_user_id)
     tools = [
         complete_asset_inventory_tool(ctx),
         complete_step1_rebuild_tool(ctx),
@@ -196,7 +199,7 @@ def build_arcreel_mcp_server(*, project_name: str, projects_root: Path) -> Any:
         retry_project_migration_tool(ctx),
     ]
     return create_sdk_mcp_server(
-        name="arcreel",
+        name="matrixspooll",
         version="1.0.0",
         tools=[
             _refuse_while_migration_failed(sdk_tool, ctx) if sdk_tool.name in MIGRATION_BLOCKED_TOOL_IDS else sdk_tool

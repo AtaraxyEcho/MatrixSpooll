@@ -97,54 +97,9 @@ git clone https://github.com/MockMine/MatrixSpooll.git
 cd MatrixSpooll
 ```
 
-### 2.2 使用 SQLite 默认部署 {#deploy-with-sqlite}
+### 2.2 使用 PostgreSQL 部署 {#deploy-with-postgresql}
 
-默认部署适合首次体验、个人创作和轻量使用。
-
-```bash
-cd deploy
-cp .env.example .env
-```
-
-编辑 `.env`：
-
-```dotenv
-AUTH_USERNAME=admin
-AUTH_PASSWORD=请设置一个强密码
-AUTH_TOKEN_SECRET=请设置一个长期固定的随机密钥
-```
-
-`AUTH_TOKEN_SECRET` 可以使用以下命令生成：
-
-```bash
-openssl rand -hex 32
-```
-
-启动：
-
-```bash
-docker compose up -d
-```
-
-检查状态：
-
-```bash
-docker compose ps
-docker compose logs --tail=100 matrixspooll
-curl http://localhost:1241/health
-```
-
-健康检查返回成功后，在浏览器打开：
-
-```text
-http://localhost:1241
-```
-
-> `AUTH_PASSWORD` 留空时，首次启动会自动生成密码并回写到 `.env`。正式使用时仍建议主动设置强密码并妥善保存。
-
-### 2.3 使用 PostgreSQL 生产部署 {#deploy-with-postgresql}
-
-长期运行、并发访问或正式服务建议使用 PostgreSQL。PostgreSQL 改善并发、备份与运维能力，但不提供用户隔离；请勿让互不信任的用户共享同一 MatrixSpooll 实例：
+MatrixSpooll 的本地构建和镜像部署统一使用 PostgreSQL。PostgreSQL 改善并发、备份与运维能力，但不提供跨租户隔离；请勿让互不信任的组织共享同一 MatrixSpooll 实例。
 
 以下命令从 MatrixSpooll 仓库根目录执行：
 
@@ -174,10 +129,13 @@ docker compose -f docker-compose.yml up -d --build
 docker compose -f docker-compose-img.yml pull
 docker compose -f docker-compose-img.yml up -d
 docker compose ps
-curl http://localhost:1241/health
+curl -f http://localhost:1241/health/ready
 ```
 
 两种方式选择其一，不要同时启动，以免占用同一个端口。
+
+健康检查成功后，在浏览器打开 `http://localhost:1241`。开发者如需在宿主机运行后端并保留热重载，请使用
+`deploy/development/docker-compose.yml` 只启动 PostgreSQL，具体步骤见[贡献指南](../dev/contributing.md)。
 
 完整的生产部署、升级、备份和反向代理说明见 [部署与运维](../ops/deployment.md)。
 

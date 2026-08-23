@@ -370,17 +370,17 @@ class SessionManager:
         self._connect_locks: dict[str, asyncio.Lock] = {}
         # 实例不变量缓存：避免每次构建 access policy 都重做 path resolve。
         self._project_root_resolved = self.project_root.resolve()
-        # agent_runtime_profile 实际位置：``ARCREEL_PROFILE_DIR`` env 覆盖 >
+        # agent_runtime_profile 实际位置：``MATRIXSPOOLL_PROFILE_DIR`` env 覆盖 >
         # ``self.project_root / "agent_runtime_profile"``（test-friendly：
         # 不读 ``lib.env_init.PROJECT_ROOT`` 全局）。
-        profile_override = os.getenv("ARCREEL_PROFILE_DIR", "").strip()
+        profile_override = os.getenv("MATRIXSPOOLL_PROFILE_DIR", "").strip()
         if profile_override:
             self._agent_profile_root = Path(profile_override).expanduser().resolve(strict=False)
         else:
             self._agent_profile_root = (self._project_root_resolved / "agent_runtime_profile").resolve(strict=False)
         # 访问规则真相源：env 解析（profile / 日志目录）在此完成，policy 只消费
         # resolve 后的进程级根路径（零 I/O 纯构造）。用 resolve_log_dir() 拿日志
-        # 真实路径，覆盖 ``ARCREEL_LOG_DIR`` 自定义场景——无论落在 repo 内还是外
+        # 真实路径，覆盖 ``MATRIXSPOOLL_LOG_DIR`` 自定义场景——无论落在 repo 内还是外
         # 都必须 deny。
         self.access_policy = AgentAccessPolicy(
             project_root=self._project_root_resolved,
@@ -455,6 +455,7 @@ class SessionManager:
         locale: str = DEFAULT_LOCALE,
         stderr: Callable[[str], None] | None = None,
         session_id: str | None = None,
+        actor_user_id: str | None = None,
     ) -> Any:
         """委派给 ``OptionsAssembler.build``——SessionManager 不再直接构建 options 与
         hook，仅调用装配器；凭证注入、prompt 装配、hook 工厂均由装配器持有。"""
@@ -465,6 +466,7 @@ class SessionManager:
             locale=locale,
             stderr=stderr,
             session_id=session_id,
+            actor_user_id=actor_user_id,
         )
 
     def _build_session_store(self):
@@ -599,6 +601,7 @@ class SessionManager:
                 can_use_tool=await self._build_can_use_tool_callback(temp_id, managed_ref),
                 locale=locale,
                 stderr=startup_stderr,
+                actor_user_id=actor_user_id,
             )
         except Exception as exc:
             sdk_stderr = startup_stderr.render()
@@ -934,6 +937,7 @@ class SessionManager:
                     locale=locale,
                     stderr=startup_stderr,
                     session_id=None if resumable else meta.id,
+                    actor_user_id=meta.actor_user_id,
                 )
             except Exception as exc:
                 sdk_stderr = startup_stderr.render()

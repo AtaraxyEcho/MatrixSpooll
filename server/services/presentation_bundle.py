@@ -76,7 +76,7 @@ class PresentationBundleService:
             if presentation.narration_audio is not None
             else None
         )
-        temp_dir = Path(tempfile.mkdtemp(prefix="arcreel_presentation_"))
+        temp_dir = Path(tempfile.mkdtemp(prefix="matrixspooll_presentation_"))
         bundle_path = temp_dir / "presentation.zip"
         try:
             subtitle_value = presentation.subtitle_artifact_dict()

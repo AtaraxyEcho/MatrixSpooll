@@ -8,6 +8,7 @@ import shutil
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi import Path as PathParam
@@ -31,6 +32,7 @@ from lib.project_manager import get_project_manager
 from lib.task_failure import parse_failure, render_failure
 from lib.video_backends.base import VideoCapabilityError
 from server.auth import CurrentUser, CurrentUserFlexible, database_auth_initialized
+from server.services.audit import AuditAction, AuditResourceType, record_audit_event
 from server.services.free_creation_deletion import FreeCreationDeletionNotReadyError, delete_free_creation_items
 from server.services.free_creation_merge import (
     composite_creation_audio,
@@ -1281,10 +1283,12 @@ async def create_free_project(
     manager = get_project_manager()
     title = req.title.strip()
     project_name = manager.generate_project_name(title)
+    storage_key = uuid4().hex if database_auth_initialized() else project_name
+    registered_project_id: str | None = None
     try:
 
         def _create() -> dict[str, Any]:
-            manager.create_project(project_name, content_mode="free")
+            manager.create_project(storage_key, content_mode="free")
             try:
                 extras: dict[str, Any] = {"generation_mode": None, "grid_storyboard": False}
                 if req.creation.model:
@@ -1292,7 +1296,7 @@ async def create_free_project(
                     extras[backend_key] = req.creation.model
                 with project_change_source("webui"):
                     return manager.create_project_metadata(
-                        project_name,
+                        storage_key,
                         title,
                         "",
                         "free",
@@ -1300,28 +1304,50 @@ async def create_free_project(
                         extras=extras,
                     )
             except BaseException:
-                manager.delete_project_directory(project_name)
+                manager.delete_project_directory(storage_key)
                 raise
 
         project = await asyncio.to_thread(_create)
         if database_auth_initialized():
             try:
                 async with session.begin():
-                    await register_project(session, project_name, user.id)
+                    registry = await register_project(
+                        session,
+                        project_name,
+                        user.id,
+                        storage_key=storage_key,
+                    )
+                    registered_project_id = registry.id
+                    record_audit_event(
+                        session,
+                        actor=user,
+                        action=AuditAction.PROJECT_CREATE,
+                        resource_type=AuditResourceType.PROJECT,
+                        resource_id=registry.id,
+                        project_id=registry.id,
+                        project_name=registry.name,
+                        details={"content_mode": "free"},
+                    )
             except BaseException:
-                await asyncio.to_thread(manager.delete_project_directory, project_name)
+                await asyncio.to_thread(manager.delete_project_directory, storage_key)
                 raise
         try:
-            result = await create_free_creation(project_name, req.creation, user)
+            result = await create_free_creation(storage_key, req.creation, user)
         except BaseException:
             if database_auth_initialized():
                 async with session.begin():
-                    await remove_project_registration(session, project_name)
-            await asyncio.to_thread(manager.delete_project_directory, project_name)
+                    await remove_project_registration(session, registered_project_id or project_name)
+            await asyncio.to_thread(manager.delete_project_directory, storage_key)
             raise
     except FileExistsError as exc:
         raise ConflictError("project_exists", name=project_name) from exc
-    return {**result, "name": project_name, "project": project}
+    return {
+        **result,
+        "name": project_name,
+        "project_id": registered_project_id,
+        "id": registered_project_id,
+        "project": project,
+    }
 
 
 @router.get("/projects/{project_name}/creations")

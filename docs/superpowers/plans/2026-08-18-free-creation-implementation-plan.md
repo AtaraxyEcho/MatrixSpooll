@@ -2,7 +2,7 @@
 
 > **For agentic workers:** This is an implementation plan. Execute the tasks in dependency order and keep the checkboxes updated. Do not route free projects through the fixed episode workflow.
 
-**Goal:** 在 MatrixSpooll 项目内增加 `content_mode=free`，提供以聊天或直连请求为入口的图片、视频和媒体编辑能力；自由项目不要求源文件、脚本、分集或固定 `generation_mode`，但继续复用项目权限、任务队列、事件推送、成本记录和产物清单。同时完成产品品牌从 ArcReel 到 MatrixSpooll 的用户可见迁移，并替换应用与文档站图标。
+**Goal:** 在 MatrixSpooll 项目内增加 `content_mode=free`，提供以聊天或直连请求为入口的图片、视频和媒体编辑能力；自由项目不要求源文件、脚本、分集或固定 `generation_mode`，但继续复用项目权限、任务队列、事件推送、成本记录和产物清单。同时完成产品品牌从 MatrixSpooll 到 MatrixSpooll 的用户可见迁移，并替换应用与文档站图标。
 
 **Design source:** [`docs/adr/0064-free-creation-project-mode-and-model-orchestration.md`](../../adr/0064-free-creation-project-mode-and-model-orchestration.md)
 
@@ -12,7 +12,7 @@
 
 ## Branding and icon requirements
 
-本方案中的“项目名称修改”指产品品牌和用户可见文案迁移为 `MatrixSpooll`，不等同于立即重命名 Python 包、环境变量、数据库文件、项目目录或 GitHub 仓库。`ARCREEL_*`、`arcreel` 数据库/目录名和历史归档标识先保持兼容，避免已有部署和项目数据失效；如需变更这些内部标识，应另立迁移方案并提供兼容窗口。
+本方案中的“项目名称修改”指产品品牌和用户可见文案迁移为 `MatrixSpooll`，不等同于立即重命名 Python 包、环境变量、数据库文件、项目目录或 GitHub 仓库。`MATRIXSPOOLL_*`、`matrixspooll` 数据库/目录名和历史归档标识先保持兼容，避免已有部署和项目数据失效；如需变更这些内部标识，应另立迁移方案并提供兼容窗口。
 
 品牌迁移的单一真相源仍是 `frontend/src/branding.ts`。所有页面标题、登录页、项目大厅、助手相关品牌占位符和浏览器 meta 应解析为 `MatrixSpooll`；源码注释、历史 CHANGELOG 和不可变外部链接不在本次逐字改写范围内。
 
@@ -32,7 +32,7 @@
 - 不默认采用“文本模型 -> 图片模型 -> 视频模型”的三级流水线。
 - 不在本阶段实现跨项目的全局创作空间。
 - 不允许不支持的比例静默回退为 `16:9`。
-- 不在本阶段批量重命名 `ARCREEL_*` 环境变量、`arcreel` 数据目录/数据库、Python 模块名或历史归档协议。
+- 不在本阶段批量重命名 `MATRIXSPOOLL_*` 环境变量、`matrixspooll` 数据目录/数据库、Python 模块名或历史归档协议。
 
 ## Domain contract
 
@@ -59,7 +59,7 @@
 - `parent_creation_id`: 可选，用于“基于上一版继续修改”
 - `prompt_mode`: 当前公开契约只接受 `original`；后续接入文本改写服务后再增加 `enhance`
 
-自由结果使用项目内 `creations/` 目录保存文件，使用现有 `.arcreel_artifacts.json` 登记正式产物；不得新增第二套产物清单作为真相源。
+自由结果使用项目内 `creations/` 目录保存文件，使用现有 `.matrixspooll_artifacts.json` 登记正式产物；不得新增第二套产物清单作为真相源。
 
 ## File map
 
@@ -101,7 +101,7 @@
 ## Phase 0: Migrate the product brand and icon
 
 - [x] 在 `frontend/src/branding.ts` 将默认品牌名、tagline 和 description 设置为 `MatrixSpooll`，确认所有 `[[brand]]` 占位符走同一解析结果。
-- [x] 更新 `frontend/index.html` 的加载期 `<title>` 和 description，避免 JS 尚未启动时短暂显示 ArcReel。
+- [x] 更新 `frontend/index.html` 的加载期 `<title>` 和 description，避免 JS 尚未启动时短暂显示 MatrixSpooll。
 - [x] 更新 `frontend/.env.example` 的品牌示例和静态资源说明；不修改已部署用户的 `VITE_BRAND_NAME`，除非其配置显式仍使用旧品牌。
 - [ ] 用批准的 MatrixSpooll 主标志导出并替换 Web/PWA 的 8 个图标文件，补齐透明背景、清晰缩放和 maskable 安全区要求。
 - [x] 更新 `frontend/public/site.webmanifest` 的 `name`、`short_name`、`theme_color`、`background_color` 和图标引用，验证安装预览名称为 MatrixSpooll。
@@ -222,7 +222,7 @@ The homepage composer now performs lane/model/resolution preflight where the sel
 - Web 端已将自由项目路由到独立无限画布，支持输出类型、提示词、项目内图片/音频/视频参考路径、能力驱动的比例/分辨率/时长、状态轮询、预览、取消、重试、下载，以及基于图片或视频结果继续编辑。
 - Ark Seedance 与 DashScope `wan2.7-r2v` 已登记可核验的比例能力并在入队前拒绝不支持的比例；WAN 2.7 支持 `.mp4`/`.mov` 视频参考，图片与视频合计上限为 5。Ark 当前只接受 URL/资产 ID 形态的视频引用，项目内本地视频不会被伪装成支持。
 - 创建向导、项目设置与画幅容器已支持 `9:16`、`16:9`、`1:1`、`4:3`、`3:4`、`21:9`，后端对任意正整数 `width:height` 做严格语法校验，不再把新比例静默收窄到横屏或竖屏。
-- 默认产品名称、Web/PWA 入口、README、文档站配置和活动 SVG 标志已迁移为 MatrixSpooll；Git 远端已连接 `git@github.com:MockMine/MatrixSpooll.git`。内部 `ARCREEL_*`、数据目录、旧容器名和历史协议继续保留兼容。
+- 默认产品名称、Web/PWA 入口、README、文档站配置和活动 SVG 标志已迁移为 MatrixSpooll；Git 远端已连接 `git@github.com:MockMine/MatrixSpooll.git`。内部 `MATRIXSPOOLL_*`、数据目录、旧容器名和历史协议继续保留兼容。
 
 以下工作仍未完成，不能视为现有支持：
 

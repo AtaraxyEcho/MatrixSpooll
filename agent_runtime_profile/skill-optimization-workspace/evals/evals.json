@@ -32,7 +32,7 @@
       "assertions": [
         {
           "name": "queries_workflow_plan",
-          "text": "调用 mcp__arcreel__get_workflow_plan 取权威计划",
+          "text": "调用 mcp__matrixspooll__get_workflow_plan 取权威计划",
           "type": "behavior"
         },
         {

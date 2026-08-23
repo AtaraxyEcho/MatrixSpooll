@@ -240,13 +240,13 @@ def _is_link_or_junction(path: Path) -> bool:
 
 def _lexical_staging_root(project_path: Path, task_id: str) -> Path:
     _require_task_id(task_id)
-    return project_path.resolve() / ".arcreel" / "tasks" / task_id / "provider_media"
+    return project_path.resolve() / ".matrixspooll" / "tasks" / task_id / "provider_media"
 
 
 def _staging_root(project_path: Path, task_id: str) -> Path:
     final_dir = _lexical_staging_root(project_path, task_id)
     cursor = project_path.resolve()
-    for part in (".arcreel", "tasks", task_id, "provider_media"):
+    for part in (".matrixspooll", "tasks", task_id, "provider_media"):
         cursor = cursor / part
         if _is_link_or_junction(cursor):
             raise ValueError("provider media staging cannot traverse a symlink or junction")
@@ -258,7 +258,7 @@ def _media_plan(
     task_id: str,
     inputs: tuple[ProviderMediaInput, ...],
 ) -> tuple[StagedProviderMedia, ...]:
-    staging_prefix = PurePosixPath(".arcreel", "tasks", task_id, "provider_media")
+    staging_prefix = PurePosixPath(".matrixspooll", "tasks", task_id, "provider_media")
     planned: list[StagedProviderMedia] = []
     for index, item in enumerate(inputs):
         source = safe_join(project_path, item.path, require_file=True)
@@ -407,7 +407,7 @@ def cleanup_staged_provider_media(project_path: Path, task_id: str) -> None:
     # Never follow a reparse point during cleanup. An exact staging link is safe to unlink; a linked ancestor is
     # outside the ownership proof, so leave it untouched rather than deleting through it.
     cursor = project_path.resolve()
-    for part in (".arcreel", "tasks", task_id):
+    for part in (".matrixspooll", "tasks", task_id):
         cursor = cursor / part
         if _is_link_or_junction(cursor):
             return
@@ -665,8 +665,11 @@ class _VideoSubmissionCheckpoint:
             raise ValueError("older checkpoint cannot carry complete artifact currency facts")
         if tuple(item.index for item in self.media) != tuple(range(len(self.media))):
             raise ValueError("provider media indexes must be contiguous and ordered")
-        expected_prefix = f".arcreel/tasks/{self.task_id}/provider_media/"
-        if any(not item.staged_locator.startswith(expected_prefix) for item in self.media):
+        expected_prefixes = tuple(
+            f"{runtime_root}/tasks/{self.task_id}/provider_media/"
+            for runtime_root in (".matrixspooll", ".arcreel", ".arcreel-runtime", ".arcreel-data")
+        )
+        if any(not item.staged_locator.startswith(expected_prefixes) for item in self.media):
             raise ValueError("staged_locator does not belong to this task")
         if self.kind == _CHECKPOINT_KIND:
             if any(item.role not in ("reference_image", "reference_audio") for item in self.media):

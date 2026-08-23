@@ -2,10 +2,10 @@
 认证核心模块
 
 提供密码生成、JWT token 创建/验证、凭据校验等功能。
-同时支持 API Key 认证（`arc-` 前缀的 Bearer token）。
+同时支持 API Key 认证（`msp-` 前缀的 Bearer token）。
 
 浏览器发起请求的认证模式：
-- SSE 端点同时接受 Authorization header 和 ``?token=`` query param，两处凭证范围一致：JWT 或 ``arc-`` 前缀 API Key
+- SSE 端点同时接受 Authorization header 和 ``?token=`` query param，两处凭证范围一致：JWT 或 ``msp-`` 前缀 API Key
 - 导出端点使用短时效下载 token（``purpose=download``）作为 query param 唯一认证方式
 - 静态媒体文件不要求认证
 新端点须按用途选用对应模式。
@@ -18,9 +18,10 @@ import secrets
 import string
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
 import jwt
@@ -30,14 +31,16 @@ from pwdlib import PasswordHash
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib import PROJECT_ROOT
 from lib.db import async_session_factory
-from lib.db.base import DEFAULT_USER_ID, utc_now
+from lib.db.base import LEGACY_DEFAULT_USER_ID, utc_now
 from lib.db.models.user import User
 from lib.db.models.user_session import UserSession
 from lib.db.repositories.base import rowcount
 from lib.i18n import Translator
+from lib.i18n import _ as translate_message
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,7 @@ class CurrentUserInfo(BaseModel):
     sub: str
     role: str = "member"
     session_id: str | None = None
+    auth_method: Literal["jwt", "api_key", "anonymous"] = "jwt"
 
     model_config = ConfigDict(frozen=True)
 
@@ -84,9 +88,14 @@ def is_testing() -> bool:
 
 def _anonymous_user() -> "CurrentUserInfo":
     """关闭认证时返回的固定匿名用户。"""
-    from lib.db.base import DEFAULT_USER_ID
-
-    return CurrentUserInfo(id=DEFAULT_USER_ID, sub=_ANONYMOUS_USER_SUB, role="admin")
+    return CurrentUserInfo(
+        # Anonymous mode is a test/local transport identity, not a database
+        # user and never a superadmin account.
+        id="00000000-0000-0000-0000-000000000000",
+        sub=_ANONYMOUS_USER_SUB,
+        role="admin",
+        auth_method="anonymous",
+    )
 
 
 # OAuth2 scheme
@@ -150,22 +159,35 @@ async def ensure_database_users() -> None:
     username = os.environ.get("AUTH_USERNAME", "admin").strip() or "admin"
     async with async_session_factory() as session:
         async with session.begin():
-            result = await session.execute(select(User).where(User.id == DEFAULT_USER_ID))
+            result = await session.execute(select(User).where(User.is_superadmin.is_(True)).limit(1))
             user = result.scalar_one_or_none()
             if user is None:
+                legacy = await session.get(User, LEGACY_DEFAULT_USER_ID)
+                if legacy is not None:
+                    raise RuntimeError(
+                        "legacy superadmin id 'default' is still present; run the identity migration before startup"
+                    )
+            if user is None:
+                configured = await session.execute(select(User).where(User.username == username).limit(1))
+                user = configured.scalar_one_or_none()
+                if user is not None:
+                    user.is_superadmin = True
+                    user.role = "admin"
+            if user is None:
                 user = User(
-                    id=DEFAULT_USER_ID,
+                    id=uuid4().hex,
                     username=username,
                     password_hash=_password_hash.hash(password) if password else None,
                     role="admin",
                     is_active=True,
+                    is_superadmin=True,
                 )
                 session.add(user)
             elif user.password_hash is None and password:
                 user.password_hash = _password_hash.hash(password)
             if user.username != username:
                 username_taken = await session.execute(
-                    select(User.id).where(User.username == username, User.id != DEFAULT_USER_ID)
+                    select(User.id).where(User.username == username, User.id != user.id)
                 )
                 if username_taken.scalar_one_or_none() is None:
                     user.username = username
@@ -175,6 +197,7 @@ async def ensure_database_users() -> None:
                     )
             user.role = "admin"
             user.is_active = True
+            user.is_superadmin = True
     _database_auth_initialized = True
 
 
@@ -260,16 +283,28 @@ async def revoke_user_session(session_id: str, user_id: str | None = None) -> bo
             return rowcount(result) > 0
 
 
-async def revoke_all_user_sessions(user_id: str, except_session_id: str | None = None) -> int:
-    """Revoke active sessions for one user, optionally keeping one session."""
+async def revoke_all_user_sessions(
+    user_id: str,
+    except_session_id: str | None = None,
+    *,
+    session: AsyncSession | None = None,
+) -> int:
+    """Revoke active sessions, optionally within the caller's transaction."""
     now = utc_now()
+
+    async def _execute(db_session: AsyncSession) -> int:
+        stmt = update(UserSession).where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
+        if except_session_id is not None:
+            stmt = stmt.where(UserSession.id != except_session_id)
+        result = await db_session.execute(stmt.values(revoked_at=now, updated_at=now))
+        return rowcount(result)
+
+    if session is not None:
+        return await _execute(session)
+
     async with async_session_factory() as db_session:
         async with db_session.begin():
-            stmt = update(UserSession).where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
-            if except_session_id is not None:
-                stmt = stmt.where(UserSession.id != except_session_id)
-            result = await db_session.execute(stmt.values(revoked_at=now, updated_at=now))
-            return rowcount(result)
+            return await _execute(db_session)
 
 
 async def update_user_password(user_id: str, new_password: str) -> bool:
@@ -499,13 +534,19 @@ def ensure_auth_password(env_path: str | None = None) -> str:
 # API Key 认证支持
 # ---------------------------------------------------------------------------
 
-API_KEY_PREFIX = "arc-"
+API_KEY_PREFIX = "msp-"
+# Existing keys remain valid after the product identity rename. This is an
+# authentication compatibility marker only; newly issued keys always use the
+# current prefix above.
+LEGACY_API_KEY_PREFIX = "arc-"
+API_KEY_PREFIXES = (API_KEY_PREFIX, LEGACY_API_KEY_PREFIX)
 API_KEY_CACHE_TTL = 300  # 5 分钟
 
 # LRU 缓存：key_hash → (payload_dict | None, expires_at_timestamp)
 # payload 为 None 表示 key 不存在或已过期（负缓存）
 # 使用 OrderedDict 实现 LRU：命中时 move_to_end，淘汰时 popitem(last=False)
 _api_key_cache: OrderedDict[str, tuple[dict | None, float]] = OrderedDict()
+_api_key_cache_generations: dict[str, int] = {}
 _API_KEY_CACHE_MAX = 512
 
 
@@ -515,7 +556,8 @@ def _hash_api_key(key: str) -> str:
 
 
 def invalidate_api_key_cache(key_hash: str) -> None:
-    """立即清除指定 key_hash 的缓存条目（key 删除时调用）。"""
+    """清除缓存并阻止已经在途的旧查询重新写入该密钥。"""
+    _api_key_cache_generations[key_hash] = _api_key_cache_generations.get(key_hash, 0) + 1
     _api_key_cache.pop(key_hash, None)
 
 
@@ -532,12 +574,20 @@ def _get_cached_api_key_payload(key_hash: str) -> tuple[bool, dict | None]:
     return True, payload
 
 
-def _set_api_key_cache(key_hash: str, payload: dict | None, expires_at_ts: float | None = None) -> None:
+def _set_api_key_cache(
+    key_hash: str,
+    payload: dict | None,
+    expires_at_ts: float | None = None,
+    *,
+    expected_generation: int | None = None,
+) -> None:
     """写入缓存（含 LRU 淘汰）。
 
     正向缓存（payload 非 None）TTL 以 key 实际过期时间为上界，
     避免 key 过期后仍在缓存中通过验证的安全问题。
     """
+    if expected_generation is not None and _api_key_cache_generations.get(key_hash, 0) != expected_generation:
+        return
     if len(_api_key_cache) >= _API_KEY_CACHE_MAX:
         # 淘汰最久未使用的条目（LRU：OrderedDict 头部）
         _api_key_cache.popitem(last=False)
@@ -564,6 +614,7 @@ async def _verify_api_key(token: str) -> dict | None:
     hit, cached_payload = _get_cached_api_key_payload(key_hash)
     if hit:
         return cached_payload
+    cache_generation = _api_key_cache_generations.get(key_hash, 0)
 
     # 数据库查询
     from lib.db import async_session_factory
@@ -575,7 +626,7 @@ async def _verify_api_key(token: str) -> dict | None:
             row = await repo.get_by_hash(key_hash)
 
     if row is None:
-        _set_api_key_cache(key_hash, None)
+        _set_api_key_cache(key_hash, None, expected_generation=cache_generation)
         return None
 
     # 检查过期
@@ -589,7 +640,7 @@ async def _verify_api_key(token: str) -> dict | None:
             if exp_dt.tzinfo is None:
                 exp_dt = exp_dt.replace(tzinfo=UTC)
             if datetime.now(UTC) >= exp_dt:
-                _set_api_key_cache(key_hash, None)
+                _set_api_key_cache(key_hash, None, expected_generation=cache_generation)
                 return None
             # 将过期时刻转换为 monotonic 时间戳，供缓存 TTL 上界计算
             remaining_secs = (exp_dt - datetime.now(UTC)).total_seconds()
@@ -597,8 +648,22 @@ async def _verify_api_key(token: str) -> dict | None:
         except (ValueError, TypeError):
             logger.warning("API Key expires_at 值格式无法解析，忽略过期检查: %r", expires_at)
 
-    payload = {"sub": f"apikey:{row['name']}", "via": "apikey"}
-    _set_api_key_cache(key_hash, payload, expires_at_ts=expires_at_monotonic)
+    if row.get("revoked_at") is not None:
+        _set_api_key_cache(key_hash, None, expected_generation=cache_generation)
+        return None
+
+    user_id = row.get("user_id")
+    if not isinstance(user_id, str) or not user_id:
+        _set_api_key_cache(key_hash, None, expected_generation=cache_generation)
+        return None
+
+    payload = {"sub": f"apikey:{row['name']}", "uid": user_id, "via": "apikey"}
+    _set_api_key_cache(
+        key_hash,
+        payload,
+        expires_at_ts=expires_at_monotonic,
+        expected_generation=cache_generation,
+    )
 
     # 异步更新 last_used_at（不阻塞，保存引用防止 GC）
     import asyncio
@@ -629,25 +694,59 @@ def _verify_and_get_payload(token: str) -> dict:
     return payload
 
 
-async def _verify_and_get_payload_async(token: str) -> dict:
-    """异步验证 token，支持 API Key（arc- 前缀）和 JWT 两种模式。"""
-    if token.startswith(API_KEY_PREFIX):
+async def _verify_and_get_payload_async(
+    token: str,
+    _t: Callable[..., str] = translate_message,
+) -> dict:
+    """异步验证 API Key 或 JWT token。"""
+    if token.startswith(API_KEY_PREFIXES):
         payload = await _verify_api_key(token)
         if payload is None:
             raise HTTPException(
                 status_code=401,
-                detail="API Key 无效、已过期或不存在",
+                detail=_t("api_key_invalid"),
                 headers={"WWW-Authenticate": "Bearer"},
             )
         return payload
-    # JWT 路径
-    return _verify_and_get_payload(token)
+
+    jwt_payload = verify_token(token)
+    if jwt_payload is not None:
+        return jwt_payload
+
+    raise HTTPException(
+        status_code=401,
+        detail=_t("token_invalid"),
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
-async def _payload_to_user(payload: dict) -> CurrentUserInfo:
+async def _payload_to_user(
+    payload: dict,
+    _t: Callable[..., str] = translate_message,
+) -> CurrentUserInfo:
     """Convert a verified JWT/API-key payload to a current user."""
     if payload.get("via") == "apikey":
-        return CurrentUserInfo(id=DEFAULT_USER_ID, sub=payload.get("sub", ""), role="member")
+        user_id = payload.get("uid")
+        if not isinstance(user_id, str) or not user_id:
+            raise HTTPException(
+                status_code=401,
+                detail=_t("api_key_user_invalid"),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        async with async_session_factory() as db_session:
+            user = await db_session.get(User, user_id)
+        if user is None or not user.is_active:
+            raise HTTPException(
+                status_code=401,
+                detail=_t("api_key_user_invalid"),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return CurrentUserInfo(
+            id=user.id,
+            sub=user.username,
+            role="member",
+            auth_method="api_key",
+        )
 
     if payload.get("uid") and payload.get("sid"):
         try:
@@ -657,21 +756,28 @@ async def _payload_to_user(payload: dict) -> CurrentUserInfo:
         if user is None:
             raise HTTPException(
                 status_code=401,
-                detail="session_invalid",
+                detail=_t("session_invalid"),
                 headers={"WWW-Authenticate": "Bearer"},
             )
         return user
 
-    # Legacy tokens remain readable during the migration window. They map to
-    # the existing default administrator and are never issued by new logins.
-    return CurrentUserInfo(
-        id=DEFAULT_USER_ID,
-        sub=payload.get("sub", ""),
-        role=payload.get("role", "admin"),
+    # Older JWTs did not carry a session id. Resolve their subject by username
+    # during the migration window instead of mapping them to a magic id.
+    subject = payload.get("sub")
+    if isinstance(subject, str) and subject:
+        async with async_session_factory() as db_session:
+            user = await db_session.scalar(select(User).where(User.username == subject, User.is_active.is_(True)))
+        if user is not None:
+            return CurrentUserInfo(id=user.id, sub=user.username, role=user.role)
+    raise HTTPException(
+        status_code=401,
+        detail=_t("session_invalid"),
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
 
 async def get_current_user(
+    _t: Translator,
     token: Annotated[str | None, Depends(oauth2_scheme_optional)] = None,
 ) -> CurrentUserInfo:
     """标准认证依赖 — 支持 JWT 和 API Key Bearer token。
@@ -684,17 +790,18 @@ async def get_current_user(
     if not token:
         raise HTTPException(
             status_code=401,
-            detail="未认证",
+            detail=_t("auth_required"),
             headers={"WWW-Authenticate": "Bearer"},
         )
-    payload = await _verify_and_get_payload_async(token)
-    return await _payload_to_user(payload)
+    payload = await _verify_and_get_payload_async(token, _t)
+    return await _payload_to_user(payload, _t)
 
 
 async def get_current_user_flexible(
+    _t: Translator,
     token: Annotated[str | None, Depends(oauth2_scheme_optional)] = None,
     query_token: str | None = Query(None, alias="token"),
-    cookie_token: str | None = Cookie(None, alias="arcreel_auth_token"),
+    cookie_token: str | None = Cookie(None, alias="matrixspooll_auth_token"),
 ) -> CurrentUserInfo:
     """SSE 认证依赖 — 同时支持 Authorization header 和 ?token= query param。
 
@@ -702,15 +809,18 @@ async def get_current_user_flexible(
     """
     if not is_auth_enabled():
         return _anonymous_user()
-    raw = token or query_token or cookie_token
+    raw = next(
+        (candidate for candidate in (token, query_token, cookie_token) if isinstance(candidate, str) and candidate),
+        None,
+    )
     if not raw:
         raise HTTPException(
             status_code=401,
-            detail="缺少认证 token",
+            detail=_t("auth_token_required"),
             headers={"WWW-Authenticate": "Bearer"},
         )
-    payload = await _verify_and_get_payload_async(raw)
-    return await _payload_to_user(payload)
+    payload = await _verify_and_get_payload_async(raw, _t)
+    return await _payload_to_user(payload, _t)
 
 
 # Type aliases for FastAPI dependency injection
@@ -720,7 +830,7 @@ CurrentUserFlexible = Annotated[CurrentUserInfo, Depends(get_current_user_flexib
 
 async def require_admin(user: CurrentUser, _t: Translator) -> CurrentUserInfo:
     """Authorization seam for administrator-only routes."""
-    if user.role != "admin" or user.sub.startswith("apikey:"):
+    if user.role != "admin" or user.auth_method == "api_key":
         raise HTTPException(status_code=403, detail=_t("admin_required"))
     return user
 

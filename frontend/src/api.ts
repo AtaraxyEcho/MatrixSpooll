@@ -178,6 +178,11 @@ export interface LoginResponse {
   avatar_path?: string | null;
 }
 
+export interface LegalAttributionResponse {
+  attribution: string;
+  repository_url: string;
+}
+
 /** Standard error response body from backend (mirrors FastAPI HTTPException detail). */
 export interface ErrorResponse {
   detail:
@@ -882,6 +887,10 @@ class API {
     return this.request("/system/version");
   }
 
+  static async getLegalAttribution(): Promise<LegalAttributionResponse> {
+    return this.request("/system/legal-attribution");
+  }
+
   // ==================== 首次使用引导 ====================
 
   static async getOnboardingStatus(
@@ -902,7 +911,7 @@ class API {
     await throwIfNotOk(response, `HTTP ${response.status}`);
     const disposition = response.headers.get("Content-Disposition") ?? "";
     const match = disposition.match(/filename="?([^";]+)"?/);
-    const filename = match?.[1] ?? "arcreel-diagnostics.zip";
+    const filename = match?.[1] ?? "matrixspooll-diagnostics.zip";
     const blob = await response.blob();
     return { blob, filename };
   }
@@ -1020,6 +1029,8 @@ class API {
   ): Promise<{
     success: boolean;
     name: string;
+    project_id?: string;
+    id?: string;
     creation_id: string;
     task_id: string;
     creations?: Array<{ creation_id: string; task_id: string }>;

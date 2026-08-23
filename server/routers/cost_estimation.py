@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from lib.api_errors import NotFoundError
 from lib.config.resolver import ConfigResolver
 from lib.db import async_session_factory
+from lib.db.project_identity import resolve_project_id
 from lib.i18n import Translator
 from lib.project_manager import get_project_manager
 from lib.reference_video import find_reference_unit
@@ -53,6 +54,9 @@ async def get_cost_estimate(
 
     project_data, scripts = await asyncio.to_thread(_sync)
 
+    async with async_session_factory() as session:
+        project_id = await resolve_project_id(session, project_name)
+
     resolver = ConfigResolver(async_session_factory)
     service = CostEstimationService(
         resolver,
@@ -77,6 +81,7 @@ async def get_cost_estimate(
             project_data,
             scripts,
             project_name=project_name,
+            project_id=project_id,
             reference_request_options=reference_request_options,
         )
     except Exception:

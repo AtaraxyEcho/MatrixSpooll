@@ -327,7 +327,7 @@ async def test_pointer_is_withdrawn_when_the_caller_is_cancelled_after_it_commit
 
 
 async def test_branching_requires_the_db_transcript_store(session_factory, tmp_path):
-    """ARCREEL_SDK_SESSION_STORE=off 时没有可复制的镜像，拒绝而非静默产出空会话。"""
+    """MATRIXSPOOLL_SDK_SESSION_STORE=off 时没有可复制的镜像，拒绝而非静默产出空会话。"""
     service = SessionBranchService(
         store=None,
         meta_store=SessionMetaStore(session_factory=session_factory),

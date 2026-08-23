@@ -122,7 +122,7 @@ async def login_for_access_token(
             )
             token = create_token(user.username, user_id=user.id, session_id=session.id, role=user.role)
             response.set_cookie(
-                "arcreel_auth_token",
+                "matrixspooll_auth_token",
                 token,
                 httponly=True,
                 secure=request.url.scheme == "https",
@@ -153,7 +153,7 @@ async def login_for_access_token(
     token = create_token(form_data.username)
     logger.info("用户登录成功: %s", form_data.username)
     response.set_cookie(
-        "arcreel_auth_token",
+        "matrixspooll_auth_token",
         token,
         httponly=True,
         secure=request.url.scheme == "https",
@@ -298,7 +298,7 @@ async def remove_avatar(
 async def logout(current_user: CurrentUser, response: Response) -> None:
     if current_user.session_id:
         await revoke_user_session(current_user.session_id, current_user.id)
-    response.delete_cookie("arcreel_auth_token", path="/api/v1")
+    response.delete_cookie("matrixspooll_auth_token", path="/api/v1")
 
 
 @router.post("/auth/password", status_code=204)

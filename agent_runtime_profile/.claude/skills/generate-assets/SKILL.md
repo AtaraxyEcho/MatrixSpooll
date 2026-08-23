@@ -78,11 +78,11 @@ description: >-
 
 | 操作 | 工具 |
 |------|------|
-| 列出所有/某类 pending | `mcp__arcreel__list_pending_assets({"type": "character"})`（type 可省略） |
-| 生成所有 pending（三类各一轮） | `mcp__arcreel__generate_assets({})` |
-| 生成某类全部 pending | `mcp__arcreel__generate_assets({"type": "character"})` |
-| 生成指定多个 | `mcp__arcreel__generate_assets({"type": "prop", "names": ["玉佩", "密信"]})` |
-| 生成单个 | `mcp__arcreel__generate_assets({"type": "scene", "names": ["村口老槐树"]})` |
+| 列出所有/某类 pending | `mcp__matrixspooll__list_pending_assets({"type": "character"})`（type 可省略） |
+| 生成所有 pending（三类各一轮） | `mcp__matrixspooll__generate_assets({})` |
+| 生成某类全部 pending | `mcp__matrixspooll__generate_assets({"type": "character"})` |
+| 生成指定多个 | `mcp__matrixspooll__generate_assets({"type": "prop", "names": ["玉佩", "密信"]})` |
+| 生成单个 | `mcp__matrixspooll__generate_assets({"type": "scene", "names": ["村口老槐树"]})` |
 
 结果按 `requested / succeeded / failed / blocked / skipped` 逐 ID 返回，ID 形如 `character/张三`；
 已失效但可复用的旧图进入 `skipped`，不会自动重生；
@@ -101,7 +101,7 @@ description: >-
 用户对设计图提意见时先判断诉求类型，选错路径会推翻已满意的部分或丢掉预期外的改动：
 
 - **只想改局部**（换发色、去掉杂物、调整光线氛围等），且构图和整体设计满意 → 用
-  `mcp__arcreel__edit_images({"resource_type": "character", "edits": [{"id": "张三", "instruction": "把头发改成红色"}]})`
+  `mcp__matrixspooll__edit_images({"resource_type": "character", "edits": [{"id": "张三", "instruction": "把头发改成红色"}]})`
   保底图微调，一次可对同类型多个资产批量下发
 - **想推翻构图/整体设计重来**，或本来就要改 description（进而改变后续按 description
   重新生成的结果）→ 用 `generate_assets` 按更新后的 description 重新生成整图

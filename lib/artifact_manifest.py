@@ -38,7 +38,7 @@ from lib.content_digest import (
 )
 
 _KEY_PREFIX = "artifact-key-v1:"
-MANIFEST_FILENAME = ".arcreel_artifacts.json"
+MANIFEST_FILENAME = ".matrixspooll_artifacts.json"
 LOCK_FILENAME = ".artifact_manifest.lock"
 MANIFEST_SCHEMA_VERSION = 1
 ARCHIVE_MANIFEST_SCHEMA_VERSION = 2
@@ -919,7 +919,9 @@ class ProjectArtifactManifestAdapter:
                 detail=f"artifact path is not a regular file: {normalized}",
             )
             return ArtifactObservation(artifact_path=normalized, present=False, blocker=blocker)
-        flags = os.O_RDONLY | _O_NOFOLLOW
+        # Windows CRT descriptors default to text mode unless O_BINARY is
+        # explicit; artifact digests must cover the exact stored bytes.
+        flags = os.O_RDONLY | _O_NOFOLLOW | getattr(os, "O_BINARY", 0)
         try:
             fd = os.open(path, flags)
             try:

@@ -1,4 +1,4 @@
-"""Tests for ArcReel SDK in-process MCP tools.
+"""Tests for MatrixSpooll SDK in-process MCP tools.
 
 Each tool: 1 happy-path and 1 error-path. Heavy plumbing
 (``batch_enqueue_and_wait`` / ``enqueue_and_wait`` / ``ScriptGenerator`` etc.)
@@ -37,7 +37,7 @@ from lib.reference_video.draft_validation import DraftViolation
 from lib.reference_video.voice_settings import VoiceRenderSettings
 from lib.resource_paths import resource_relative_path
 from lib.version_manager import MANUAL_UPLOAD_VERSION_SOURCE, VersionManager
-from server.agent_runtime.sdk_tools import build_arcreel_mcp_server
+from server.agent_runtime.sdk_tools import build_matrixspooll_mcp_server
 from server.agent_runtime.sdk_tools._context import ToolContext
 from server.agent_runtime.sdk_tools.enqueue_assets import (
     generate_assets_tool,
@@ -494,14 +494,14 @@ def _activate_unbound_project(fake_ctx: ToolContext, *, generation_mode: str = "
 
 
 # ---------------------------------------------------------------------------
-# build_arcreel_mcp_server
+# build_matrixspooll_mcp_server
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-def test_build_arcreel_mcp_server_contains_all_tools(tmp_path: Path) -> None:
-    srv = build_arcreel_mcp_server(project_name="demo", projects_root=tmp_path)
-    assert srv["name"] == "arcreel"
+def test_build_matrixspooll_mcp_server_contains_all_tools(tmp_path: Path) -> None:
+    srv = build_matrixspooll_mcp_server(project_name="demo", projects_root=tmp_path)
+    assert srv["name"] == "matrixspooll"
     # SDK exposes the registered tools on srv["instance"]; we just sanity-check
     # the type returned matches the spec contract.
     assert "instance" in srv
@@ -510,9 +510,9 @@ def test_build_arcreel_mcp_server_contains_all_tools(tmp_path: Path) -> None:
 @pytest.mark.unit
 def test_generate_narration_audio_registered() -> None:
     """旁白配音工具必须同时进 MCP 工具 id 集（前端 chip 三语校验依赖它）。"""
-    from server.agent_runtime.sdk_tools import ARCREEL_MCP_TOOL_IDS
+    from server.agent_runtime.sdk_tools import MATRIXSPOOLL_MCP_TOOL_IDS
 
-    assert "generate_narration_audio" in ARCREEL_MCP_TOOL_IDS
+    assert "generate_narration_audio" in MATRIXSPOOLL_MCP_TOOL_IDS
 
 
 # ---------------------------------------------------------------------------
@@ -1569,9 +1569,9 @@ async def test_generate_storyboards_error(fake_ctx: ToolContext, monkeypatch) ->
 @pytest.mark.unit
 def test_edit_images_registered() -> None:
     """edit_images 必须同时进 MCP 工具 id 集（前端 chip 三语校验依赖它）。"""
-    from server.agent_runtime.sdk_tools import ARCREEL_MCP_TOOL_IDS
+    from server.agent_runtime.sdk_tools import MATRIXSPOOLL_MCP_TOOL_IDS
 
-    assert "edit_images" in ARCREEL_MCP_TOOL_IDS
+    assert "edit_images" in MATRIXSPOOLL_MCP_TOOL_IDS
 
 
 @pytest.mark.unit

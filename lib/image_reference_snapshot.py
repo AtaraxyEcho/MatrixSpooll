@@ -52,7 +52,7 @@ def freeze_image_references(
             raise ValueError("provider image reference and visual evidence identify different files")
         sources.append((reference, visual, source, resolved, visual_file_digest(source)))
 
-    directory = Path(tempfile.mkdtemp(prefix="arcreel-image-references-"))
+    directory = Path(tempfile.mkdtemp(prefix="matrixspooll-image-references-"))
     frozen_provider: list[object] = []
     frozen_visuals: list[VisualReference] = []
     try:

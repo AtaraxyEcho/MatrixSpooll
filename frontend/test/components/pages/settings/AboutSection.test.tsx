@@ -1,17 +1,20 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { API } from "@/api";
 import { AboutSection } from "@/components/pages/settings/AboutSection";
 
 describe("AboutSection", () => {
-  it("only renders the required ArcReel attribution", () => {
+  it("renders the attribution returned from the NOTICE-backed API", async () => {
+    vi.spyOn(API, "getLegalAttribution").mockResolvedValue({
+      attribution: "Powered by Upstream — https://example.test/upstream",
+      repository_url: "https://example.test/upstream",
+    });
     const { container } = render(<AboutSection />);
 
-    const link = screen.getByRole("link", { name: "https://github.com/ArcReel/ArcReel" });
-    expect(link).toHaveAttribute("href", "https://github.com/ArcReel/ArcReel");
+    const link = await screen.findByRole("link", { name: "https://example.test/upstream" });
+    expect(link).toHaveAttribute("href", "https://example.test/upstream");
     expect(link).toHaveAttribute("target", "_blank");
-    expect(container).toHaveTextContent(
-      "Powered by ArcReel — https://github.com/ArcReel/ArcReel",
-    );
+    expect(container).toHaveTextContent("Powered by Upstream — https://example.test/upstream");
     expect(container.querySelectorAll("a")).toHaveLength(1);
     expect(container.querySelectorAll("button")).toHaveLength(0);
   });

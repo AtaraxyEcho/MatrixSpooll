@@ -403,12 +403,12 @@ class TestProjectEventService:
         )
         (project_dir / "scripts" / "episode_2.json").write_text(json.dumps(script), encoding="utf-8")
         project_before = (project_dir / "project.json").read_bytes()
-        manifest_before = (project_dir / ".arcreel_artifacts.json").read_bytes()
+        manifest_before = (project_dir / ".matrixspooll_artifacts.json").read_bytes()
 
         ProjectEventService(tmp_path)._ensure_script_index_synced("demo")
 
         assert (project_dir / "project.json").read_bytes() == project_before
-        assert (project_dir / ".arcreel_artifacts.json").read_bytes() == manifest_before
+        assert (project_dir / ".matrixspooll_artifacts.json").read_bytes() == manifest_before
         assert adapter.get_entry(key) is not None
 
     @pytest.mark.unit
@@ -1039,7 +1039,7 @@ class TestProjectEventService:
     def test_projects_root_kwarg_overrides_default_subdir(self, tmp_path):
         """显式传 projects_root 时，service.pm 走该目录而非 project_root/'projects'。
 
-        覆盖 ARCREEL_DATA_DIR 场景：app.py 启动时传 ``app_data_dir()`` 进来，
+        覆盖 MATRIXSPOOLL_DATA_DIR 场景：app.py 启动时传 ``app_data_dir()`` 进来，
         事件监听应跟着切换，不能继续指向旧的 ``project_root/projects``。
         """
         custom_projects = tmp_path / "external-data"

@@ -7,30 +7,38 @@ directory. These tables own only the stable identity and access relationship.
 from __future__ import annotations
 
 import sqlalchemy as sa
-from sqlalchemy import ForeignKey, Index, String
+from sqlalchemy import ForeignKey, Index, String, event
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lib.db.base import Base, TimestampMixin
 
 
 class ProjectRegistry(TimestampMixin, Base):
-    """Stable database identity for a file-backed ArcReel project."""
+    """Stable database identity for a file-backed MatrixSpooll project."""
 
     __tablename__ = "project_registry"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    # Display names are scoped to a user-facing list, not identity.  Multiple
+    # projects may intentionally share the same name.
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    # Physical storage is keyed by the immutable UUID, never by ``name``.
+    storage_key: Mapped[str] = mapped_column(String, nullable=False)
     owner_id: Mapped[str] = mapped_column(
         String,
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
     )
 
-    __table_args__ = (Index("idx_project_registry_owner", "owner_id"),)
+    __table_args__ = (
+        Index("idx_project_registry_owner", "owner_id"),
+        Index("ix_project_registry_name", "name"),
+        Index("uq_project_registry_storage_key", "storage_key", unique=True),
+    )
 
 
 class ProjectMember(TimestampMixin, Base):
-    """A user's role within a project."""
+    """A collaborator's role within a project."""
 
     __tablename__ = "project_members"
 
@@ -48,5 +56,15 @@ class ProjectMember(TimestampMixin, Base):
 
     __table_args__ = (
         Index("idx_project_members_user", "user_id"),
-        sa.CheckConstraint("role IN ('owner', 'editor', 'viewer')", name="ck_project_members_role"),
+        sa.CheckConstraint("role IN ('editor', 'viewer')", name="ck_project_members_role"),
     )
+
+
+@event.listens_for(ProjectRegistry, "before_insert")
+def _default_project_storage_key(_mapper, _connection, target: ProjectRegistry) -> None:
+    """Keep direct ORM/test inserts compatible with the UUID storage rule."""
+
+    if not target.storage_key:
+        # Direct legacy inserts use the existing directory name.  Production
+        # registration always supplies the UUID storage key explicitly.
+        target.storage_key = target.name

@@ -4,11 +4,12 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import inspect, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import lib.db.models  # noqa: F401 — ensure all models registered for Base.metadata
 from lib.db.base import Base, TimestampMixin, UserOwnedMixin
-from lib.db.models import AgentSession, Task, User
+from lib.db.models import AgentSession, ProjectRegistry, Task, User
 
 pytestmark = pytest.mark.unit
 
@@ -62,9 +63,21 @@ class TestModelsCreateTables:
 
     async def test_agent_session_round_trip(self, session):
         now = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        session.add(User(id="owner-1", username="owner"))
+        session.add(
+            ProjectRegistry(
+                id="project-1",
+                name="demo",
+                storage_key="project-1",
+                owner_id="owner-1",
+                created_at=now,
+                updated_at=now,
+            )
+        )
         s = AgentSession(
             id="sess123",
             sdk_session_id="sdk-sess123",
+            project_id="project-1",
             project_name="demo",
             status="idle",
             created_at=now,
@@ -87,7 +100,18 @@ class TestUserModel:
             columns = await conn.run_sync(
                 lambda sync_conn: {c["name"] for c in inspect(sync_conn).get_columns("users")}
             )
-        assert columns == {"id", "username", "role", "is_active", "created_at", "updated_at"}
+        assert columns == {
+            "id",
+            "username",
+            "password_hash",
+            "role",
+            "is_active",
+            "is_superadmin",
+            "nickname",
+            "avatar_path",
+            "created_at",
+            "updated_at",
+        }
 
     async def test_user_round_trip(self, session):
         user = User(id="u1", username="alice")
@@ -97,9 +121,20 @@ class TestUserModel:
         result = await session.execute(select(User).where(User.id == "u1"))
         loaded = result.scalar_one()
         assert loaded.username == "alice"
-        assert loaded.role == "user"  # server_default
+        assert loaded.role == "member"  # server_default
         assert loaded.created_at is not None
         assert loaded.updated_at is not None
+
+    async def test_only_one_superadmin_is_allowed(self, session):
+        session.add_all(
+            [
+                User(id="super-1", username="super-1", role="admin", is_superadmin=True),
+                User(id="super-2", username="super-2", role="admin", is_superadmin=True),
+            ]
+        )
+        with pytest.raises(IntegrityError):
+            await session.commit()
+        await session.rollback()
 
 
 class TestTimestampMixin:
@@ -116,11 +151,11 @@ class TestTimestampMixin:
 
 
 class TestUserOwnedMixin:
-    def test_user_owned_mixin_server_default(self):
-        """Verify UserOwnedMixin has server_default='default'."""
+    def test_user_owned_mixin_has_no_implicit_actor(self):
+        """Actor identity must be resolved before persistence."""
         col = UserOwnedMixin.__dict__["user_id"].column
-        assert col.server_default is not None
-        assert col.server_default.arg == "default"
+        assert col.server_default is None
+        assert col.nullable is True
 
 
 class TestMixinApplicationToModels:

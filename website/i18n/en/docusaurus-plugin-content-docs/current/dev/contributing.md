@@ -12,7 +12,7 @@ Contributions of code, bug reports, and feature proposals are welcome!
 ## Local Development Environment {#local-development}
 
 ```bash
-# Prerequisites: Python 3.12+, Node.js 20+, uv, pnpm, ffmpeg
+# Prerequisites: Python 3.12+, Node.js 20+, uv, pnpm, ffmpeg, Docker Compose
 # The documentation site website/ also needs Node 24 (pinned in website/.node-version)
 # Operating system: Linux / MacOS / Windows WSL2 (native Windows is unsupported)
 
@@ -23,7 +23,13 @@ cd frontend && pnpm install && cd ..
 # Install the pre-commit hooks once (ruff / eslint / pull_request_target tripwire)
 uv run pre-commit install
 
-# Initialize the database
+# Start the PostgreSQL-only development container
+docker compose -f deploy/development/docker-compose.yml up -d
+
+# Copy the local application configuration; it connects to the development database above
+cp .env.example .env
+
+# Initialize or upgrade the development database
 uv run alembic upgrade head
 
 # Start the backend (terminal 1)
@@ -35,6 +41,15 @@ uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --po
 cd frontend && pnpm dev
 
 # Open http://localhost:5173
+```
+
+The development Compose file runs PostgreSQL only. The backend and frontend remain on the host so hot reload continues
+to work. Database files are persisted in `deploy/development/pgdata/`. To change the local port or development password,
+copy `deploy/development/.env.example` to `.env` in the same directory and update `DATABASE_URL` in the repository-root
+`.env` to match. Stop the development database with:
+
+```bash
+docker compose -f deploy/development/docker-compose.yml down
 ```
 
 ### Documentation Site {#docs-site}

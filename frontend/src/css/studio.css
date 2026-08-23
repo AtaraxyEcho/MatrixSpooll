@@ -272,7 +272,7 @@
   0% { opacity: 0; transform: translateY(4px); }
   100% { opacity: 1; transform: translateY(0); }
 }
-@keyframes handoff-arc-sweep {
+@keyframes handoff-msp-sweep {
   0% { transform: translateX(-110%); opacity: 0; }
   20% { opacity: 1; }
   90% { opacity: 1; }
@@ -307,7 +307,7 @@
   animation: handoff-subtitle-rise 640ms cubic-bezier(0.22, 1, 0.36, 1) 320ms both;
 }
 .agent-handoff-arc {
-  animation: handoff-arc-sweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) 280ms both;
+  animation: handoff-msp-sweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) 280ms both;
 }
 .agent-handoff-orb {
   animation: handoff-orb-float 2.4s ease-in-out infinite;

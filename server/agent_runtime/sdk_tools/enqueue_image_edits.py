@@ -311,6 +311,7 @@ def edit_images_tool(ctx: ToolContext):
                 successes, failures = await batch_enqueue_and_wait(
                     project_name=ctx.project_name,
                     specs=specs,
+                    user_id=ctx.actor_user_id,
                 )
                 # 编辑产物不写回 Manifest（编辑意图不可推导，见模块顶部说明），
                 # 因此这里不带 resolver：产物时效轴如实留空而不是假装已知。states 只

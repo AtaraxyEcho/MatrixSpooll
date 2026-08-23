@@ -1,7 +1,9 @@
+# 贡献指南
+
 ## 本地开发环境
 
 ```bash
-# 前置要求：Python 3.12+, Node.js 20+, uv, pnpm, ffmpeg
+# 前置要求：Python 3.12+, Node.js 20+, uv, pnpm, ffmpeg, Docker Compose
 # 文档站 website/ 另需 Node 24（版本钉在 website/.node-version）
 # 操作系统：Linux / MacOS / Windows WSL2（Windows 原生不支持）
 
@@ -12,7 +14,13 @@ cd frontend && pnpm install && cd ..
 # 一次性安装 pre-commit 钩子（ruff / eslint / pull_request_target tripwire）
 uv run pre-commit install
 
-# 初始化数据库
+# 启动仅包含 PostgreSQL 的开发容器
+docker compose -f deploy/development/docker-compose.yml up -d
+
+# 复制本地应用配置；默认连接上述 matrixspooll 开发库
+cp .env.example .env
+
+# 初始化或升级开发数据库
 uv run alembic upgrade head
 
 # 启动后端 (终端 1)
@@ -24,6 +32,15 @@ uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --po
 cd frontend && pnpm dev
 
 # 访问 http://localhost:5173
+```
+
+开发 Compose 只运行 PostgreSQL，后端和前端继续在宿主机运行，因此保留热重载能力。数据库持久化在
+`deploy/development/pgdata/`；需要修改本地端口或开发密码时，将
+`deploy/development/.env.example` 复制为同目录下的 `.env`，并同步修改仓库根目录 `.env` 的
+`DATABASE_URL`。停止开发数据库使用：
+
+```bash
+docker compose -f deploy/development/docker-compose.yml down
 ```
 
 ### 文档站
@@ -150,7 +167,7 @@ cd website && pnpm format         # prettier 写回
 
 ## 文档维护
 
-用户文档的唯一发布位置是 [docs.arc-reel.com](https://docs.arc-reel.com)，源文件在 `website/docs/`（本地构建与预览见上文「文档站」）。中文是唯一写作源，英文译文由 AI 生成、人工只审中文源。内部文档（ADR、`CONTEXT.md`、`AGENTS.md`、安全威胁模型、供应商 API 文档索引等）不上站，留在仓库 `docs/` 下；`SECURITY.md` 因 GitHub Security 选项卡依赖也留在仓库根。
+用户文档的唯一源文件在 `website/docs/`（本地构建与预览见上文「文档站」）。中文是唯一写作源，英文译文由 AI 生成、人工只审中文源。内部文档（ADR、`CONTEXT.md`、`AGENTS.md`、安全威胁模型、供应商 API 文档索引等）不上站，留在仓库 `docs/` 下；`SECURITY.md` 因 GitHub Security 选项卡依赖也留在仓库根。
 
 本文件是贡献指南的真相源，构建时复制为站点的开发区页面（`website/scripts/sync-contributing.mjs`），中文副本不入库。
 

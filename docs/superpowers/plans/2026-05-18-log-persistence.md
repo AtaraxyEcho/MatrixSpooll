@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 给 ArcReel 加上文件日志落盘（按天轮转、保留 7 天）+ 鉴权后的诊断 zip 下载端点，让单机用户能反馈高质量 bug 报告而不丢失日志。
+**Goal:** 给 MatrixSpooll 加上文件日志落盘（按天轮转、保留 7 天）+ 鉴权后的诊断 zip 下载端点，让单机用户能反馈高质量 bug 报告而不丢失日志。
 
-**Architecture:** `lib/logging_config.py` 在现有 StreamHandler 之外挂一个 `TimedRotatingFileHandler`（默认写到 `app_data_dir()/logs/arcreel.log`）；新增 `server/services/diagnostics.py` 收集脱敏的系统信息；新增 `server/routers/system.py` 提供 `GET /api/v1/system/logs/download` 返回 zip（含日志文件 + diagnostics.txt）；前端在 `AboutSection` 加一个按钮，通过现有 `withAuth` 走授权请求并触发浏览器下载。
+**Architecture:** `lib/logging_config.py` 在现有 StreamHandler 之外挂一个 `TimedRotatingFileHandler`（默认写到 `app_data_dir()/logs/matrixspooll.log`）；新增 `server/services/diagnostics.py` 收集脱敏的系统信息；新增 `server/routers/system.py` 提供 `GET /api/v1/system/logs/download` 返回 zip（含日志文件 + diagnostics.txt）；前端在 `AboutSection` 加一个按钮，通过现有 `withAuth` 走授权请求并触发浏览器下载。
 
 **Tech Stack:** Python 3 (logging.handlers / zipfile / tempfile.SpooledTemporaryFile)、FastAPI / StreamingResponse、pytest（`asyncio_mode = "auto"`）、React + TypeScript + i18next + vitest。
 
@@ -49,8 +49,8 @@ def _reset_root_logger():
 
 @pytest.fixture
 def isolated_log_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("ARCREEL_LOG_DIR", str(tmp_path / "logs"))
-    monkeypatch.delenv("ARCREEL_LOG_FILE_DISABLED", raising=False)
+    monkeypatch.setenv("MATRIXSPOOLL_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.delenv("MATRIXSPOOLL_LOG_FILE_DISABLED", raising=False)
     return tmp_path / "logs"
 
 
@@ -70,7 +70,7 @@ def test_file_handler_registered_by_default(isolated_log_dir: Path) -> None:
 
 
 def test_file_handler_disabled_by_env(isolated_log_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ARCREEL_LOG_FILE_DISABLED", "1")
+    monkeypatch.setenv("MATRIXSPOOLL_LOG_FILE_DISABLED", "1")
     cfg = _reload_module()
     cfg.setup_logging()
     root = logging.getLogger()
@@ -80,18 +80,18 @@ def test_file_handler_disabled_by_env(isolated_log_dir: Path, monkeypatch: pytes
 def test_logs_written_to_file(isolated_log_dir: Path) -> None:
     cfg = _reload_module()
     cfg.setup_logging()
-    logging.getLogger("test.persistence").info("hello-arcreel")
+    logging.getLogger("test.persistence").info("hello-matrixspooll")
     for h in logging.getLogger().handlers:
         h.flush()
-    log_file = isolated_log_dir / "arcreel.log"
+    log_file = isolated_log_dir / "matrixspooll.log"
     assert log_file.exists()
-    assert "hello-arcreel" in log_file.read_text(encoding="utf-8")
+    assert "hello-matrixspooll" in log_file.read_text(encoding="utf-8")
 
 
 def test_mkdir_failure_graceful(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = tmp_path / "blocked" / "logs"
-    monkeypatch.setenv("ARCREEL_LOG_DIR", str(target))
-    monkeypatch.delenv("ARCREEL_LOG_FILE_DISABLED", raising=False)
+    monkeypatch.setenv("MATRIXSPOOLL_LOG_DIR", str(target))
+    monkeypatch.delenv("MATRIXSPOOLL_LOG_FILE_DISABLED", raising=False)
 
     real_mkdir = Path.mkdir
 
@@ -121,7 +121,7 @@ def test_idempotent(isolated_log_dir: Path) -> None:
 
 def test_disabled_env_accepts_aliases(isolated_log_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for value in ("1", "true", "TRUE", "yes", "Yes"):
-        monkeypatch.setenv("ARCREEL_LOG_FILE_DISABLED", value)
+        monkeypatch.setenv("MATRIXSPOOLL_LOG_FILE_DISABLED", value)
         cfg = _reload_module()
         cfg.setup_logging()
         root = logging.getLogger()
@@ -151,21 +151,21 @@ from pathlib import Path
 from lib.app_data_dir import app_data_dir
 from lib.env_init import PROJECT_ROOT
 
-_HANDLER_ATTR = "_arcreel_logging"
-_FILE_HANDLER_ATTR = "_arcreel_file_logging"
+_HANDLER_ATTR = "_matrixspooll_logging"
+_FILE_HANDLER_ATTR = "_matrixspooll_file_logging"
 _DISABLED_TRUTHY = frozenset({"1", "true", "yes"})
 
 
 def _file_logging_disabled() -> bool:
-    return os.environ.get("ARCREEL_LOG_FILE_DISABLED", "").strip().lower() in _DISABLED_TRUTHY
+    return os.environ.get("MATRIXSPOOLL_LOG_FILE_DISABLED", "").strip().lower() in _DISABLED_TRUTHY
 
 
 def _resolve_log_dir() -> Path:
-    """日志目录解析：ARCREEL_LOG_DIR > app_data_dir()/logs。
+    """日志目录解析：MATRIXSPOOLL_LOG_DIR > app_data_dir()/logs。
 
     相对路径基于 PROJECT_ROOT，与 app_data_dir 的策略保持一致。
     """
-    raw = os.environ.get("ARCREEL_LOG_DIR", "").strip()
+    raw = os.environ.get("MATRIXSPOOLL_LOG_DIR", "").strip()
     if raw:
         path = Path(raw)
         if not path.is_absolute():
@@ -207,7 +207,7 @@ def setup_logging(level: str | None = None) -> None:
             log_dir = _resolve_log_dir()
             log_dir.mkdir(parents=True, exist_ok=True)
             file_handler = TimedRotatingFileHandler(
-                filename=str(log_dir / "arcreel.log"),
+                filename=str(log_dir / "matrixspooll.log"),
                 when="midnight",
                 backupCount=7,
                 encoding="utf-8",
@@ -279,7 +279,7 @@ import pytest
 
 
 def test_collect_returns_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("ARCREEL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MATRIXSPOOLL_DATA_DIR", str(tmp_path))
     from lib.app_data_dir import _reset_for_tests
 
     _reset_for_tests()
@@ -288,7 +288,7 @@ def test_collect_returns_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 
     text = collect_diagnostics()
     assert isinstance(text, str)
-    assert "ArcReel diagnostics" in text or "ArcReel Diagnostics" in text
+    assert "MatrixSpooll diagnostics" in text or "MatrixSpooll Diagnostics" in text
     assert "App version" in text
     assert "Python" in text
     assert "OS" in text
@@ -297,10 +297,10 @@ def test_collect_returns_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 
 
 def test_collect_masks_db_password(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("ARCREEL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MATRIXSPOOLL_DATA_DIR", str(tmp_path))
     monkeypatch.setenv(
         "DATABASE_URL",
-        "postgresql+asyncpg://arcuser:supersecretpassword@db.example.com:5432/arcreel",
+        "postgresql+asyncpg://arcuser:supersecretpassword@db.example.com:5432/matrixspooll",
     )
     from lib.app_data_dir import _reset_for_tests
 
@@ -313,11 +313,11 @@ def test_collect_masks_db_password(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert "••" in text  # 出现脱敏标记
     # 数据库名/host 仍可见（用于诊断）
     assert "db.example.com" in text
-    assert "arcreel" in text
+    assert "matrixspooll" in text
 
 
 def test_collect_swallows_field_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("ARCREEL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MATRIXSPOOLL_DATA_DIR", str(tmp_path))
     from lib.app_data_dir import _reset_for_tests
 
     _reset_for_tests()
@@ -337,7 +337,7 @@ def test_collect_swallows_field_errors(monkeypatch: pytest.MonkeyPatch, tmp_path
 
 def test_collect_returns_log_dir_matching_logging_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     log_dir = tmp_path / "custom-logs"
-    monkeypatch.setenv("ARCREEL_LOG_DIR", str(log_dir))
+    monkeypatch.setenv("MATRIXSPOOLL_LOG_DIR", str(log_dir))
     from lib.app_data_dir import _reset_for_tests
 
     _reset_for_tests()
@@ -384,7 +384,7 @@ def _app_version() -> str:
         from importlib.metadata import PackageNotFoundError, version
 
         try:
-            return version("arcreel")
+            return version("matrixspooll")
         except PackageNotFoundError:
             pass
     except Exception:
@@ -422,7 +422,7 @@ def _log_dir() -> str:
 def _db_url() -> str:
     import os
 
-    raw = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./projects/.arcreel.db")
+    raw = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./projects/.matrixspooll.db")
     try:
         parsed = urlparse(raw)
         if parsed.username or parsed.password:
@@ -476,7 +476,7 @@ def collect_diagnostics() -> str:
         ("Report generated", lambda: datetime.now(timezone.utc).isoformat()),
     ]
 
-    lines = ["ArcReel diagnostics", "=" * 40]
+    lines = ["MatrixSpooll diagnostics", "=" * 40]
     for label, fn in fields:
         lines.append(f"{label}: {_safe(fn, label)}")
     return "\n".join(lines) + "\n"
@@ -540,8 +540,8 @@ def auth_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
 async def _client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, auth_disabled: None):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
-    monkeypatch.setenv("ARCREEL_LOG_DIR", str(log_dir))
-    monkeypatch.setenv("ARCREEL_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MATRIXSPOOLL_LOG_DIR", str(log_dir))
+    monkeypatch.setenv("MATRIXSPOOLL_DATA_DIR", str(tmp_path / "data"))
     from lib.app_data_dir import _reset_for_tests
 
     _reset_for_tests()
@@ -560,7 +560,7 @@ async def _client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, auth_disabled
 
 async def test_download_returns_zip(_client) -> None:
     client, log_dir = _client
-    (log_dir / "arcreel.log").write_text("test log line\n", encoding="utf-8")
+    (log_dir / "matrixspooll.log").write_text("test log line\n", encoding="utf-8")
     res = await client.get("/api/v1/system/logs/download")
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/zip"
@@ -578,13 +578,13 @@ async def test_zip_contains_diagnostics(_client) -> None:
 
 async def test_zip_includes_log_files(_client) -> None:
     client, log_dir = _client
-    (log_dir / "arcreel.log").write_text("active log\n", encoding="utf-8")
-    (log_dir / "arcreel.log.2026-05-15").write_text("archived log\n", encoding="utf-8")
+    (log_dir / "matrixspooll.log").write_text("active log\n", encoding="utf-8")
+    (log_dir / "matrixspooll.log.2026-05-15").write_text("archived log\n", encoding="utf-8")
     res = await client.get("/api/v1/system/logs/download")
     z = zipfile.ZipFile(io.BytesIO(res.content))
     names = z.namelist()
-    assert any(n.endswith("arcreel.log") for n in names)
-    assert any(n.endswith("arcreel.log.2026-05-15") for n in names)
+    assert any(n.endswith("matrixspooll.log") for n in names)
+    assert any(n.endswith("matrixspooll.log.2026-05-15") for n in names)
 
 
 async def test_empty_logs_dir(_client) -> None:
@@ -597,7 +597,7 @@ async def test_empty_logs_dir(_client) -> None:
 
 async def test_oversized_file_skipped(_client) -> None:
     client, log_dir = _client
-    big = log_dir / "arcreel.log.2026-05-10"
+    big = log_dir / "matrixspooll.log.2026-05-10"
     # 写一个 101 MB 的稀疏文件（仅记录 size，避免真实磁盘占用）
     with big.open("wb") as f:
         f.seek(101 * 1024 * 1024 - 1)
@@ -616,8 +616,8 @@ async def test_download_requires_auth(monkeypatch: pytest.MonkeyPatch, tmp_path:
     monkeypatch.setenv("AUTH_USERNAME", "admin")
     monkeypatch.setenv("AUTH_PASSWORD", "hunter2")
     monkeypatch.setenv("AUTH_TOKEN_SECRET", "test-secret-32-chars-long-xxxxx")
-    monkeypatch.setenv("ARCREEL_LOG_DIR", str(tmp_path / "logs"))
-    monkeypatch.setenv("ARCREEL_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MATRIXSPOOLL_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("MATRIXSPOOLL_DATA_DIR", str(tmp_path / "data"))
     from lib.app_data_dir import _reset_for_tests
 
     _reset_for_tests()
@@ -664,7 +664,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
 _SPOOL_MAX = 50 * 1024 * 1024  # 50 MB —— 多数日志包都能留在内存
-_LOG_GLOB = "arcreel.log*"
+_LOG_GLOB = "matrixspooll.log*"
 
 
 @router.get("/system/logs/download")
@@ -692,7 +692,7 @@ async def download_logs(_user: CurrentUser) -> StreamingResponse:
 
     spooled.seek(0)
     ts = datetime.now().strftime("%Y-%m-%d-%H%M")
-    filename = f"arcreel-diagnostics-{ts}.zip"
+    filename = f"matrixspooll-diagnostics-{ts}.zip"
 
     def _iter():
         try:
@@ -809,7 +809,7 @@ async downloadDiagnostics(): Promise<{ blob: Blob; filename: string }> {
   }
   const disposition = response.headers.get("Content-Disposition") ?? "";
   const match = disposition.match(/filename="?([^";]+)"?/);
-  const filename = match?.[1] ?? "arcreel-diagnostics.zip";
+  const filename = match?.[1] ?? "matrixspooll-diagnostics.zip";
   const blob = await response.blob();
   return { blob, filename };
 }
@@ -899,14 +899,14 @@ git commit -m "feat(frontend): download diagnostics button in Settings"
 
 ```bash
 
-# Log file directory (default: $ARCREEL_DATA_DIR/logs)
+# Log file directory (default: $MATRIXSPOOLL_DATA_DIR/logs)
 # Relative paths resolve against PROJECT_ROOT.
-# 日志文件目录（默认 $ARCREEL_DATA_DIR/logs），相对路径基于 PROJECT_ROOT。
-# ARCREEL_LOG_DIR=
+# 日志文件目录（默认 $MATRIXSPOOLL_DATA_DIR/logs），相对路径基于 PROJECT_ROOT。
+# MATRIXSPOOLL_LOG_DIR=
 
 # Disable file logging (default: false). When set to 1/true/yes, logs go only to stdout.
 # 关闭文件日志（默认 false）。设为 1/true/yes 时日志仅输出到 stdout。
-# ARCREEL_LOG_FILE_DISABLED=
+# MATRIXSPOOLL_LOG_FILE_DISABLED=
 ```
 
 - [ ] **Step 5.2: 编辑 `CHANGELOG.md`**
@@ -917,7 +917,7 @@ Run: `ls CHANGELOG.md 2>/dev/null && echo exists`
 
 ```markdown
 ### Added
-- 日志按天落盘到 `$ARCREEL_DATA_DIR/logs/`，保留 7 天；Settings → 关于页面新增「下载诊断日志」按钮可一键打包日志 + 系统信息 zip
+- 日志按天落盘到 `$MATRIXSPOOLL_DATA_DIR/logs/`，保留 7 天；Settings → 关于页面新增「下载诊断日志」按钮可一键打包日志 + 系统信息 zip
 ```
 
 如果文件不存在，跳过此步。
@@ -968,10 +968,10 @@ Expected: 0 error
 uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241
 ```
 
-- 启动后检查 `$ARCREEL_DATA_DIR/logs/arcreel.log` 出现，且包含启动日志
+- 启动后检查 `$MATRIXSPOOLL_DATA_DIR/logs/matrixspooll.log` 出现，且包含启动日志
 - 在前端登录后打开 Settings → 关于 → 点击「下载诊断日志」，浏览器应直接下载一个 zip
 - 解压检查：
-  - `logs/arcreel.log` 内容齐全
+  - `logs/matrixspooll.log` 内容齐全
   - `diagnostics.txt` 字段完整且 secret 已脱敏
 
 - [ ] **Step F.5: 准备 PR（不执行 push）**

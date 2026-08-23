@@ -15,13 +15,37 @@ update_docs: engine-b
 |---|---|---|---|
 | Docker 本地构建 | `deploy/production/docker-compose.yml` | PostgreSQL | 从当前源码构建完整镜像 |
 | Docker 镜像部署 | `deploy/production/docker-compose-img.yml` | PostgreSQL | 拉取已发布的完整镜像 |
-| 本地开发 | 源码启动 | PostgreSQL | 必须显式配置 `DATABASE_URL`，见[贡献指南](../dev/contributing.md) |
+| 本地开发 | Docker PostgreSQL + 源码启动 | PostgreSQL | 数据库容器化，应用保留热重载，见[贡献指南](../dev/contributing.md) |
 
 无论选择哪种方式，项目图片、视频和其他生成资产都需要持久化保存。
 
 MatrixSpooll 支持管理员、成员与项目 owner/editor/viewer 角色，但仍是单实例、单租户部署，不提供跨组织租户隔离。
 
 运行模式不再提供 SQLite 回退。除显式 `TESTING=true` 的隔离测试外，缺少 `DATABASE_URL` 会直接阻止服务启动，避免本地环境和 Docker 环境连接到不同数据库。
+
+## 本地开发 PostgreSQL {#local-development-postgresql}
+
+开发环境只通过 Docker 运行 PostgreSQL，后端和前端仍在宿主机运行：
+
+```bash
+docker compose -f deploy/development/docker-compose.yml up -d
+cp .env.example .env
+uv run alembic upgrade head
+uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241
+```
+
+默认开发连接为
+`postgresql+asyncpg://matrixspooll:matrixspooll_dev@localhost:5432/matrixspooll`。数据库文件保存在
+`deploy/development/pgdata/`。如需修改端口或密码，将 `deploy/development/.env.example` 复制为同目录
+`.env`，并同步修改仓库根目录 `.env` 中的 `DATABASE_URL`。
+
+检查数据库或停止容器：
+
+```bash
+docker compose -f deploy/development/docker-compose.yml exec postgres \
+  psql -U matrixspooll -d matrixspooll -c "SELECT current_database(), current_user;"
+docker compose -f deploy/development/docker-compose.yml down
+```
 
 ## 1. 部署：PostgreSQL {#postgresql-deployment}
 
@@ -74,6 +98,58 @@ docker compose logs --tail=100 matrixspooll
 curl -f http://localhost:1241/health/ready
 ```
 
+### 1.2 迁移既有 PostgreSQL 身份 {#rename-postgresql-identity}
+
+本节只适用于角色名或数据库名尚未改为 `matrixspooll` 的既有 PostgreSQL 数据卷。PostgreSQL 的
+`POSTGRES_USER` 和 `POSTGRES_DB` 只在空数据目录首次初始化时生效；直接更新 Compose 不会重命名已有数据。
+先从旧部署的 `.env` 或 Compose 中确认实际名称，并在当前 shell 中显式设置：
+
+```bash
+old_pg_role="<旧角色名>"
+old_pg_database="<旧数据库名>"
+test "$old_pg_role" != "matrixspooll"
+test "$old_pg_database" != "matrixspooll"
+case "$old_pg_role:$old_pg_database" in
+  (*[!A-Za-z0-9_:]*) echo "旧名称只能包含字母、数字和下划线" >&2; exit 1 ;;
+esac
+```
+
+先停止应用并生成数据库备份。根据实际部署选择 Compose 文件：
+
+```bash
+cd "$(git rev-parse --show-toplevel)/deploy/production"
+compose_file=docker-compose.yml  # 镜像部署改为 docker-compose-img.yml
+
+docker compose -f "$compose_file" stop matrixspooll || true
+docker compose -f "$compose_file" up -d --no-deps postgres
+mkdir -p backups
+docker compose -f "$compose_file" exec -T postgres \
+  pg_dump -U "$old_pg_role" -d "$old_pg_database" > backups/matrixspooll-before-identity-rename.sql
+```
+
+容器在重命名完成前可能显示 `unhealthy`，因为新版健康检查已经查询 `matrixspooll`，但仍可执行
+`docker compose exec`。随后使用旧的超级用户断开旧数据库连接并完成重命名：
+
+```bash
+docker compose -f "$compose_file" exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
+  -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$old_pg_database' AND pid <> pg_backend_pid()"
+
+docker compose -f "$compose_file" exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
+  -c "ALTER DATABASE \"$old_pg_database\" RENAME TO matrixspooll"
+
+docker compose -f "$compose_file" exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
+  -c "ALTER ROLE \"$old_pg_role\" RENAME TO matrixspooll"
+
+docker compose -f "$compose_file" up -d
+curl -f http://localhost:1241/health/ready
+```
+
+角色重命名保留其内部 OID，因此现有表、序列和其他对象的所有权无需逐项转移。命令中断时先检查
+`pg_roles` 和 `pg_database` 的当前名称，再从未完成的步骤继续。不要把新名称重复执行为“重命名目标”。
+
 如需避免服务器安装 Python/Node 依赖，先在开发机或 CI 构建完整 Linux 镜像并推送：
 
 ```bash
@@ -101,7 +177,7 @@ docker compose -f docker-compose-img.yml up -d
 | `deploy/production/claude_data/` | Agent 运行时数据 |
 | `deploy/production/.env` | 认证和数据库配置 |
 
-`pgdata/` 只保存 PostgreSQL 集群数据，`projects/` 保存项目元数据和媒体资产，两者都必须持久化且配套备份。生产部署通过 `DATABASE_URL` 使用 PostgreSQL，不会使用 `deploy/production/projects/.arcreel.db`；不要把 SQLite 文件复制进 `pgdata/`，也不要把两个目录当成可相互替代的数据库备份。
+`pgdata/` 只保存 PostgreSQL 集群数据，`projects/` 保存项目元数据和媒体资产，两者都必须持久化且配套备份。生产部署通过 `DATABASE_URL` 使用 PostgreSQL，不会使用 `deploy/production/projects/.matrixspooll.db`；不要把 SQLite 文件复制进 `pgdata/`，也不要把两个目录当成可相互替代的数据库备份。
 
 ### 1.3 数据库迁移 {#database-migrations}
 
@@ -122,7 +198,7 @@ MatrixSpooll 在应用启动时运行 Alembic 迁移，将数据库结构升级�
 | `POSTGRES_PASSWORD` | 无 | Docker 部署必须设置 |
 | `TZ` | `Asia/Shanghai` | 可在 Compose 环境中覆盖 |
 | `DATABASE_URL` | 无 | 源码运行必须显式设置 PostgreSQL URL；Compose 自动注入 |
-| `ARCREEL_DATA_DIR` | `projects` | 需要自定义应用数据根目录时使用 |
+| `MATRIXSPOOLL_DATA_DIR` | `projects` | 需要自定义应用数据根目录时使用 |
 
 注意：
 
@@ -212,7 +288,7 @@ curl -f http://localhost:1241/health/ready
 
 - `project.json`；
 - `project.json` 登记的正式剧本文件；
-- 已存在的 `.arcreel_artifacts.json`。
+- 已存在的 `.matrixspooll_artifacts.json`。
 
 迁移可安全重试：如果上次启动在备份或提交中断，下一次启动会重新校验，并确保至少有一份与迁移前内容完全一致的备份后再继续。自动生成的这些项目级备份只用于迁移恢复，不能代替数据库与整个 `projects/` 目录的部署级备份。
 
@@ -251,10 +327,10 @@ docker compose stop matrixspooll
 backup_stamp="$(date +%Y%m%d-%H%M%S)"
 
 docker compose exec -T postgres sh -c \
-  'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_dump -h 127.0.0.1 -U arcreel -d arcreel' \
-  > "backups/arcreel-db-${backup_stamp}.sql"
+  'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_dump -h 127.0.0.1 -U matrixspooll -d matrixspooll' \
+  > "backups/matrixspooll-db-${backup_stamp}.sql"
 
-tar -czf "backups/arcreel-files-${backup_stamp}.tar.gz" \
+tar -czf "backups/matrixspooll-files-${backup_stamp}.tar.gz" \
   .env docker-compose.yml projects vertex_keys claude_data
 
 docker compose start matrixspooll
@@ -275,22 +351,22 @@ cd "$(git rev-parse --show-toplevel)/deploy/production"
 docker compose stop matrixspooll
 
 backup_stamp=YYYYMMDD-HHMMSS
-tar -xzf "backups/arcreel-files-${backup_stamp}.tar.gz"
+tar -xzf "backups/matrixspooll-files-${backup_stamp}.tar.gz"
 ```
 
-文件归档会恢复 `.env`、`docker-compose.yml`、`projects/` 和运行时目录。以下流程还会删除目标 `arcreel` 数据库中的现有数据；先确认同一 `backup_stamp` 的数据库与文件备份完整，并在隔离环境演练恢复流程。
+文件归档会恢复 `.env`、`docker-compose.yml`、`projects/` 和运行时目录。以下流程还会删除目标 `matrixspooll` 数据库中的现有数据；先确认同一 `backup_stamp` 的数据库与文件备份完整，并在隔离环境演练恢复流程。
 
 重建空数据库后再导入，避免与已有表结构或数据冲突：
 
 ```bash
 docker compose exec -T postgres \
-  dropdb -U arcreel --maintenance-db=postgres --if-exists --force arcreel
+  dropdb -U matrixspooll --maintenance-db=postgres --if-exists --force matrixspooll
 
 docker compose exec -T postgres \
-  createdb -U arcreel --maintenance-db=postgres -O arcreel arcreel
+  createdb -U matrixspooll --maintenance-db=postgres -O matrixspooll matrixspooll
 
-cat "backups/arcreel-db-${backup_stamp}.sql" | \
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U arcreel -d arcreel
+cat "backups/matrixspooll-db-${backup_stamp}.sql" | \
+  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U matrixspooll -d matrixspooll
 ```
 
 数据库导入成功后，重新启动：
@@ -326,10 +402,10 @@ Nginx 示例：
 ```nginx
 server {
     listen 443 ssl http2;
-    server_name arcreel.example.com;
+    server_name matrixspooll.example.com;
 
-    ssl_certificate /etc/letsencrypt/live/arcreel.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/arcreel.example.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/matrixspooll.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/matrixspooll.example.com/privkey.pem;
 
     client_max_body_size 2g;
 

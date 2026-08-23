@@ -1,5 +1,5 @@
 [project]
-name = "arcreel"
+name = "matrixspooll"
 # managed by release-please — do not bump manually
 version = "0.26.0"
 description = "AI video generation workspace"

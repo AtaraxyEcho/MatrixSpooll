@@ -25,10 +25,10 @@ export function GlassPopover({
     <Popover
       {...rest}
       backgroundColor="transparent"
-      className={`arc-glass-panel relative overflow-hidden rounded-lg ${className}`.trim()}
+      className={`msp-glass-panel relative overflow-hidden rounded-lg ${className}`.trim()}
     >
       {showHairline && (
-        <span aria-hidden="true" className="arc-glass-hairline" data-tone={hairlineTone} />
+        <span aria-hidden="true" className="msp-glass-hairline" data-tone={hairlineTone} />
       )}
       {children}
     </Popover>

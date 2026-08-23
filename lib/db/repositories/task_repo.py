@@ -15,6 +15,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from lib.db.actor_identity import resolve_actor_user_id
 from lib.db.base import DEFAULT_USER_ID, dt_to_iso, utc_now
 from lib.db.models.task import Task, WorkerLease
 from lib.db.project_identity import resolve_project_id
@@ -36,6 +37,7 @@ _MAX_ERROR_MESSAGE_LEN = 2000
 def _active_dedupe_clauses(
     *,
     project_name: str,
+    project_id: str | None = None,
     task_type: str,
     script_file: str | None,
     resource_type: str | None,
@@ -47,7 +49,7 @@ def _active_dedupe_clauses(
     表达式里的 ``COALESCE`` 对齐。
     """
     return [
-        Task.project_name == project_name,
+        func.coalesce(Task.project_id, Task.project_name) == (project_id or project_name),
         Task.task_type == task_type,
         func.coalesce(Task.script_file, "") == (script_file or ""),
         func.coalesce(Task.resource_type, "") == (resource_type or ""),
@@ -170,12 +172,15 @@ class TaskRepository(BaseRepository):
     ) -> dict[str, Any]:
         now = utc_now()
         project_id = await resolve_project_id(self.session, project_name)
+        actor_id = await resolve_actor_user_id(self.session, user_id)
+        actor_username = await self._actor_username(actor_id)
 
         task_id = uuid.uuid4().hex
         task = Task(
             task_id=task_id,
             project_id=project_id,
             project_name=project_name,
+            actor_username=actor_username,
             task_type=task_type,
             media_type=media_type,
             resource_id=resource_id,
@@ -190,7 +195,7 @@ class TaskRepository(BaseRepository):
             provider_id=provider_id,
             queued_at=now,
             updated_at=now,
-            user_id=user_id,
+            user_id=actor_id,
         )
         self.session.add(task)
         try:
@@ -203,6 +208,7 @@ class TaskRepository(BaseRepository):
                 .where(
                     *_active_dedupe_clauses(
                         project_name=project_name,
+                        project_id=project_id,
                         task_type=task_type,
                         script_file=script_file,
                         resource_type=resource_type,
@@ -239,6 +245,7 @@ class TaskRepository(BaseRepository):
         self,
         *,
         project_name: str,
+        project_id: str | None = None,
         task_type: str,
         resource_ids: list[str],
         script_file: str | None = None,
@@ -253,11 +260,13 @@ class TaskRepository(BaseRepository):
         """
         if not resource_ids:
             return []
+        project_id = project_id or await resolve_project_id(self.session, project_name)
         result = await self.session.execute(
             select(Task)
             .where(
                 *_active_dedupe_clauses(
                     project_name=project_name,
+                    project_id=project_id,
                     task_type=task_type,
                     script_file=script_file,
                     resource_type=resource_type,
@@ -865,24 +874,26 @@ class TaskRepository(BaseRepository):
         await self.session.commit()
         return {"rows": 1 if data is not None else 0, "cancelling": cancelling}
 
-    async def get_cancel_all_preview(self, project_name: str) -> int:
+    async def get_cancel_all_preview(self, project_name: str, *, project_id: str | None = None) -> int:
         """返回项目中当前 queued 状态的任务数量。"""
+        project_id = project_id or await resolve_project_id(self.session, project_name)
+        project_filter = Task.project_id == project_id if project_id else Task.project_name == project_name
         result = await self.session.execute(
-            select(func.count()).select_from(Task).where(Task.project_name == project_name, Task.status == "queued")
+            select(func.count()).select_from(Task).where(project_filter, Task.status == "queued")
         )
         return result.scalar_one()
 
-    async def cancel_all_queued(self, project_name: str) -> dict[str, Any]:
+    async def cancel_all_queued(self, project_name: str, *, project_id: str | None = None) -> dict[str, Any]:
         """取消项目中所有 queued 任务。"""
-        queued_result = await self.session.execute(
-            select(Task).where(Task.project_name == project_name, Task.status == "queued")
-        )
+        project_id = project_id or await resolve_project_id(self.session, project_name)
+        project_filter = Task.project_id == project_id if project_id else Task.project_name == project_name
+        queued_result = await self.session.execute(select(Task).where(project_filter, Task.status == "queued"))
         queued_tasks = list(queued_result.scalars().all())
 
         now = utc_now()
         stmt = (
             update(Task)
-            .where(Task.project_name == project_name, Task.status == "queued")
+            .where(project_filter, Task.status == "queued")
             .values(
                 status="cancelled",
                 cancelled_by="user",
@@ -965,6 +976,8 @@ class TaskRepository(BaseRepository):
         *,
         project_name: str | None = None,
         project_names: Sequence[str] | None = None,
+        project_id: str | None = None,
+        project_ids: Sequence[str] | None = None,
         status: str | None = None,
         task_type: str | None = None,
         source: str | None = None,
@@ -976,7 +989,13 @@ class TaskRepository(BaseRepository):
         offset = (page - 1) * page_size
 
         filters = []
-        if project_name:
+        if project_name and not project_id and project_ids is None and project_names is None:
+            project_id = await resolve_project_id(self.session, project_name)
+        if project_id:
+            filters.append(Task.project_id == project_id)
+        elif project_ids is not None:
+            filters.append(Task.project_id.in_(list(project_ids)))
+        elif project_name:
             filters.append(Task.project_name == project_name)
         elif project_names is not None:
             filters.append(Task.project_name.in_(list(project_names)))
@@ -1014,9 +1033,17 @@ class TaskRepository(BaseRepository):
         *,
         project_name: str | None = None,
         project_names: Sequence[str] | None = None,
+        project_id: str | None = None,
+        project_ids: Sequence[str] | None = None,
     ) -> dict[str, int]:
         filters = []
-        if project_name:
+        if project_name and not project_id and project_ids is None and project_names is None:
+            project_id = await resolve_project_id(self.session, project_name)
+        if project_id:
+            filters.append(Task.project_id == project_id)
+        elif project_ids is not None:
+            filters.append(Task.project_id.in_(list(project_ids)))
+        elif project_name:
             filters.append(Task.project_name == project_name)
         elif project_names is not None:
             filters.append(Task.project_name.in_(list(project_names)))

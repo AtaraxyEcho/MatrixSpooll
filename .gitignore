@@ -39,8 +39,8 @@ logs/
 # Keep project structure but ignore generated content
 !projects/.gitkeep
 
-# New unified ORM database (SQLite)
-projects/.arcreel.db
+# Test-only SQLite artifacts
+projects/.matrixspooll.db*
 # Old SQLite database backups (created by migration script)
 projects/.*.db.bak
 
@@ -86,6 +86,7 @@ coverage/
 
 # File locks (project_manager 原子写产物)
 **/*.lock
+!/uv.lock
 
 # Docker runtime data
 claude_data/
@@ -100,3 +101,5 @@ deploy/production/projects/
 deploy/production/vertex_keys/
 deploy/production/claude_data/
 deploy/production/pgdata/
+deploy/development/.env
+deploy/development/pgdata/

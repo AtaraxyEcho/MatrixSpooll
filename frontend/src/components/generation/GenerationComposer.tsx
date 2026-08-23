@@ -1534,14 +1534,14 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
           generation_mode: null,
           aspect_ratio: projectAspectRatio,
         });
-        rollbackProjectName = project.name;
+        rollbackProjectName = project.project_id ?? project.id ?? project.name;
         return project;
       };
-      const uploadReferences = async (projectName: string): Promise<FreeCreationReferenceClaim[]> => {
+      const uploadReferences = async (projectRef: string): Promise<FreeCreationReferenceClaim[]> => {
         const claims: FreeCreationReferenceClaim[] = [];
         for (const reference of referenceFiles) {
           const { file } = reference;
-          const uploaded = await API.uploadFreeCreationReference(projectName, file);
+          const uploaded = await API.uploadFreeCreationReference(projectRef, file);
           claims.push({
             type: "upload",
             reference_id: uploaded.reference.reference_id,
@@ -1553,7 +1553,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
 
       if (composerMode === "agent") {
         const project = await createProjectShell(agentAspectRatio);
-        const projectRef = project.name;
+        const projectRef = project.project_id ?? project.id ?? project.name;
         await uploadReferences(projectRef);
         const preferenceLabel = agentPreference === "image"
           ? t("free_creation_agent_preference_image")
@@ -1573,7 +1573,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
         setPrompt("");
         clearReferenceFiles();
         rollbackProjectName = null;
-        onCreated(project.name, "agent");
+        onCreated(projectRef, "agent");
         return;
       }
       const payload: CreateFreeCreationRequest = {
@@ -1591,7 +1591,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       const project = referenceFiles.length
         ? await (async () => {
             const created = await createProjectShell(aspectRatio);
-            const projectRef = created.name;
+            const projectRef = created.project_id ?? created.id ?? created.name;
             const references = await uploadReferences(projectRef);
             await API.createFreeCreation(projectRef, { ...payload, references });
             return created;
@@ -1600,7 +1600,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       setPrompt("");
       clearReferenceFiles();
       rollbackProjectName = null;
-      onCreated(project.name, composerMode);
+      onCreated(project.project_id ?? project.id ?? project.name, composerMode);
     } catch (err) {
       if (rollbackProjectName) {
         try {

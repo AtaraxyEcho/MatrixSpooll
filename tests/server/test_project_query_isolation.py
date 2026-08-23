@@ -43,7 +43,7 @@ async def test_project_scoped_records_capture_stable_identity_and_actor(db_facto
     async with db_factory() as session:
         now = utc_now()
         session.add(User(id="default", username="admin", role="admin", is_active=True))
-        session.add(User(id="editor-1", username="editor", role="user", is_active=True))
+        session.add(User(id="editor-1", username="editor", role="member", is_active=True))
         session.add(
             ProjectRegistry(
                 id="project-stable-id",

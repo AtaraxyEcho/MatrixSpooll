@@ -262,7 +262,7 @@ Typical contents include:
 
 The application data root is resolved in this order:
 
-1. `ARCREEL_DATA_DIR`
+1. `MATRIXSPOOLL_DATA_DIR`
 2. compatibility variable `AI_ANIME_PROJECTS`
 3. default `projects/`
 
@@ -365,7 +365,7 @@ MatrixSpooll provides:
 
 - username and password login;
 - JWT;
-- API Keys with an `arc-` prefix;
+- API Keys with an `msp-` prefix;
 - a synchronous conversation endpoint for external Agents.
 
 API Keys should be stored as hashes and should not continue to be returned in plaintext after creation.

@@ -946,7 +946,7 @@ async def test_execute_reference_video_task_sends_reference_audio_in_prompt_orde
 
     assert list(frozen_speech_paths.values()) == submitted_audio_paths
     assert all(
-        ".arcreel/tasks/task-audio-evidence/provider_media/" in path.as_posix() for path in submitted_audio_paths
+        ".matrixspooll/tasks/task-audio-evidence/provider_media/" in path.as_posix() for path in submitted_audio_paths
     )
 
 
@@ -2928,7 +2928,9 @@ async def test_execute_reference_video_task_stages_actual_request_and_checkpoint
     async def _fake_generate_video_async(**kwargs):
         submitted.update(kwargs)
         assert kwargs["formal_output"] is True
-        assert all(".arcreel/tasks/task-submit/provider_media/" in str(path) for path in kwargs["reference_images"])
+        assert all(
+            ".matrixspooll/tasks/task-submit/provider_media/" in str(path) for path in kwargs["reference_images"]
+        )
         expected_staged_basis = real_visual_basis(**captured_basis_kwargs)
         assert kwargs["visual_basis_digest"] == expected_staged_basis
         assert kwargs["visual_basis_digest"] != submitted["initial_live_visual_basis"]
@@ -3000,10 +3002,10 @@ async def test_execute_reference_video_task_stages_actual_request_and_checkpoint
     assert checkpoint.artifact_currency is not None
     assert metadata["artifact_video_currency"] == checkpoint.artifact_currency.to_dict()
     assert ProjectArtifactManifestAdapter(proj_dir).get_entry(ArtifactKey.episode_video(1, "E1U1")) is None
-    assert not (proj_dir / ".arcreel" / "tasks" / "task-submit" / "provider_media").exists()
+    assert not (proj_dir / ".matrixspooll" / "tasks" / "task-submit" / "provider_media").exists()
 
     async def _cancel_after_staging(**_kwargs):
-        assert (proj_dir / ".arcreel" / "tasks" / "task-cancel" / "provider_media").is_dir()
+        assert (proj_dir / ".matrixspooll" / "tasks" / "task-cancel" / "provider_media").is_dir()
         raise asyncio.CancelledError
 
     fake_generator.generate_video_async = AsyncMock(side_effect=_cancel_after_staging)
@@ -3016,7 +3018,7 @@ async def test_execute_reference_video_task_stages_actual_request_and_checkpoint
             user_id="u1",
             task_id="task-cancel",
         )
-    assert not (proj_dir / ".arcreel" / "tasks" / "task-cancel" / "provider_media").exists()
+    assert not (proj_dir / ".matrixspooll" / "tasks" / "task-cancel" / "provider_media").exists()
 
     real_stage_provider_media = rvt.stage_provider_media
     staging_started = threading.Event()
@@ -3049,14 +3051,14 @@ async def test_execute_reference_video_task_stages_actual_request_and_checkpoint
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(staging_task, timeout=5)
     assert await asyncio.to_thread(staging_finished.wait, 5)
-    assert not (proj_dir / ".arcreel" / "tasks" / "task-cancel-during-staging" / "provider_media").exists()
+    assert not (proj_dir / ".matrixspooll" / "tasks" / "task-cancel-during-staging" / "provider_media").exists()
     monkeypatch.setattr(rvt, "stage_provider_media", real_stage_provider_media)
 
     def _reject_checkpoint(**_kwargs):
         raise RuntimeError("checkpoint construction failed")
 
     async def _invoke_rejected_checkpoint(**kwargs):
-        assert (proj_dir / ".arcreel" / "tasks" / "task-checkpoint-failure" / "provider_media").is_dir()
+        assert (proj_dir / ".matrixspooll" / "tasks" / "task-checkpoint-failure" / "provider_media").is_dir()
         await kwargs["before_submit"](74)
         raise AssertionError("provider submit must not run after checkpoint construction fails")
 
@@ -3071,7 +3073,7 @@ async def test_execute_reference_video_task_stages_actual_request_and_checkpoint
             user_id="u1",
             task_id="task-checkpoint-failure",
         )
-    assert not (proj_dir / ".arcreel" / "tasks" / "task-checkpoint-failure" / "provider_media").exists()
+    assert not (proj_dir / ".matrixspooll" / "tasks" / "task-checkpoint-failure" / "provider_media").exists()
 
 
 @pytest.mark.integration
@@ -3118,7 +3120,7 @@ async def test_provider_media_staging_cleanup_survives_repeated_cancellation(
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=5)
     assert await asyncio.to_thread(staging_finished.wait, 5)
-    assert not (project_path / ".arcreel" / "tasks" / "task-double-cancel" / "provider_media").exists()
+    assert not (project_path / ".matrixspooll" / "tasks" / "task-double-cancel" / "provider_media").exists()
 
 
 @pytest.mark.unit

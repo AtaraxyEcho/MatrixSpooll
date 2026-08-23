@@ -266,7 +266,7 @@ class _FakePM:
         if on_commit is not None:
             on_commit(self.base / name / "scripts" / norm)
 
-    async def generate_overview(self, name):
+    async def generate_overview(self, name, *, user_id=None):
         if name == "ready":
             return {"synopsis": "generated"}
         if name == "leaky":

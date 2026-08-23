@@ -341,7 +341,7 @@ class ProjectManager:
         """
         if projects_root is None:
             # 尝试从环境变量或默认路径获取
-            projects_root = os.environ.get("AI_ANIME_PROJECTS", "projects")
+            projects_root = str(app_data_dir())
 
         self.projects_root = Path(projects_root)
         self.projects_root.mkdir(parents=True, exist_ok=True)
@@ -350,14 +350,24 @@ class ProjectManager:
         # registers this process-local adapter during auth/bootstrap.
         self._project_id_aliases: dict[str, str] = {}
 
-    def register_project_id_alias(self, project_id: str, project_name: str) -> None:
-        """Map an immutable project ID to its file-backed directory name."""
+    def register_project_id_alias(
+        self,
+        project_id: str,
+        project_name: str,
+        storage_key: str | None = None,
+    ) -> None:
+        """Map an immutable project ID to its file-backed directory key.
+
+        ``project_name`` remains a display/legacy locator. New projects use
+        the UUID storage key so duplicate names cannot collide on disk.
+        """
 
         normalized_id = str(project_id).strip()
         normalized_name = self.normalize_project_name(project_name)
         if not normalized_id:
             raise ValueError("project id cannot be empty")
-        self._project_id_aliases[normalized_id] = normalized_name
+        storage = self.normalize_project_name(storage_key or normalized_name)
+        self._project_id_aliases[normalized_id] = storage
 
     def remove_project_id_alias(self, project_id: str) -> None:
         """Forget an ID mapping after a project is permanently removed."""
@@ -3513,7 +3523,7 @@ class ProjectManager:
 
         return "\n\n".join(contents)
 
-    async def generate_overview(self, project_name: str) -> dict:
+    async def generate_overview(self, project_name: str, *, user_id: str | None = None) -> dict:
         """
         使用 Gemini API 异步生成项目概述
 
@@ -3533,7 +3543,7 @@ class ProjectManager:
             raise EmptySourceError("source 目录为空，无法生成概述")
 
         # 创建 TextGenerator（自动追踪用量）
-        generator = await TextGenerator.create(TextTaskType.OVERVIEW, project_name)
+        generator = await TextGenerator.create(TextTaskType.OVERVIEW, project_name, user_id=user_id)
 
         # 调用 TextGenerator（Structured Outputs）。source_kind=screenplay 时翻为「提取优先」：
         # 作者写下的创作方案前言优先照用，缺失才退回从正文归纳（novel 行为不变）。

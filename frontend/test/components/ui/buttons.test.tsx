@@ -9,7 +9,7 @@ describe("PrimaryButton", () => {
     render(<PrimaryButton>save</PrimaryButton>);
     const btn = screen.getByRole("button", { name: "save" });
     expect(btn).toHaveAttribute("data-tone", "accent");
-    expect(btn.className).toContain("arc-btn-primary");
+    expect(btn.className).toContain("msp-btn-primary");
   });
 
   it("applies data-tone='danger' for destructive actions", () => {
@@ -41,11 +41,11 @@ describe("PrimaryButton", () => {
 });
 
 describe("SecondaryButton", () => {
-  it("applies arc-btn-secondary class and dispatches click", () => {
+  it("applies msp-btn-secondary class and dispatches click", () => {
     const onClick = vi.fn();
     render(<SecondaryButton onClick={onClick}>cancel</SecondaryButton>);
     const btn = screen.getByRole("button", { name: "cancel" });
-    expect(btn.className).toContain("arc-btn-secondary");
+    expect(btn.className).toContain("msp-btn-secondary");
     fireEvent.click(btn);
     expect(onClick).toHaveBeenCalledTimes(1);
   });

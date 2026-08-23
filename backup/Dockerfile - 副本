@@ -2,15 +2,15 @@ services:
   postgres:
     image: postgres:18-alpine
     environment:
-      POSTGRES_USER: arcreel
+      POSTGRES_USER: matrixspooll
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
-      POSTGRES_DB: arcreel
+      POSTGRES_DB: matrixspooll
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - ./pgdata:/var/lib/postgresql
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U arcreel"]
+      test: ["CMD-SHELL", "pg_isready -U matrixspooll -d matrixspooll"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -23,7 +23,7 @@ services:
     env_file: .env
     environment:
       # 数据库连接串
-      DATABASE_URL: postgresql+asyncpg://arcreel:${POSTGRES_PASSWORD}@postgres:5432/arcreel
+      DATABASE_URL: postgresql+asyncpg://matrixspooll:${POSTGRES_PASSWORD}@postgres:5432/matrixspooll
       TZ: ${TZ:-Asia/Shanghai}
       # 如果仍希望 uv 在运行时使用国内源（镜像内已设置，这里作为备用）
       # UV_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/

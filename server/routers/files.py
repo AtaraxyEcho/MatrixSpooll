@@ -39,7 +39,7 @@ from lib.episode_paths import (
     episode_drafts_dir,
     step1_read_candidates,
 )
-from lib.i18n import Translator
+from lib.i18n import Translator, get_translator
 from lib.image_utils import normalize_uploaded_image, validate_image_bytes
 from lib.json_io import atomic_write_bytes
 from lib.path_safety import PathTraversalError, safe_join
@@ -55,7 +55,7 @@ from lib.source_loader import (
     SourceLoader,
     UnsupportedFormatError,
 )
-from server.auth import CurrentUserInfo, database_auth_initialized, get_current_user_flexible, is_testing
+from server.auth import CurrentUser, CurrentUserInfo, database_auth_initialized, get_current_user_flexible, is_testing
 from server.routers._script_review_errors import raise_review_error
 from server.services.media_delivery import serve_media_file
 from server.services.project_access import resolve_project_access
@@ -74,10 +74,15 @@ async def _get_project_file_user(request: Request) -> CurrentUserInfo:
     authorization = request.headers.get("authorization", "")
     bearer = authorization[7:].strip() if authorization.lower().startswith("bearer ") else None
     query_token = request.query_params.get("token")
-    cookie_token = request.cookies.get("arcreel_auth_token")
+    cookie_token = request.cookies.get("matrixspooll_auth_token")
     if not bearer and not query_token and not cookie_token and not database_auth_initialized() and is_testing():
         return CurrentUserInfo(id="default", sub="testuser", role="admin")
-    return await get_current_user_flexible(token=bearer, query_token=query_token, cookie_token=cookie_token)
+    return await get_current_user_flexible(
+        get_translator(request),
+        token=bearer,
+        query_token=query_token,
+        cookie_token=cookie_token,
+    )
 
 
 def _require_filename(file: UploadFile, _t: Callable[..., str]) -> str:
@@ -1001,7 +1006,7 @@ async def delete_draft(project_name: str, episode: int, step_num: int, _t: Trans
 
 
 @router.post("/projects/{project_name}/style-image")
-async def upload_style_image(project_name: str, _t: Translator, file: UploadFile = File(...)):
+async def upload_style_image(project_name: str, user: CurrentUser, _t: Translator, file: UploadFile = File(...)):
     """
     上传风格参考图并分析风格
 
@@ -1043,7 +1048,7 @@ async def upload_style_image(project_name: str, _t: Translator, file: UploadFile
         from lib.text_backends.prompts import STYLE_ANALYSIS_PROMPT
         from lib.text_generator import TextGenerator
 
-        generator = await TextGenerator.create(TextTaskType.STYLE_ANALYSIS, project_name)
+        generator = await TextGenerator.create(TextTaskType.STYLE_ANALYSIS, project_name, user_id=user.id)
         result = await generator.generate(
             TextGenerationRequest(prompt=STYLE_ANALYSIS_PROMPT, images=[ImageInput(path=output_path)]),
             project_name=project_name,

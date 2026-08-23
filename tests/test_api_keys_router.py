@@ -4,7 +4,7 @@ API Key 管理路由集成测试
 通过 TestClient 测试 POST/GET/DELETE /api/v1/api-keys 端点。
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -26,10 +26,12 @@ def _make_client() -> TestClient:
 
 FAKE_ROW = {
     "id": 1,
+    "user_id": "default",
     "name": "mykey",
-    "key_prefix": "arc-abcd",
+    "key_prefix": "msp-abcd",
     "created_at": "2026-03-10T00:00:00Z",
     "expires_at": "2026-04-10T00:00:00Z",
+    "revoked_at": None,
     "last_used_at": None,
 }
 
@@ -43,6 +45,7 @@ class TestCreateApiKey:
             mock_repo.create = AsyncMock(return_value=FAKE_ROW)
 
             mock_session = AsyncMock()
+            mock_session.add = MagicMock()
             mock_begin = AsyncMock()
             mock_begin.__aenter__ = AsyncMock(return_value=None)
             mock_begin.__aexit__ = AsyncMock(return_value=False)
@@ -59,17 +62,20 @@ class TestCreateApiKey:
         assert resp.status_code == 201
         body = resp.json()
         assert body["name"] == "mykey"
-        assert body["key"].startswith("arc-")
+        assert body["key"].startswith("msp-")
         assert "key" in body  # 完整 key 在响应中
+        mock_repo.create.assert_awaited_once()
+        assert mock_repo.create.await_args.kwargs["user_id"] == "default"
 
     def test_create_409_on_duplicate_name(self):
         from sqlalchemy.exc import IntegrityError
 
         with _make_client() as client:
             mock_repo = AsyncMock()
-            mock_repo.create = AsyncMock(side_effect=IntegrityError("UNIQUE", None, None))
+            mock_repo.create = AsyncMock(side_effect=IntegrityError("UNIQUE", None, Exception("duplicate")))
 
             mock_session = AsyncMock()
+            mock_session.add = MagicMock()
             mock_begin = AsyncMock()
             mock_begin.__aenter__ = AsyncMock(return_value=None)
             mock_begin.__aexit__ = AsyncMock(return_value=False)
@@ -93,6 +99,7 @@ class TestListApiKeys:
             mock_repo.list_all = AsyncMock(return_value=[FAKE_ROW])
 
             mock_session = AsyncMock()
+            mock_session.add = MagicMock()
             mock_begin = AsyncMock()
             mock_begin.__aenter__ = AsyncMock(return_value=None)
             mock_begin.__aexit__ = AsyncMock(return_value=False)
@@ -118,9 +125,10 @@ class TestDeleteApiKey:
         with _make_client() as client:
             mock_repo = AsyncMock()
             mock_repo.get_by_id = AsyncMock(return_value=FAKE_ROW_WITH_HASH)
-            mock_repo.delete = AsyncMock(return_value=True)
+            mock_repo.revoke = AsyncMock(return_value=True)
 
             mock_session = AsyncMock()
+            mock_session.add = MagicMock()
             mock_begin = AsyncMock()
             mock_begin.__aenter__ = AsyncMock(return_value=None)
             mock_begin.__aexit__ = AsyncMock(return_value=False)
@@ -134,7 +142,8 @@ class TestDeleteApiKey:
                 patch("server.routers.api_keys.invalidate_api_key_cache") as mock_invalidate,
             ):
                 resp = client.delete("/api/v1/api-keys/1")
-                mock_invalidate.assert_called_once_with("abc123hash")
+                assert mock_invalidate.call_count == 2
+                mock_invalidate.assert_called_with("abc123hash")
 
         assert resp.status_code == 204
 
@@ -144,6 +153,7 @@ class TestDeleteApiKey:
             mock_repo.get_by_id = AsyncMock(return_value=None)
 
             mock_session = AsyncMock()
+            mock_session.add = MagicMock()
             mock_begin = AsyncMock()
             mock_begin.__aenter__ = AsyncMock(return_value=None)
             mock_begin.__aexit__ = AsyncMock(return_value=False)

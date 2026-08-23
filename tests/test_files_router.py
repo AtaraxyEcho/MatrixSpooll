@@ -1,6 +1,5 @@
 import dataclasses
 import json
-import shutil
 from io import BytesIO
 from pathlib import Path
 
@@ -45,6 +44,15 @@ async def _fake_create_backend(*args, **kwargs):
     return _FakeTextBackend(), "fake"
 
 
+class _FakeTextGenerator:
+    async def generate(self, request, **_kwargs):
+        return await _FakeTextBackend().generate(request)
+
+
+async def _fake_create_text_generator(*_args, **_kwargs):
+    return _FakeTextGenerator()
+
+
 def _img_bytes(fmt="JPEG", color=(255, 0, 0)):
     image = Image.new("RGB", (8, 8), color)
     buf = BytesIO()
@@ -62,6 +70,7 @@ def _client(monkeypatch, tmp_path):
 
     monkeypatch.setattr(files, "get_project_manager", lambda: pm)
     monkeypatch.setattr("lib.text_generator.create_text_backend_for_task", _fake_create_backend)
+    monkeypatch.setattr("lib.text_generator.TextGenerator.create", _fake_create_text_generator)
 
     app = FastAPI()
     register_error_handlers(app)
@@ -113,11 +122,20 @@ class TestFilesRouter:
     @pytest.mark.unit
     def test_source_upload_race_project_deleted_reports_project_not_found(self, tmp_path, monkeypatch):
         client, _ = _client(monkeypatch, tmp_path)
+        project_dir = tmp_path / "projects" / "demo"
+        original_exists = Path.exists
 
         class _RaceLoader:
             @staticmethod
             def load(*args, **kwargs):
-                shutil.rmtree(tmp_path / "projects" / "demo")
+                # Windows cannot recursively delete a directory while the
+                # source mutation lock is open. Simulate the same post-lock
+                # observation without relying on platform-specific unlinking.
+                monkeypatch.setattr(
+                    Path,
+                    "exists",
+                    lambda path: False if path == project_dir else original_exists(path),
+                )
                 raise FileNotFoundError("/server/projects/demo/source gone")
 
         monkeypatch.setattr(files, "SourceLoader", _RaceLoader)
@@ -238,7 +256,7 @@ class TestFilesRouter:
 
             project_dir = pm.get_project_path("demo")
             target = project_dir / first.json()["path"]
-            manifest = project_dir / ".arcreel_artifacts.json"
+            manifest = project_dir / ".matrixspooll_artifacts.json"
             before = (target.read_bytes(), (project_dir / "project.json").read_bytes(), manifest.read_bytes())
 
             def _fail(*_args, **_kwargs):
@@ -1702,7 +1720,7 @@ class TestFilesUnexpectedErrorsMapTo500:
             )
 
         client, _ = _client(monkeypatch, tmp_path)
-        monkeypatch.setattr("lib.text_generator.create_text_backend_for_task", _raise_vision_error)
+        monkeypatch.setattr("lib.text_generator.TextGenerator.create", _raise_vision_error)
         with client:
             resp = client.post(
                 "/api/v1/projects/demo/style-image",
@@ -1724,7 +1742,7 @@ class TestFilesUnexpectedErrorsMapTo500:
             raise ValueError(f"凭证文件 {sentinel} 中未找到 project_id")
 
         client, _ = _client(monkeypatch, tmp_path)
-        monkeypatch.setattr("lib.text_generator.create_text_backend_for_task", _raise_backend_error)
+        monkeypatch.setattr("lib.text_generator.TextGenerator.create", _raise_backend_error)
         with client:
             resp = client.post(
                 "/api/v1/projects/demo/style-image",

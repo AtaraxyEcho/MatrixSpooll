@@ -27,6 +27,7 @@ from lib.episode_reset import (
 from server.agent_runtime.sdk_tools._context import (
     MAX_INSTRUCTIONS_LEN,
     ToolContext,
+    invoke_with_optional_actor,
     read_instructions_arg,
     tool_error,
 )
@@ -123,7 +124,11 @@ def plan_episodes_tool(ctx: ToolContext):
         if param_err is not None:
             return param_err
         try:
-            planner = await EpisodePlanner.create(ctx.project_path)
+            planner = await invoke_with_optional_actor(
+                EpisodePlanner.create,
+                ctx.project_path,
+                actor_user_id=ctx.actor_user_id,
+            )
             result = await planner.plan(instructions=instructions)
             if not result.episodes and result.source_exhausted:
                 lines = ["源文已全部规划完毕，没有可规划的新内容。"]

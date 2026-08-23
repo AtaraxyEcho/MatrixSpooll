@@ -41,7 +41,7 @@ next_count() {
 }
 
 if [[ "$1 $2" == "repo view" ]]; then
-  printf '%s\n' 'ArcReel/ArcReel'
+  printf '%s\n' 'MockMine/MatrixSpooll'
 elif [[ "$*" == *'reviews(first:100'* ]]; then
   count=$(next_count review)
   if [[ "$mode" == "hung_probe" ]]; then

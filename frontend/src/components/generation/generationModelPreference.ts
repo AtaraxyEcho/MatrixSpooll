@@ -5,7 +5,7 @@ export interface GenerationModelPreferences {
   video: string;
 }
 
-export const GENERATION_MODEL_PREFERENCES_STORAGE_KEY = "arcreel:generationModelPreferences";
+export const GENERATION_MODEL_PREFERENCES_STORAGE_KEY = "matrixspooll:generationModelPreferences";
 
 const DEFAULT_PREFERENCES: GenerationModelPreferences = {
   image: "auto",

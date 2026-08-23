@@ -1,6 +1,6 @@
 # 工作流计划契约
 
-`mcp__arcreel__get_workflow_plan` 是编排的**唯一权威入口**。它返回一份只读计划：有序步骤、
+`mcp__matrixspooll__get_workflow_plan` 是编排的**唯一权威入口**。它返回一份只读计划：有序步骤、
 阻断原因、活动任务、视频批量准入结论，以及唯一的下一动作。
 
 **不要在 profile 里另建一张按内容模式或生成路线展开的步骤表。** 六种模式组合（narration /
@@ -10,7 +10,7 @@ drama / ad × storyboard / reference_video）之间哪些步骤适用、顺序�
 ## 查询
 
 ```text
-mcp__arcreel__get_workflow_plan({
+mcp__matrixspooll__get_workflow_plan({
   "episode": N,                                  // 可选：用户指定集数时传
   "narration_delivery": "post_production" | "use_tts",  // 可选：本次旁白交付选择
   "confirmed_request_durations": {"E1U1": 8}    // 可选：用户已确认的逐 unit 申请档位（键是 unit ID）
@@ -54,10 +54,10 @@ mcp__arcreel__get_workflow_plan({
 处理顺序：
 
 1. 把 `details[]` 逐条讲给用户：哪一集的哪个文件、违了什么约，不要压成一句「升级失败」。
-2. 用既有的受控编辑工具（`mcp__arcreel__patch_episode_script`、`mcp__arcreel__patch_project`、
-   `mcp__arcreel__patch_episode_meta` 等）按明细修。**没有裸文件写入这条路**，也不要用 `Edit`
+2. 用既有的受控编辑工具（`mcp__matrixspooll__patch_episode_script`、`mcp__matrixspooll__patch_project`、
+   `mcp__matrixspooll__patch_episode_meta` 等）按明细修。**没有裸文件写入这条路**，也不要用 `Edit`
    直接改正式脚本。
-3. 调用 `mcp__arcreel__retry_project_migration` 重跑升级链。它幂等，重复调用不会造成损失。
+3. 调用 `mcp__matrixspooll__retry_project_migration` 重跑升级链。它幂等，重复调用不会造成损失。
 4. 成功时工具返回新的制作计划，项目解除阻断，照常按 `next_action` 继续；失败时返回新的结构化
    明细，回到第 1 步。修不动时如实告诉用户卡在哪里，不要反复空跑重试。
 
@@ -69,29 +69,29 @@ mcp__arcreel__get_workflow_plan({
 按 `next_action.type` 路由，把 `target.episode`、`next_action.args` 与 `requested_ids` 原样带入。
 `plan.status.target` 提供 `episode`、`script`、`script_filename`、`source`。两个剧本字段不可互换：
 `script` 是相对项目根的剧本路径（`scripts/episode_N.json`），用 Read 读剧本内容时用它；
-`script_filename` 是剥掉 `scripts/` 前缀的裸文件名，所有 `mcp__arcreel__*` 工具的 `script` 参数用它。
+`script_filename` 是剥掉 `scripts/` 前缀的裸文件名，所有 `mcp__matrixspooll__*` 工具的 `script` 参数用它。
 
 | `next_action.type` | 执行入口 |
 |---|---|
 | `collect_project_input` | 引导用户在 Web 端补齐项目输入 |
-| `draft_selling_points` | 起草卖点后经 `mcp__arcreel__patch_project` 写回（ad） |
+| `draft_selling_points` | 起草卖点后经 `mcp__matrixspooll__patch_project` 写回（ad） |
 | `analyze_assets` | dispatch `analyze-assets` subagent |
-| `reset_episode_planning` | `mcp__arcreel__reset_episode_planning`，按 `next_action.args` 传参 |
-| `plan_episodes` | `mcp__arcreel__plan_episodes` |
+| `reset_episode_planning` | `mcp__matrixspooll__reset_episode_planning`，按 `next_action.args` 传参 |
+| `plan_episodes` | `mcp__matrixspooll__plan_episodes` |
 | `prepare_step1` | dispatch `next_action.args.preprocessor` 指名的 subagent |
-| `confirm_step1` | `mcp__arcreel__confirm_script_review` |
-| `generate_script` | dispatch `create-episode-script` subagent（ad 直接调 `mcp__arcreel__generate_episode_script`） |
-| `generate_asset_sheets` | `mcp__arcreel__generate_assets`，逐类型传 `names` |
-| `generate_storyboards` | `mcp__arcreel__generate_storyboards`，传 `segment_ids` |
-| `generate_grid` | `mcp__arcreel__generate_grid`，传 `scene_ids` |
-| `repair_video_units` | `mcp__arcreel__get_episode_script_revision` + `mcp__arcreel__patch_episode_script` 一次改完，再点名重做 |
+| `confirm_step1` | `mcp__matrixspooll__confirm_script_review` |
+| `generate_script` | dispatch `create-episode-script` subagent（ad 直接调 `mcp__matrixspooll__generate_episode_script`） |
+| `generate_asset_sheets` | `mcp__matrixspooll__generate_assets`，逐类型传 `names` |
+| `generate_storyboards` | `mcp__matrixspooll__generate_storyboards`，传 `segment_ids` |
+| `generate_grid` | `mcp__matrixspooll__generate_grid`，传 `scene_ids` |
+| `repair_video_units` | `mcp__matrixspooll__get_episode_script_revision` + `mcp__matrixspooll__patch_episode_script` 一次改完，再点名重做 |
 | `patch_episode_script` | 计划注入：`next_action.args` 已给 `expected_revision` 与逐条 `problems`，一次批量改完 |
 | `choose_narration_delivery` | 计划注入：见「旁白交付」 |
 | `confirm_request_duration` | 计划注入：见「批量准入」 |
 | `generate_videos` | 视频生成工具（见 `generate-video` skill） |
 | `wait_for_task` | 计划注入：有活动任务，不入队新任务；等待并复查计划 |
 | `export` | 引导用户在 Web 端导出 |
-| `retry_project_migration` | 项目数据升级未完成：按明细修复后 `mcp__arcreel__retry_project_migration`（见「数据升级失败」） |
+| `retry_project_migration` | 项目数据升级未完成：按明细修复后 `mcp__matrixspooll__retry_project_migration`（见「数据升级失败」） |
 | `none` | 展示 `blockers` 并停止变更 |
 
 `next_action.args.preprocessor` 是权威的预处理 subagent 名，**不要自己按 `content_mode` ×
@@ -106,7 +106,7 @@ mcp__arcreel__get_workflow_plan({
 
 | `next_action.type` | 执行入口 |
 |---|---|
-| `fix_input` | 剧本/声明本身不合法：按 `problems[].detail` 定位，经 `mcp__arcreel__patch_episode_script` 改对再重查 |
+| `fix_input` | 剧本/声明本身不合法：按 `problems[].detail` 定位，经 `mcp__matrixspooll__patch_episode_script` 改对再重查 |
 | `replan_unit` | unit 需要重新规划：走 `repair_video_units` 那一行的改法 |
 | `generate_dependency` | 缺上游产物（参考资产等）：先补齐依赖再重查 |
 | `generate_tts` / `regenerate_tts` | 缺旁白音频 / 依据已变：经 `generate-narration-audio` 合成后重查 |

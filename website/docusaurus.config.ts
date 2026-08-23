@@ -1,7 +1,25 @@
 import type * as Preset from "@docusaurus/preset-classic";
 import type { Config } from "@docusaurus/types";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const docsSiteUrl = process.env.DOCS_SITE_URL ?? "http://localhost:3000";
+const configDir = dirname(fileURLToPath(import.meta.url));
+const notice = readFileSync(resolve(configDir, "..", "NOTICE"), "utf8");
+const legalAttribution = notice.match(/^"(Powered by .+?https:\/\/github\.com\/[^\s"]+)"$/m)?.[1];
+
+if (!legalAttribution) {
+  throw new Error("NOTICE does not contain a valid UI attribution");
+}
+
+const legalAttributionUrl = legalAttribution.match(/https:\/\/github\.com\/[^\s"]+$/)?.[0];
+const legalAttributionHtml = legalAttributionUrl
+  ? legalAttribution.replace(
+      legalAttributionUrl,
+      `<a href="${legalAttributionUrl}" rel="noreferrer">${legalAttributionUrl}</a>`,
+    )
+  : legalAttribution;
 
 const config: Config = {
   title: "MatrixSpooll 文档中心",
@@ -100,7 +118,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Powered by ArcReel — https://github.com/ArcReel/ArcReel · ArcReel Copyright © 2026 Pollo3470 and ArcReel contributors · MatrixSpooll modifications licensed under AGPL-3.0.`,
+      copyright: `${legalAttributionHtml} · MatrixSpooll Copyright © 2026 MatrixSpooll contributors · AGPL-3.0.`,
     },
   } satisfies Preset.ThemeConfig,
 };

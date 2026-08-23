@@ -17,13 +17,16 @@ class AgentSessionEventLogEntry(TimestampMixin, UserOwnedMixin, Base):
 
     __tablename__ = "agent_session_event_log"
 
-    project_id: Mapped[str | None] = mapped_column(
+    project_id: Mapped[str] = mapped_column(
         String,
         ForeignKey("project_registry.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True,
+        nullable=False,
     )
-    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    session_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("agent_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     entry_type: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
@@ -48,4 +51,6 @@ class AgentSessionEventLogEntry(TimestampMixin, UserOwnedMixin, Base):
             postgresql_where=text("client_key IS NOT NULL"),
             sqlite_where=text("client_key IS NOT NULL"),
         ),
+        Index("idx_agent_event_log_project_id", "project_id"),
+        Index("idx_agent_event_log_session_id", "session_id"),
     )

@@ -273,7 +273,7 @@ class JianyingDraftService:
         first_video = self._resolve_selected_media(project_dir, values[0].presentation.video.media.artifact_path)
         width, height = self._resolve_canvas_size(project, first_video)
         draft_name = self._draft_name(project_name, project, episode)
-        temp_dir = Path(tempfile.mkdtemp(prefix="arcreel_jy_"))
+        temp_dir = Path(tempfile.mkdtemp(prefix="matrixspooll_jy_"))
         try:
             staging_dir = temp_dir / "staging"
             staging_dir.mkdir()

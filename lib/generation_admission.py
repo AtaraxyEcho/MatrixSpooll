@@ -15,8 +15,8 @@ from lib.content_digest import canonical_json_digest
 _POLL_SECONDS = 0.05
 
 
-def _lock_path(*, project_name: str, resource_id: str) -> Path:
-    digest = canonical_json_digest([project_name, resource_id])
+def _lock_path(*, project_name: str, project_id: str | None, resource_id: str) -> Path:
+    digest = canonical_json_digest([project_id or project_name, resource_id])
     root = app_data_dir() / ".generation-admission-locks"
     root.mkdir(parents=True, exist_ok=True)
     return root / f"{digest}.lock"
@@ -26,6 +26,7 @@ def _lock_path(*, project_name: str, resource_id: str) -> Path:
 async def generation_admission_lock(
     *,
     project_name: str,
+    project_id: str | None = None,
     script_file: str,
     resource_id: str,
 ) -> AsyncIterator[None]:
@@ -38,7 +39,7 @@ async def generation_admission_lock(
 
     # The script locator is deliberately absent from the key. Rebinding an episode must not let
     # a new task select the same resource while compensation for the former binding is in flight.
-    path = _lock_path(project_name=project_name, resource_id=resource_id)
+    path = _lock_path(project_name=project_name, project_id=project_id, resource_id=resource_id)
     handle = path.open("a+b")
     acquired = False
     try:
@@ -61,12 +62,13 @@ async def generation_admission_lock(
 def generation_admission_lock_sync(
     *,
     project_name: str,
+    project_id: str | None = None,
     script_file: str,
     resource_id: str,
 ) -> Iterator[None]:
     """Blocking counterpart for synchronous compensation after the async guard is released."""
 
-    path = _lock_path(project_name=project_name, resource_id=resource_id)
+    path = _lock_path(project_name=project_name, project_id=project_id, resource_id=resource_id)
     handle = path.open("a+b")
     acquired = False
     try:

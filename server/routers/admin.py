@@ -13,11 +13,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.db import get_async_session
-from lib.db.base import DEFAULT_USER_ID
 from lib.db.models.project import ProjectRegistry
 from lib.db.models.user import User
 from lib.i18n import Translator
 from server.auth import AdminUser, generate_password, hash_password, revoke_all_user_sessions
+from server.services.audit import AuditAction, AuditResourceType, record_audit_event
 
 router = APIRouter(prefix="/admin", tags=["管理员"])
 
@@ -73,7 +73,7 @@ def _as_summary(user: User) -> AdminUserSummary:
         id=user.id,
         username=user.username,
         role=role,  # type: ignore[arg-type]
-        is_superadmin=user.id == DEFAULT_USER_ID,
+        is_superadmin=bool(user.is_superadmin),
         is_active=user.is_active,
         created_at=user.created_at,
         updated_at=user.updated_at,
@@ -96,7 +96,7 @@ async def _get_user(session: AsyncSession, user_id: str, translate: Callable[...
 
 
 def _reject_superadmin_mutation(user: User, translate: Callable[..., str]) -> None:
-    if user.id == DEFAULT_USER_ID:
+    if user.is_superadmin:
         raise HTTPException(status_code=403, detail=translate("admin_superadmin_protected"))
 
 
@@ -123,7 +123,7 @@ async def list_users(
 @router.post("/users", response_model=CreateUserResponse, status_code=201)
 async def create_user(
     body: CreateUserRequest,
-    _admin: AdminUser,
+    admin: AdminUser,
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
 ) -> CreateUserResponse:
@@ -143,6 +143,14 @@ async def create_user(
         is_active=True,
     )
     session.add(user)
+    record_audit_event(
+        session,
+        actor=admin,
+        action=AuditAction.USER_CREATE,
+        resource_type=AuditResourceType.USER,
+        resource_id=user.id,
+        details={"role": user.role},
+    )
     await session.commit()
     await session.refresh(user)
     return CreateUserResponse(
@@ -177,12 +185,27 @@ async def update_user(
                 detail=_t("admin_project_owner_deactivate_forbidden", project=owned_project),
             )
 
+    previous_role = user.role
+    previous_active = user.is_active
     user.role = next_role
     user.is_active = next_active
+    if not user.is_active:
+        await revoke_all_user_sessions(user.id, session=session)
+    record_audit_event(
+        session,
+        actor=admin,
+        action=AuditAction.USER_UPDATE,
+        resource_type=AuditResourceType.USER,
+        resource_id=user.id,
+        details={
+            "from_role": previous_role,
+            "to_role": next_role,
+            "from_active": previous_active,
+            "to_active": next_active,
+        },
+    )
     await session.commit()
     await session.refresh(user)
-    if not user.is_active:
-        await revoke_all_user_sessions(user.id)
     return _as_summary(user)
 
 
@@ -190,7 +213,7 @@ async def update_user(
 async def reset_password(
     user_id: str,
     body: ResetPasswordRequest,
-    _admin: AdminUser,
+    admin: AdminUser,
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
 ) -> PasswordResponse:
@@ -198,18 +221,33 @@ async def reset_password(
     _reject_superadmin_mutation(user, _t)
     temporary_password = body.password or generate_password()
     user.password_hash = hash_password(temporary_password)
+    await revoke_all_user_sessions(user.id, session=session)
+    record_audit_event(
+        session,
+        actor=admin,
+        action=AuditAction.USER_RESET_PASSWORD,
+        resource_type=AuditResourceType.USER,
+        resource_id=user.id,
+    )
     await session.commit()
-    await revoke_all_user_sessions(user.id)
     return PasswordResponse(temporary_password=temporary_password)
 
 
 @router.post("/users/{user_id}/revoke-sessions", status_code=204)
 async def revoke_sessions(
     user_id: str,
-    _admin: AdminUser,
+    admin: AdminUser,
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
 ) -> None:
     user = await _get_user(session, user_id, _t)
     _reject_superadmin_mutation(user, _t)
-    await revoke_all_user_sessions(user.id)
+    await revoke_all_user_sessions(user.id, session=session)
+    record_audit_event(
+        session,
+        actor=admin,
+        action=AuditAction.USER_REVOKE_SESSIONS,
+        resource_type=AuditResourceType.USER,
+        resource_id=user.id,
+    )
+    await session.commit()

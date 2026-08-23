@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select, update
 
+from lib.db.actor_identity import resolve_actor_user_id
 from lib.db.base import DEFAULT_USER_ID, dt_to_iso, utc_now
 from lib.db.models.session import AgentSession
 from lib.db.project_identity import resolve_project_id
@@ -44,18 +45,21 @@ class SessionRepository(BaseRepository):
     ) -> dict[str, Any]:
         now = utc_now()
         project_id = await resolve_project_id(self.session, project_name)
+        actor_id = await resolve_actor_user_id(self.session, user_id)
+        actor_username = await self._actor_username(actor_id)
         row = AgentSession(
             id=uuid.uuid4().hex,
             sdk_session_id=sdk_session_id,
             project_id=project_id,
             project_name=project_name,
+            actor_username=actor_username,
             title=title,
             status="idle",
             fork_parent_session_id=fork_parent_session_id,
             fork_anchor_uuid=fork_anchor_uuid,
             created_at=now,
             updated_at=now,
-            user_id=user_id,
+            user_id=actor_id,
         )
         self.session.add(row)
         await self.session.commit()

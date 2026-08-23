@@ -1,6 +1,6 @@
 # Session Actor 重构设计
 
-- **Issue**：[#159](https://github.com/Pollo3470/ArcReel/issues/159) refactor: SessionManager 引入 Actor 模式，解决 SDK cancel scope 跨 task 问题
+- **Issue**：[#159](https://github.com/MockMine/MatrixSpooll/issues/159) refactor: SessionManager 引入 Actor 模式，解决 SDK cancel scope 跨 task 问题
 - **分支**：`refactor/session-actor-159`
 - **日期**：2026-04-13
 
@@ -247,7 +247,7 @@ async def _drive_query(self, client: ClaudeSDKClient, query_cmd: SessionCommand)
 
 - `asyncio.wait(FIRST_COMPLETED)` 让 "消息到达" 与 "新命令到达" 同权竞争。interrupt 不会被 `receive_response` 阻塞，即便 LLM 长时间思考也能穿插。
 - `client.interrupt()` 发生在 actor 主 task 内，完全符合 SDK 同 task 契约。
-- interrupt 后**不取消** `receive_response`。0.1.58 的 [`receive_response`](https://github.com/anthropics/claude-agent-sdk-python/blob/v0.1.58/src/claude_agent_sdk/client.py#L503-L542) 源码锁定了“持续读取并包含终态 `ResultMessage`”的接收边界；[Python SDK interrupt 契约](https://code.claude.com/docs/en/agent-sdk/python#example-using-interrupts) 明确中断不会清空消息缓冲区，必须在新 query 前 drain 至被中断任务的 `ResultMessage`。`tests/test_session_actor.py::test_drain_after_interrupt_reaches_error_during_execution` 保护 ArcReel 对该契约的集成语义。若强行取消会丢失尾部消息，且下一条 `query` 的响应将与被中断的消息混流。
+- interrupt 后**不取消** `receive_response`。0.1.58 的 [`receive_response`](https://github.com/anthropics/claude-agent-sdk-python/blob/v0.1.58/src/claude_agent_sdk/client.py#L503-L542) 源码锁定了“持续读取并包含终态 `ResultMessage`”的接收边界；[Python SDK interrupt 契约](https://code.claude.com/docs/en/agent-sdk/python#example-using-interrupts) 明确中断不会清空消息缓冲区，必须在新 query 前 drain 至被中断任务的 `ResultMessage`。`tests/test_session_actor.py::test_drain_after_interrupt_reaches_error_during_execution` 保护 MatrixSpooll 对该契约的集成语义。若强行取消会丢失尾部消息，且下一条 `query` 的响应将与被中断的消息混流。
 
 ### 5.5 待处理命令语义
 

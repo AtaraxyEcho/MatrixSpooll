@@ -98,7 +98,7 @@ export default {
   'media_tool_ffprobe': 'FFprobe',
   'media_tool_available': 'Sẵn sàng',
   'media_tool_missing': 'Không tìm thấy',
-  'media_tools_install_hint': 'Cài FFmpeg và FFprobe trên máy chủ rồi khởi động lại ArcReel. Ứng dụng đọc chúng từ PATH và không nhận đường dẫn thực thi tùy ý từ trình duyệt.',
+  'media_tools_install_hint': 'Cài FFmpeg và FFprobe trên máy chủ rồi khởi động lại MatrixSpooll. Ứng dụng đọc chúng từ PATH và không nhận đường dẫn thực thi tùy ý từ trình duyệt.',
   'free_creation_frame_slots_full': 'Cả hai vị trí khung hình đã đầy. Hãy xóa hoặc thay thế nội dung trước.',
   'free_creation_add_frame': 'Thêm {{frame}}',
   'free_creation_replace_frame': 'Thay {{frame}}',
@@ -281,17 +281,7 @@ export default {
   'usage': 'Sử dụng',
   'api_keys': 'Khóa API',
   'about': 'Giới thiệu',
-  'license_source_kicker': 'Pháp lý và mã nguồn',
-  'license_source_title': 'Giới thiệu',
-  'license_source_modified': 'MatrixSpooll là phiên bản được sửa đổi từ ArcReel. Ngày sửa đổi hiện tại: {{date}}.',
-  'license_source_license_heading': 'Giấy phép',
-  'license_source_license_description': 'Dự án này được phát hành theo GNU Affero General Public License v3.0. Xem NOTICE để biết yêu cầu ghi công và thông báo sửa đổi.',
-  'license_source_no_warranty': 'Phần mềm được cung cấp không kèm bảo hành. Người dùng có thể sử dụng, sửa đổi và phân phối lại theo AGPL-3.0.',
-  'license_source_license_link': 'Xem LICENSE',
-  'license_source_notice_link': 'Xem NOTICE',
-  'license_source_copyright_heading': 'Bản quyền',
-  'license_source_original_copyright': 'ArcReel Copyright © 2026 Pollo3470 and ArcReel contributors.',
-  'license_source_modified_copyright': 'MatrixSpooll modifications Copyright © 2026 MatrixSpooll contributors.',
+  'about_attribution_unavailable': 'Không thể tải thông tin ghi công pháp lý. Hãy kiểm tra tệp NOTICE.',
   'system_config_title': 'Cấu hình hệ thống và quản lý truy cập API',
   'account_security': 'Bảo mật tài khoản',
   'account_security_nav': 'Bảo mật tài khoản',
@@ -323,7 +313,7 @@ export default {
   'avatar_failed': 'Cập nhật ảnh đại diện thất bại, vui lòng thử lại.',
   'config_issues': 'Vấn đề cấu hình',
   'config_issues_hint': 'Phát hiện các vấn đề sau trong cấu hình hiện tại, có thể ảnh hưởng tới chức năng:',
-  'arcreel_agent': '[[brand]] Agent',
+  'matrixspooll_agent': '[[brand]] Agent',
   'chat_role_user': 'Bạn',
   'chat_role_assistant': 'Trợ lý',
   'chat_role_system': 'Hệ thống',
@@ -1307,7 +1297,7 @@ export default {
   'reference_tab_preview': 'Video',
   'reference_tab_aria': 'Tab bảng đơn vị tham chiếu',
 
-  // ArcReel Workbench v3 — Video Tham Chiếu
+  // MatrixSpooll Workbench v3 — Video Tham Chiếu
   'reference_main_tab_aria': 'Tab chính của workspace',
   'reference_tab_units': 'Đơn vị video',
   'reference_tab_preprocess': 'Tiền xử lý tách',
@@ -1811,7 +1801,7 @@ export default {
   'tool_call_result_label': 'Kết quả',
   'tool_call_todo_summary': 'Danh sách việc cần làm hoàn thành {{completed}}/{{total}}',
   'tool_call_todo_updated': 'Danh sách việc cần làm đã cập nhật',
-  // MCP tool display names (single source of truth: ARCREEL_MCP_TOOL_IDS in
+  // MCP tool display names (single source of truth: MATRIXSPOOLL_MCP_TOOL_IDS in
   // server/agent_runtime/sdk_tools/__init__.py; tests/test_frontend_mcp_tool_i18n.py
   // sẽ kiểm tra các ngôn ngữ đồng bộ, thêm tool backend mà thiếu zh/en/vi sẽ fail CI)
   'tool_name_list_pending_assets': 'Liệt kê tài sản chờ tạo',

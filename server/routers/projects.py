@@ -16,6 +16,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from server.services.jianying_draft_service import JianyingDraftService
@@ -25,13 +26,13 @@ from fastapi import Path as FastAPIPath
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
 logger = logging.getLogger(__name__)
 
-from lib.api_errors import ApiError, BadRequestError, ConflictError, NotFoundError
+from lib.api_errors import ApiError, BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from lib.aspect_size import is_valid_aspect_ratio
 from lib.asset_fingerprints import compute_asset_fingerprints
 from lib.asset_types import asset_name_comparison_key
@@ -39,6 +40,7 @@ from lib.config.registry import default_model_for_provider
 from lib.config.resolver import ConfigResolver, VideoBucketCapabilityError
 from lib.db import async_session_factory, get_async_session
 from lib.db.models.project import ProjectMember, ProjectRegistry
+from lib.db.models.task import Task
 from lib.db.models.user import User
 from lib.i18n import Translator
 from lib.json_io import domain_error_on_value_error
@@ -66,6 +68,7 @@ from server.routers._script_edits import (
 )
 from server.routers._validators import validate_backend_value
 from server.services import workflow_planner as workflow_plan_service
+from server.services.audit import AuditAction, AuditResourceType, record_audit_event
 from server.services.project_access import (
     find_project_registration,
     list_accessible_projects,
@@ -230,8 +233,8 @@ class CreateProjectRequest(BaseModel):
     def validate_generation_mode_for_content(self) -> CreateProjectRequest:
         content_mode = self.content_mode or "narration"
         if content_mode == "free":
-            if self.generation_mode is not None:
-                raise ValueError("free content mode does not accept generation_mode")
+            if self.generation_mode is not None or self.grid_storyboard:
+                raise ValueError("free content mode does not accept generation_mode or grid_storyboard")
         elif self.generation_mode is None:
             raise ValueError("generation_mode is required for fixed workflow projects")
         return self
@@ -332,7 +335,7 @@ async def import_project_archive(
     """从 ZIP 导入项目。"""
     upload_path: str | None = None
     try:
-        fd, upload_path = tempfile.mkstemp(prefix="arcreel-upload-", suffix=".zip")
+        fd, upload_path = tempfile.mkstemp(prefix="matrixspooll-upload-", suffix=".zip")
         os.close(fd)
 
         # 使用底层 SpooledTemporaryFile 的同步句柄，整循环 offload 到线程，
@@ -369,16 +372,67 @@ async def import_project_archive(
         else:
             result = await asyncio.to_thread(_import, conflict_policy)
 
+        imported_project_id: str | None = None
         if database_auth_initialized() and result.conflict_resolution != "overwritten":
+            # Keep display names independent from the filesystem identity. The
+            # archive service installs under the requested display name; move
+            # the directory to a UUID before registering it so duplicate names
+            # cannot collide on disk or become ambiguous aliases.
+            storage_key = uuid4().hex
+            imported_dir = get_project_manager().projects_root / result.project_name
+            if imported_dir.exists():
+                await asyncio.to_thread(
+                    os.replace,
+                    imported_dir,
+                    get_project_manager().projects_root / storage_key,
+                )
+            else:
+                # The real archive service always creates this directory. A
+                # mocked/import-preflight caller may only return metadata; keep
+                # that contract usable without creating a phantom registry.
+                storage_key = result.project_name
             try:
                 async with session.begin():
-                    await register_project(session, result.project_name, user.id)
+                    registry = await register_project(
+                        session,
+                        result.project_name,
+                        user.id,
+                        storage_key=storage_key,
+                    )
+                    imported_project_id = registry.id
+                    record_audit_event(
+                        session,
+                        actor=user,
+                        action=AuditAction.PROJECT_IMPORT,
+                        resource_type=AuditResourceType.PROJECT,
+                        resource_id=registry.id,
+                        project_id=registry.id,
+                        project_name=registry.name,
+                        details={"conflict_resolution": result.conflict_resolution},
+                    )
             except Exception:
-                await asyncio.to_thread(get_project_manager().delete_project_directory, result.project_name)
+                await asyncio.to_thread(get_project_manager().delete_project_directory, storage_key)
                 raise
+        elif database_auth_initialized():
+            registry = await find_project_registration(session, result.project_name)
+            if registry is not None:
+                imported_project_id = registry.id
+                record_audit_event(
+                    session,
+                    actor=user,
+                    action=AuditAction.PROJECT_IMPORT,
+                    resource_type=AuditResourceType.PROJECT,
+                    resource_id=registry.id,
+                    project_id=registry.id,
+                    project_name=registry.name,
+                    details={"conflict_resolution": result.conflict_resolution},
+                )
+                await session.commit()
         return {
             "success": True,
             "project_name": result.project_name,
+            "project_id": imported_project_id,
+            "id": imported_project_id,
             "project": result.project,
             "warnings": [warning.render(_t) for warning in result.warnings],
             "conflict_resolution": result.conflict_resolution,
@@ -590,8 +644,11 @@ async def list_projects(
                 select(ProjectMember.project_id, ProjectMember.role).where(ProjectMember.user_id == user.id)
             )
             role_by_project_id = {project_id: role for project_id, role in member_rows.all()}
-        project_names = [row.name for row in accessible]
-        registry_by_name = {row.name: row for row in accessible}
+            role_by_project_id.update({row.id: "owner" for row in accessible if row.owner_id == user.id})
+        # The filesystem locator is the immutable storage key.  Display names
+        # may repeat and therefore must never be used for lookup or paths.
+        project_names = [row.storage_key for row in accessible]
+        registry_by_name = {row.storage_key: row for row in accessible}
     else:
         project_names = get_project_manager().list_projects()
         registry_by_name = {}
@@ -603,6 +660,7 @@ async def list_projects(
         projects = []
         for name in project_names:
             try:
+                display_name = registry_by_name[name].name if name in registry_by_name else name
                 # 尝试加载项目元数据
                 if manager.project_exists(name):
                     project = manager.load_project(name)
@@ -646,7 +704,7 @@ async def list_projects(
                             "current_role": (
                                 role_by_project_id.get(registry_by_name[name].id) if name in registry_by_name else None
                             ),
-                            "name": name,
+                            "name": display_name,
                             # title 缺失/为 None/类型异常时统一归一为空串,前端 i18n
                             # 兜底显示「未命名项目」,确保接口契约始终返回 str。
                             "title": raw_title if isinstance(raw_title, str) else "",
@@ -667,7 +725,7 @@ async def list_projects(
                             "current_role": (
                                 role_by_project_id.get(registry_by_name[name].id) if name in registry_by_name else None
                             ),
-                            "name": name,
+                            "name": display_name,
                             "title": "",
                             "style": "",
                             "content_mode": None,
@@ -759,8 +817,12 @@ async def create_project(
                 else _validated_speech_rate(req.speech_rate_units_per_second, _t)
             )
 
+            # The legacy single-user/test mode has no registry to resolve a
+            # UUID storage alias. Keep its historical name directory; the
+            # authenticated multi-user path always gets an immutable UUID.
+            storage_key = uuid4().hex if database_auth_initialized() else project_name
             try:
-                manager.create_project(project_name, content_mode=req.content_mode or "narration")
+                manager.create_project(storage_key, content_mode=req.content_mode or "narration")
             except FileExistsError:
                 raise HTTPException(status_code=400, detail=_t("project_exists", name=project_name))
             extras = {field: value for field in _PROJECT_BACKEND_FIELDS if (value := getattr(req, field))}
@@ -774,7 +836,7 @@ async def create_project(
                 extras[SPEECH_RATE_FIELD] = speech_rate
             with project_change_source("webui"):
                 project = manager.create_project_metadata(
-                    project_name,
+                    storage_key,
                     title or manual_name,
                     style_prompt,
                     req.content_mode,
@@ -786,17 +848,31 @@ async def create_project(
                     brief=req.brief,
                     source_kind=req.source_kind,
                 )
-            return {"success": True, "name": project_name, "project": project}
+            return {"success": True, "name": project_name, "storage_key": storage_key, "project": project}
 
         result = await asyncio.to_thread(_sync)
         project_id: str | None = None
         if database_auth_initialized():
             try:
                 async with session.begin():
-                    registry = await register_project(session, result["name"], user.id)
+                    registry = await register_project(
+                        session,
+                        result["name"],
+                        user.id,
+                        storage_key=result["storage_key"],
+                    )
                     project_id = registry.id
+                    record_audit_event(
+                        session,
+                        actor=user,
+                        action=AuditAction.PROJECT_CREATE,
+                        resource_type=AuditResourceType.PROJECT,
+                        resource_id=registry.id,
+                        project_id=registry.id,
+                        project_name=registry.name,
+                    )
             except Exception:
-                await asyncio.to_thread(get_project_manager().delete_project_directory, result["name"])
+                await asyncio.to_thread(get_project_manager().delete_project_directory, result["storage_key"])
                 raise
         return {**result, "project_id": project_id, "id": project_id}
     except ValueError as e:
@@ -892,12 +968,13 @@ async def get_project(
     """获取项目详情（含实时计算字段）"""
     try:
         access = await resolve_project_access(name, user, session, required_role="viewer")
-        project_name = access.project_name
+        project_name = access.storage_key or access.project_id
+        project_display_name = access.project_name
 
         def _sync():
             manager = get_project_manager()
             if not manager.project_exists(project_name):
-                raise HTTPException(status_code=404, detail=_t("project_not_found", name=project_name))
+                raise HTTPException(status_code=404, detail=_t("project_not_found", name=project_display_name))
 
             project = manager.load_project(project_name)
 
@@ -928,7 +1005,7 @@ async def get_project(
             return {
                 "project_id": access.project_id,
                 "id": access.project_id,
-                "name": access.project_name,
+                "name": project_display_name,
                 "current_role": access.role,
                 "project": project,
                 "scripts": scripts,
@@ -1173,23 +1250,36 @@ async def list_project_members(
     """List members of a project visible to its collaborators."""
 
     access = await resolve_project_access(name, user, session, required_role="viewer")
+    owner = await session.get(User, access.owner_id)
     rows = await session.execute(
         select(ProjectMember, User)
         .join(User, User.id == ProjectMember.user_id)
-        .where(ProjectMember.project_id == access.project_id)
+        .where(
+            ProjectMember.project_id == access.project_id,
+            ProjectMember.user_id != access.owner_id,
+        )
         .order_by(ProjectMember.role.asc(), User.username.asc())
     )
-    return {
-        "members": [
+    members = []
+    if owner is not None:
+        members.append(
             {
-                "user_id": member.user_id,
-                "username": account.username,
-                "role": member.role,
-                "is_owner": member.user_id == access.owner_id,
+                "user_id": owner.id,
+                "username": owner.username,
+                "role": "owner",
+                "is_owner": True,
             }
-            for member, account in rows.all()
-        ]
-    }
+        )
+    members.extend(
+        {
+            "user_id": member.user_id,
+            "username": account.username,
+            "role": member.role,
+            "is_owner": False,
+        }
+        for member, account in rows.all()
+    )
+    return {"members": members}
 
 
 @router.post("/projects/{name}/members", status_code=201)
@@ -1205,6 +1295,8 @@ async def add_project_member(
     account = await session.scalar(select(User).where(User.username == req.username.strip()))
     if account is None or not account.is_active:
         raise NotFoundError("project_member_user_not_found")
+    if account.id == access.owner_id:
+        raise ConflictError("project_member_exists")
     existing = await session.scalar(
         select(ProjectMember).where(
             ProjectMember.project_id == access.project_id,
@@ -1214,6 +1306,16 @@ async def add_project_member(
     if existing is not None:
         raise ConflictError("project_member_exists")
     session.add(ProjectMember(project_id=access.project_id, user_id=account.id, role=req.role))
+    record_audit_event(
+        session,
+        actor=user,
+        action=AuditAction.PROJECT_MEMBER_ADD,
+        resource_type=AuditResourceType.PROJECT_MEMBER,
+        resource_id=account.id,
+        project_id=access.project_id,
+        project_name=access.project_name,
+        details={"role": req.role},
+    )
     await session.commit()
     return {"user_id": account.id, "username": account.username, "role": req.role}
 
@@ -1239,7 +1341,18 @@ async def update_project_member(
         raise NotFoundError("project_member_not_found")
     if user_id == access.owner_id:
         raise BadRequestError("project_owner_change_requires_transfer")
+    previous_role = member.role
     member.role = req.role
+    record_audit_event(
+        session,
+        actor=user,
+        action=AuditAction.PROJECT_MEMBER_UPDATE,
+        resource_type=AuditResourceType.PROJECT_MEMBER,
+        resource_id=user_id,
+        project_id=access.project_id,
+        project_name=access.project_name,
+        details={"from_role": previous_role, "to_role": req.role},
+    )
     await session.commit()
     return {"user_id": user_id, "role": member.role}
 
@@ -1265,6 +1378,16 @@ async def remove_project_member(
     if member is None:
         raise NotFoundError("project_member_not_found")
     await session.delete(member)
+    record_audit_event(
+        session,
+        actor=user,
+        action=AuditAction.PROJECT_MEMBER_REMOVE,
+        resource_type=AuditResourceType.PROJECT_MEMBER,
+        resource_id=user_id,
+        project_id=access.project_id,
+        project_name=access.project_name,
+        details={"role": member.role},
+    )
     await session.commit()
     return {"success": True}
 
@@ -1282,21 +1405,36 @@ async def transfer_project_owner(
     account = await session.scalar(select(User).where(User.username == req.username.strip()))
     if account is None or not account.is_active:
         raise NotFoundError("project_member_user_not_found")
-    if account.id == access.owner_id:
+    registry = await session.scalar(
+        select(ProjectRegistry).where(ProjectRegistry.id == access.project_id).with_for_update()
+    )
+    if registry is None:
+        raise NotFoundError("project_not_found", name=name)
+    locked_owner_id = registry.owner_id
+    if user.role != "admin" and locked_owner_id != user.id:
+        raise ForbiddenError("project_access_denied", name=registry.name)
+    if account.id == locked_owner_id:
         return {"user_id": account.id, "username": account.username, "role": "owner"}
 
-    registry = await session.get(ProjectRegistry, access.project_id)
-    current_owner = await session.get(ProjectMember, (access.project_id, access.owner_id))
+    current_owner = await session.get(ProjectMember, (access.project_id, locked_owner_id))
     next_owner = await session.get(ProjectMember, (access.project_id, account.id))
-    if registry is None or current_owner is None:
-        raise NotFoundError("project_not_found", name=name)
-    if next_owner is None:
-        next_owner = ProjectMember(project_id=access.project_id, user_id=account.id, role="owner")
-        session.add(next_owner)
+    if next_owner is not None:
+        await session.delete(next_owner)
+    if current_owner is None:
+        session.add(ProjectMember(project_id=access.project_id, user_id=locked_owner_id, role="editor"))
     else:
-        next_owner.role = "owner"
-    current_owner.role = "editor"
+        current_owner.role = "editor"
     registry.owner_id = account.id
+    record_audit_event(
+        session,
+        actor=user,
+        action=AuditAction.PROJECT_TRANSFER,
+        resource_type=AuditResourceType.PROJECT,
+        resource_id=access.project_id,
+        project_id=access.project_id,
+        project_name=access.project_name,
+        details={"from_user_id": locked_owner_id, "to_user_id": account.id},
+    )
     await session.commit()
     return {"user_id": account.id, "username": account.username, "role": "owner"}
 
@@ -1305,28 +1443,58 @@ async def transfer_project_owner(
 async def delete_project(
     name: str,
     _t: Translator,
+    user: CurrentUser,
     session: AsyncSession = Depends(get_async_session),
 ):
     """删除项目"""
     try:
         manager = get_project_manager()
-        registry = await find_project_registration(session, name) if database_auth_initialized() else None
+        if database_auth_initialized():
+            access = await resolve_project_access(name, user, session, required_role="owner")
+            registry = await session.get(ProjectRegistry, access.project_id)
+            if registry is None:
+                raise NotFoundError("project_not_found", name=name)
+            active_task_count = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(Task)
+                    .where(
+                        Task.project_id == registry.id,
+                        Task.status.in_(("queued", "running", "cancelling")),
+                    )
+                )
+                or 0
+            )
+            if active_task_count:
+                raise ConflictError("project_delete_active_tasks", count=active_task_count)
+        else:
+            registry = None
         canonical_name = registry.name if registry is not None else name
+        storage_key = registry.storage_key if registry is not None else canonical_name
         registry_id = registry.id if registry is not None else None
         original_dir, staged_dir = await asyncio.to_thread(
             manager.stage_project_deletion,
-            canonical_name,
+            storage_key,
             registry_id,
         )
         try:
             if registry is not None:
+                record_audit_event(
+                    session,
+                    actor=user,
+                    action=AuditAction.PROJECT_DELETE,
+                    resource_type=AuditResourceType.PROJECT,
+                    resource_id=registry.id,
+                    project_id=registry.id,
+                    project_name=registry.name,
+                )
                 await remove_project_registration(session, registry_id or name)
                 await session.commit()
         except BaseException:
             await session.rollback()
             await asyncio.to_thread(manager.restore_staged_project_deletion, original_dir, staged_dir)
             if registry_id is not None:
-                manager.register_project_id_alias(registry_id, canonical_name)
+                manager.register_project_id_alias(registry_id, canonical_name, storage_key)
             raise
 
         try:
@@ -1337,6 +1505,8 @@ async def delete_project(
     except FileNotFoundError as exc:
         raise NotFoundError("project_not_found", name=name) from exc
     except HTTPException:
+        raise
+    except ApiError:
         raise
     except Exception:
         logger.exception("请求处理失败")
@@ -1790,6 +1960,7 @@ async def update_episode(name: str, episode: int, req: UpdateEpisodeRequest, _t:
 @router.post("/projects/{name}/source")
 async def set_project_source(
     name: Annotated[str, FastAPIPath(pattern=r"^[a-zA-Z0-9_-]+$")],
+    user: CurrentUser,
     _t: Translator,
     generate_overview: Annotated[bool, Form()] = True,
     content: Annotated[str | None, Form()] = None,
@@ -1855,7 +2026,7 @@ async def set_project_source(
         if generate_overview:
             try:
                 with project_change_source("webui"):
-                    overview = await manager.generate_overview(name)
+                    overview = await manager.generate_overview(name, user_id=user.id)
                 result["overview"] = overview
             except Exception as ov_err:
                 # 概览生成是上传的可选后续步骤，失败仅降级回传提示、不影响上传成功。
@@ -1883,7 +2054,7 @@ async def set_project_source(
 
 
 @router.post("/projects/{name}/generate-overview", dependencies=[Depends(require_project_migration_ok)])
-async def generate_overview(name: str, _t: Translator):
+async def generate_overview(name: str, user: CurrentUser, _t: Translator):
     """使用 AI 生成项目概述"""
     try:
         get_project_manager().get_project_path(name)
@@ -1912,7 +2083,7 @@ async def generate_overview(name: str, _t: Translator):
                 _provider_not_configured,
                 extra_passthrough=(EmptySourceError, PydanticValidationError),
             ):
-                overview = await get_project_manager().generate_overview(name)
+                overview = await get_project_manager().generate_overview(name, user_id=user.id)
         return {"success": True, "overview": overview}
     except FileNotFoundError as exc:
         raise NotFoundError("project_not_found", name=name) from exc

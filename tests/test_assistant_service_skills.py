@@ -68,7 +68,7 @@ class TestListAvailableSkills:
             "---\nname: video-workflow\ndescription: Ad variant\n---\n",
             encoding="utf-8",
         )
-        monkeypatch.setenv("ARCREEL_PROFILE_DIR", str(profile_root))
+        monkeypatch.setenv("MATRIXSPOOLL_PROFILE_DIR", str(profile_root))
 
         with patch.object(AssistantService, "__init__", lambda self, *a, **kw: None):
             service = AssistantService.__new__(AssistantService)
@@ -97,7 +97,7 @@ class TestListAvailableSkills:
                 "---\nname: broken-variants\ndescription: Common\n---\n",
                 encoding="utf-8",
             )
-        monkeypatch.setenv("ARCREEL_PROFILE_DIR", str(profile_root))
+        monkeypatch.setenv("MATRIXSPOOLL_PROFILE_DIR", str(profile_root))
         with patch.object(AssistantService, "__init__", lambda self, *a, **kw: None):
             service = AssistantService.__new__(AssistantService)
             from lib.project_manager import ProjectManager
@@ -122,7 +122,7 @@ class TestListAvailableSkills:
             "---\nname: invalid\ndescription: Invalid delimiter\n---oops\nBody\n",
             encoding="utf-8",
         )
-        monkeypatch.setenv("ARCREEL_PROFILE_DIR", str(profile_root))
+        monkeypatch.setenv("MATRIXSPOOLL_PROFILE_DIR", str(profile_root))
         with patch.object(AssistantService, "__init__", lambda self, *a, **kw: None):
             service = AssistantService.__new__(AssistantService)
             from lib.project_manager import ProjectManager
@@ -149,7 +149,7 @@ class TestListAvailableSkills:
             "\n---\nname: invalid\ndescription: Shifted delimiter\n---\nBody\n",
             encoding="utf-8",
         )
-        monkeypatch.setenv("ARCREEL_PROFILE_DIR", str(profile_root))
+        monkeypatch.setenv("MATRIXSPOOLL_PROFILE_DIR", str(profile_root))
         with patch.object(AssistantService, "__init__", lambda self, *a, **kw: None):
             service = AssistantService.__new__(AssistantService)
             from lib.project_manager import ProjectManager
@@ -181,7 +181,7 @@ class TestListAvailableSkills:
             "---\nname: drifted-skill\ndescription: Ad\nuser-invocable: true\n---\n",
             encoding="utf-8",
         )
-        monkeypatch.setenv("ARCREEL_PROFILE_DIR", str(profile_root))
+        monkeypatch.setenv("MATRIXSPOOLL_PROFILE_DIR", str(profile_root))
 
         with patch.object(AssistantService, "__init__", lambda self, *a, **kw: None):
             service = AssistantService.__new__(AssistantService)
@@ -212,7 +212,7 @@ user-invocable: true
 """,
             encoding="utf-8",
         )
-        monkeypatch.setenv("ARCREEL_PROFILE_DIR", str(profile_root))
+        monkeypatch.setenv("MATRIXSPOOLL_PROFILE_DIR", str(profile_root))
         with patch.object(AssistantService, "__init__", lambda self, *a, **kw: None):
             service = AssistantService.__new__(AssistantService)
             from lib.project_manager import ProjectManager
@@ -248,7 +248,7 @@ user-invocable: true
             f"---\n{frontmatter}\n---\nBody must not become a fallback description.\n",
             encoding="utf-8",
         )
-        monkeypatch.setenv("ARCREEL_PROFILE_DIR", str(profile_root))
+        monkeypatch.setenv("MATRIXSPOOLL_PROFILE_DIR", str(profile_root))
         with patch.object(AssistantService, "__init__", lambda self, *a, **kw: None):
             service = AssistantService.__new__(AssistantService)
             from lib.project_manager import ProjectManager

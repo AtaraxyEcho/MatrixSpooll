@@ -1,6 +1,6 @@
 ---
 name: translate-docs
-description: Translate every dirty ArcReel documentation source into English and refresh the translation lockfile.
+description: Translate every dirty MatrixSpooll documentation source into English and refresh the translation lockfile.
 disable-model-invocation: true
 ---
 
@@ -39,7 +39,7 @@ Reuse their exact terminology. Do not create a separate glossary.
 
 When those sources conflict, use the official name a reader outside China would recognize for the same product — never the name of a different product. Documentation translates `阿里百炼` as `DashScope`, matching `README.en.md`'s established usage; the frontend locale's per-endpoint `Alibaba Model Studio` labels do not govern documentation.
 
-Product identity itself is invariant across target languages. Keep `剪映` as `Jianying`: CapCut is a separate international product, and ArcReel has not verified draft compatibility with it. Use `CapCut` only when stating that distinction, never as a translation of `剪映`.
+Product identity itself is invariant across target languages. Keep `剪映` as `Jianying`: CapCut is a separate international product, and MatrixSpooll has not verified draft compatibility with it. Use `CapCut` only when stating that distinction, never as a translation of `剪映`.
 
 ## 3. Translate every dirty source
 
@@ -52,7 +52,7 @@ Apply these invariants to every file:
 - Inside fenced code blocks, preserve the executable substance exactly: commands, program output, identifiers, configuration keys, and paths or filenames that other software really produces. Translate the human-readable text a reader is meant to read: diagram node labels, comments, instructional placeholder values, and fences that hold prose rather than code. A literal repository convention written in Chinese stays in Chinese — Chinese commit-message examples, changelog section names, and placeholders such as `<中文理由>` describe what a contributor must actually type.
 - Preserve URL destinations exactly. Translate human-readable link text.
 - A link to a heading inside the same document is an exception: point it at the target document's own heading. `README.md` has no explicit anchor IDs, so `README.en.md` links to the English heading slug — `#快速开始` becomes `#quick-start`. Never inject an `<a id>` tag to keep a Chinese fragment alive.
-- A link to the documentation site is another exception: `docs.arc-reel.com` destinations in a Chinese source have no locale prefix because the default locale is unprefixed. Every English target — `README.en.md` and every translated page under `website/i18n/en/` — must route English readers to the English site, so give each `docs.arc-reel.com/...` destination an `/en/` prefix (`https://docs.arc-reel.com/guide/...` becomes `https://docs.arc-reel.com/en/guide/...`).
+- Documentation links use repository-local paths. Keep the same path in translated Markdown; Docusaurus adds the locale prefix when it builds the English site.
 - Preserve `:::` admonition marker lines exactly. Translate prose inside the admonition.
 - Preserve explicit anchor IDs such as `{#deployment}` exactly. Translate their headings.
 - Keep product names, command names, paths, configuration keys, environment variables, identifiers, and version constraints unchanged.

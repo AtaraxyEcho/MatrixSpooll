@@ -98,7 +98,7 @@ export default {
   'media_tool_ffprobe': 'FFprobe',
   'media_tool_available': '已找到',
   'media_tool_missing': '未找到',
-  'media_tools_install_hint': '请在运行服务器上安装 FFmpeg 和 FFprobe 后重启 ArcReel。应用从 PATH 读取工具，不在浏览器中接受任意可执行文件路径。',
+  'media_tools_install_hint': '请在运行服务器上安装 FFmpeg 和 FFprobe 后重启 MatrixSpooll。应用从 PATH 读取工具，不在浏览器中接受任意可执行文件路径。',
   'free_creation_frame_slots_full': '首尾帧槽位已满，请先移除或替换已有素材',
   'free_creation_add_frame': '添加{{frame}}',
   'free_creation_replace_frame': '替换{{frame}}',
@@ -315,17 +315,7 @@ export default {
   'usage': '用量统计',
   'api_keys': 'API 令牌',
   'about': '关于',
-  'license_source_kicker': '法律与来源',
-  'license_source_title': '关于',
-  'license_source_modified': 'MatrixSpooll 是 ArcReel 的修改版本，当前修改版本日期：{{date}}。',
-  'license_source_license_heading': '许可证',
-  'license_source_license_description': '本项目整体按 GNU Affero General Public License v3.0 发布，附加署名和修改声明要求见 NOTICE。',
-  'license_source_no_warranty': '软件不提供任何担保；用户可以依照 AGPL-3.0 使用、修改和再分发本项目。',
-  'license_source_license_link': '查看 LICENSE',
-  'license_source_notice_link': '查看 NOTICE',
-  'license_source_copyright_heading': '版权',
-  'license_source_original_copyright': 'ArcReel Copyright © 2026 Pollo3470 and ArcReel contributors.',
-  'license_source_modified_copyright': 'MatrixSpooll modifications Copyright © 2026 MatrixSpooll contributors.',
+  'about_attribution_unavailable': '无法读取法定来源声明，请检查 NOTICE 文件。',
   'system_config_title': '系统配置与 API 访问管理',
   'account_security': '账户安全',
   'account_security_nav': '账户安全',
@@ -357,7 +347,7 @@ export default {
   'avatar_failed': '头像更新失败，请重试。',
   'config_issues': '配置问题',
   'config_issues_hint': '当前配置存在以下问题，可能会影响部分功能：',
-  'arcreel_agent': '[[brand]] 智能体',
+  'matrixspooll_agent': '[[brand]] 智能体',
   'chat_role_user': '你',
   'chat_role_assistant': '助手',
   'chat_role_system': '系统',
@@ -1358,7 +1348,7 @@ export default {
   'reference_tab_preview': '视频',
   'reference_tab_aria': '参考 Unit 面板切换',
 
-  // ArcReel 工作台 v3 — 参考视频
+  // MatrixSpooll 工作台 v3 — 参考视频
   'reference_main_tab_aria': '工作台主面板切换',
   'grid_canvas_tab_aria': '宫格工作台主面板切换',
   'list_source_files_failed': '读取源文件列表失败：{{message}}',
@@ -1722,7 +1712,7 @@ export default {
   // 时间线 typed 条目（interrupt / AskUserQuestion 答复）
   'chat_interrupt_notice': '用户中断了会话',
   'chat_question_answer_label': '已答复',
-  // MCP tool display names (single source of truth: ARCREEL_MCP_TOOL_IDS in
+  // MCP tool display names (single source of truth: MATRIXSPOOLL_MCP_TOOL_IDS in
   // server/agent_runtime/sdk_tools/__init__.py; tests/test_frontend_mcp_tool_i18n.py
   // 会校验缺漏，新增 backend tool 必须同步补全 zh/en/vi)
   'tool_name_list_pending_assets': '查询待生成资产',

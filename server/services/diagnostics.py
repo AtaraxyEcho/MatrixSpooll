@@ -28,7 +28,7 @@ def _app_version() -> str:
     from importlib.metadata import PackageNotFoundError, version
 
     try:
-        return version("arcreel")
+        return version("matrixspooll")
     except PackageNotFoundError:
         pass
 
@@ -120,7 +120,7 @@ def collect_diagnostics() -> str:
         ("Report generated", lambda: datetime.now(UTC).isoformat()),
     ]
 
-    lines = ["ArcReel diagnostics", "=" * 40]
+    lines = ["MatrixSpooll diagnostics", "=" * 40]
     for label, fn in fields:
         lines.append(f"{label}: {_safe(fn, label)}")
     return "\n".join(lines) + "\n"

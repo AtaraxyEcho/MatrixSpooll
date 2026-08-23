@@ -7,10 +7,12 @@ import zipfile
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from lib.i18n import Translator
+from lib.legal_notice import read_legal_attribution
 from lib.logging_config import resolve_log_dir
 from server.services.diagnostics import collect_diagnostics
 
@@ -18,7 +20,25 @@ router = APIRouter()
 
 _MAX_FILE_BYTES = 100 * 1024 * 1024
 _SPOOL_MAX = 50 * 1024 * 1024
-_LOG_GLOB = "arcreel.log*"
+_LOG_GLOB = "matrixspooll.log*"
+
+
+class LegalAttributionResponse(BaseModel):
+    attribution: str
+    repository_url: str
+
+
+@router.get("/system/legal-attribution", response_model=LegalAttributionResponse)
+async def get_legal_attribution(_t: Translator) -> LegalAttributionResponse:
+    """Return the UI attribution whose source of truth is the bundled NOTICE."""
+    try:
+        attribution = read_legal_attribution()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=_t("legal_notice_unavailable")) from exc
+    return LegalAttributionResponse(
+        attribution=attribution.attribution,
+        repository_url=attribution.repository_url,
+    )
 
 
 @router.get("/system/logs/download")
@@ -53,7 +73,7 @@ async def download_logs(_t: Translator) -> StreamingResponse:
         raise
 
     ts = datetime.now(UTC).strftime("%Y-%m-%d-%H%MZ")
-    filename = f"arcreel-diagnostics-{ts}.zip"
+    filename = f"matrixspooll-diagnostics-{ts}.zip"
 
     def _iter() -> Iterator[bytes]:
         try:

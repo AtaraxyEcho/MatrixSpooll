@@ -2,7 +2,7 @@
 视频项目管理 WebUI - FastAPI 主应用
 
 启动方式:
-    cd ArcReel
+    cd MatrixSpooll
     uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241
 
 注意：必须用 --reload-dir 限定监视目录，否则 watchfiles 会扫描
@@ -39,6 +39,7 @@ from lib.httpx_shared import shutdown_http_client, startup_http_client
 from lib.logging_config import attach_file_handler, migrate_legacy_log_dir, setup_logging
 from lib.path_safety import try_safe_join
 from lib.project_migrations import cleanup_stale_backups, run_project_migrations
+from lib.runtime_identity_migration import migrate_runtime_identity
 from lib.source_loader.migration import migrate_project_source_encoding
 from server.auth import (
     database_auth_initialized,
@@ -138,7 +139,7 @@ def _diagnose_bwrap_failure() -> str:
             "  Fix on HOST (not inside the container):\n"
             "    sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n"
             '    echo "kernel.apparmor_restrict_unprivileged_userns=0" '
-            "| sudo tee /etc/sysctl.d/60-arcreel-bwrap.conf"
+            "| sudo tee /etc/sysctl.d/60-matrixspooll-bwrap.conf"
         )
 
     userns_clone = _read_sysctl(_UNPRIV_USERNS_SYSCTL)
@@ -186,7 +187,7 @@ def check_sandbox_available() -> bool:
             raise RuntimeError(
                 "SANDBOX_UNAVAILABLE on macOS\n"
                 "  sandbox-exec: not found in PATH (should be system-installed)\n"
-                "Required for ArcReel agent runtime."
+                "Required for MatrixSpooll agent runtime."
             )
         return True
     if system == "Linux":
@@ -197,7 +198,7 @@ def check_sandbox_available() -> bool:
             raise RuntimeError(
                 "SANDBOX_UNAVAILABLE on linux\n"
                 f"  missing in PATH: {', '.join(missing)}\n"
-                "Required for ArcReel agent runtime. Install:\n"
+                "Required for MatrixSpooll agent runtime. Install:\n"
                 "  Ubuntu/Debian: sudo apt install bubblewrap socat\n"
                 "  Fedora:        sudo dnf install bubblewrap socat\n"
                 "  Arch:          sudo pacman -S bubblewrap socat"
@@ -225,7 +226,7 @@ def check_sandbox_available() -> bool:
             raise RuntimeError(
                 "SANDBOX_BWRAP_BROKEN on Linux\n"
                 f"  bwrap probe failed to execute: {exc}\n"
-                "Required for ArcReel agent runtime."
+                "Required for MatrixSpooll agent runtime."
             ) from exc
         if probe.returncode != 0:
             stderr = probe.stderr.decode("utf-8", errors="replace").strip() or "(no stderr)"
@@ -293,7 +294,7 @@ async def _migrate_source_encoding_on_startup(projects_root: Path) -> dict[str, 
         return summary
 
     def _run_one(project_dir: Path) -> dict:
-        marker_dir = project_dir / ".arcreel"
+        marker_dir = project_dir / ".matrixspooll"
         marker = marker_dir / "source_encoding_migrated"
         if marker.exists():
             return {"skipped": True}
@@ -368,6 +369,11 @@ async def lifespan(app: FastAPI):
     await backfill_project_registry()
 
     projects_root = app_data_dir()
+
+    # Runtime identity migration is an explicit operator action. Startup must
+    # never move arbitrary hidden directories or mutate checkpoints implicitly.
+    if os.environ.get("RUNTIME_IDENTITY_MIGRATE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        await asyncio.to_thread(migrate_runtime_identity, projects_root)
 
     # 源文件编码迁移（幂等；失败不阻塞启动）。先于 schema 迁移跑：源文一律先归到 UTF-8，
     # 之后所有按 UTF-8 读源文的链路（分集规划、派生文件对账）才有统一的输入。

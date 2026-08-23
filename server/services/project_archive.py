@@ -47,7 +47,8 @@ from lib.validation_messages import MessageRef, ValidationMessage, ValidationRes
 
 logger = logging.getLogger(__name__)
 
-ARCHIVE_MANIFEST_NAME = "arcreel-export.json"
+ARCHIVE_MANIFEST_NAME = "matrixspooll-export.json"
+LEGACY_ARCHIVE_MANIFEST_NAMES = frozenset({"arcreel-export.json"})
 ARCHIVE_FORMAT_VERSION = 2
 ARCHIVE_SCRIPT_SCHEMA_VERSION = 2
 DEFAULT_IMPORT_FILENAME = "imported-project.zip"
@@ -328,7 +329,7 @@ class ProjectArchiveService:
                 members = self._scan_archive_members(archive)
                 root_parts, manifest = self._locate_project_root(archive, members)
 
-                with tempfile.TemporaryDirectory(prefix="arcreel-import-") as temp_dir:
+                with tempfile.TemporaryDirectory(prefix="matrixspooll-import-") as temp_dir:
                     staging_dir = Path(temp_dir) / "project"
                     staging_dir.mkdir(parents=True, exist_ok=True)
 
@@ -435,7 +436,7 @@ class ProjectArchiveService:
         scope: str,
     ) -> tuple[tempfile.TemporaryDirectory[str], Path, dict[str, Any], ArchiveDiagnostics]:
         source_dir = self.project_manager.get_project_path(project_name)
-        temp_dir = tempfile.TemporaryDirectory(prefix="arcreel-export-")
+        temp_dir = tempfile.TemporaryDirectory(prefix="matrixspooll-export-")
         snapshot_dir = Path(temp_dir.name) / project_name
         source_manifest_entries = self._capture_stable_visible_tree(source_dir, snapshot_dir)
 
@@ -457,12 +458,26 @@ class ProjectArchiveService:
         if isinstance(snapshot_project, dict) and project_schema_is_current(snapshot_project):
             if source_manifest_entries is None:
                 raise ArtifactManifestError("archive snapshot has no matching Artifact Manifest state")
-            artifact_manifest = encode_artifact_manifest_payload(
-                snapshot_preserved_artifact_manifest(
-                    snapshot_dir,
-                    source_manifest_entries,
-                )
+            preserved_snapshot = snapshot_preserved_artifact_manifest(
+                snapshot_dir,
+                source_manifest_entries,
             )
+            artifact_manifest = encode_artifact_manifest_payload(preserved_snapshot)
+            # The archive is the public byte boundary.  On Windows, text-mode
+            # repair can normalize line endings in the snapshot after the
+            # manifest adapter has inspected the source descriptor.  Rebind
+            # every claim to the exact bytes that _write_snapshot_members will
+            # copy into the ZIP so import-time verification is deterministic.
+            entries_payload = artifact_manifest.get("entries")
+            if isinstance(entries_payload, dict):
+                for key, entry in entries_payload.items():
+                    if not isinstance(entry, dict):
+                        continue
+                    artifact_path = entry.get("artifact_path")
+                    if not isinstance(artifact_path, str):
+                        continue
+                    entry_path = safe_join(snapshot_dir, artifact_path)
+                    entry["content_digest"] = sha256_file(entry_path)
         manifest = self._build_archive_manifest(
             project_name,
             snapshot_project,
@@ -1767,7 +1782,11 @@ class ProjectArchiveService:
     ) -> tuple[tuple[str, ...], dict[str, Any] | None]:
         visible_members = [member for member in members if not self._is_hidden_member(member.parts)]
 
-        manifest_members = [member for member in visible_members if member.parts[-1] == ARCHIVE_MANIFEST_NAME]
+        manifest_members = [
+            member
+            for member in visible_members
+            if member.parts[-1] == ARCHIVE_MANIFEST_NAME or member.parts[-1] in LEGACY_ARCHIVE_MANIFEST_NAMES
+        ]
         if manifest_members:
             root_candidates = {member.parts[:-1] for member in manifest_members}
             if len(root_candidates) != 1:
@@ -1823,7 +1842,7 @@ class ProjectArchiveService:
             relative_parts = member.parts[root_length:]
             if not relative_parts:
                 continue
-            if relative_parts == (ARCHIVE_MANIFEST_NAME,):
+            if relative_parts == (ARCHIVE_MANIFEST_NAME,) or relative_parts[0] in LEGACY_ARCHIVE_MANIFEST_NAMES:
                 continue
             if self._is_hidden_member(relative_parts):
                 continue

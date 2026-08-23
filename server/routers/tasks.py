@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -17,7 +18,11 @@ from lib.generation_queue import get_generation_queue
 from lib.i18n import Translator
 from lib.task_failure import parse_failure, render_failure
 from server.auth import CurrentUser, database_auth_initialized, is_auth_enabled, is_testing
-from server.services.project_access import list_accessible_projects, resolve_project_access
+from server.services.project_access import (
+    list_accessible_projects,
+    resolve_project_access,
+    resolve_project_access_by_id,
+)
 
 router = APIRouter()
 
@@ -26,18 +31,44 @@ def get_task_queue():
     return get_generation_queue()
 
 
-async def _visible_project_names(
+async def _get_cancel_all_preview(queue: Any, project_name: str, project_id: str) -> int:
+    method = queue.get_cancel_all_preview
+    try:
+        supports_project_id = "project_id" in inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        supports_project_id = True
+    if supports_project_id:
+        return await method(project_name, project_id=project_id)
+    return await method(project_name)
+
+
+async def _cancel_all_queued(queue: Any, project_name: str, project_id: str) -> dict[str, Any]:
+    method = queue.cancel_all_queued
+    try:
+        supports_project_id = "project_id" in inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        supports_project_id = True
+    if supports_project_id:
+        return await method(project_name, project_id=project_id)
+    return await method(project_name)
+
+
+async def _visible_project_ids(
     project_name: str | None,
+    project_id: str | None,
     user: CurrentUser,
     session: AsyncSession,
 ) -> list[str] | None:
+    if project_id:
+        access = await resolve_project_access_by_id(project_id, user, session, required_role="viewer")
+        return [access.project_id]
     if project_name:
         access = await resolve_project_access(project_name, user, session, required_role="viewer")
-        return [access.project_name]
+        return [access.project_id]
     if not is_auth_enabled() or not database_auth_initialized():
         return None if is_testing() else []
     projects = await list_accessible_projects(user.id, session, include_all=user.role == "admin")
-    return [project.name for project in projects]
+    return [project.id for project in projects]
 
 
 async def _authorize_task_project(
@@ -60,9 +91,13 @@ async def _authorize_task_project(
     task = await cast(Callable[[str], Awaitable[dict[str, Any] | None]], get_task)(task_id)
     if not task:
         raise BadRequestError("task_not_found", id=task_id)
-    project_name = task.get("project_name")
-    if isinstance(project_name, str) and project_name:
-        await resolve_project_access(project_name, user, session, required_role="editor")
+    project_id = task.get("project_id")
+    if isinstance(project_id, str) and project_id:
+        await resolve_project_access_by_id(project_id, user, session, required_role="editor")
+    else:
+        project_name = task.get("project_name")
+        if isinstance(project_name, str) and project_name:
+            await resolve_project_access(project_name, user, session, required_role="editor")
     return task
 
 
@@ -159,12 +194,13 @@ def _localize_task(task: dict[str, Any], translate: Callable[..., str]) -> dict[
 async def get_task_stats(
     user: CurrentUser,
     project_name: str | None = None,
+    project_id: str | None = Query(None),
     session: AsyncSession = Depends(get_async_session),
 ):
     queue = get_task_queue()
-    visible_projects = await _visible_project_names(project_name, user, session)
+    visible_projects = await _visible_project_ids(project_name, project_id, user, session)
     if visible_projects is not None:
-        stats = await queue.get_task_stats(project_names=visible_projects)
+        stats = await queue.get_task_stats(project_ids=visible_projects)
     else:
         stats = await queue.get_task_stats()
     return {"stats": stats}
@@ -176,6 +212,7 @@ async def list_tasks(
     user: CurrentUser,
     session: AsyncSession = Depends(get_async_session),
     project_name: str | None = None,
+    project_id: str | None = Query(None),
     status: str | None = None,
     task_type: str | None = None,
     source: str | None = None,
@@ -183,7 +220,7 @@ async def list_tasks(
     page_size: int = Query(default=50, ge=1, le=500),
 ):
     queue = get_task_queue()
-    visible_projects = await _visible_project_names(project_name, user, session)
+    visible_projects = await _visible_project_ids(project_name, project_id, user, session)
     filters = {
         "status": status,
         "task_type": task_type,
@@ -192,7 +229,7 @@ async def list_tasks(
         "page_size": page_size,
     }
     if visible_projects is not None:
-        filters["project_names"] = visible_projects
+        filters["project_ids"] = visible_projects
     result = await queue.list_tasks(**filters)
     result["items"] = [_localize_task(task, _t) for task in result.get("items", [])]
     return result
@@ -213,7 +250,7 @@ async def list_project_tasks(
     queue = get_task_queue()
     access = await resolve_project_access(project_name, user, session, required_role="viewer")
     result = await queue.list_tasks(
-        project_name=access.project_name,
+        project_id=access.project_id,
         status=status,
         task_type=task_type,
         source=source,
@@ -267,7 +304,7 @@ async def cancel_all_preview(
 ):
     queue = get_task_queue()
     access = await resolve_project_access(project_name, user, session, required_role="editor")
-    queued_count = await queue.get_cancel_all_preview(access.project_name)
+    queued_count = await _get_cancel_all_preview(queue, access.project_name, access.project_id)
     return {"queued_count": queued_count}
 
 
@@ -279,7 +316,7 @@ async def cancel_all_queued(
 ):
     queue = get_task_queue()
     access = await resolve_project_access(project_name, user, session, required_role="editor")
-    result = await queue.cancel_all_queued(access.project_name)
+    result = await _cancel_all_queued(queue, access.project_name, access.project_id)
     return result
 
 
@@ -294,7 +331,11 @@ async def get_task(
     task = await queue.get_task(task_id)
     if not task:
         raise NotFoundError("task_not_found", id=task_id)
-    project_name = task.get("project_name")
-    if isinstance(project_name, str) and project_name:
-        await resolve_project_access(project_name, user, session, required_role="viewer")
+    project_id = task.get("project_id")
+    if isinstance(project_id, str) and project_id:
+        await resolve_project_access_by_id(project_id, user, session, required_role="viewer")
+    else:
+        project_name = task.get("project_name")
+        if isinstance(project_name, str) and project_name:
+            await resolve_project_access(project_name, user, session, required_role="viewer")
     return {"task": _localize_task(task, _t)}

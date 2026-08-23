@@ -313,7 +313,7 @@ async def from_project(
     user: CurrentUser,
     session: AsyncSession = Depends(get_async_session),
 ):
-    await resolve_project_access(req.project_name, user, session, required_role="editor")
+    access = await resolve_project_access(req.project_name, user, session, required_role="editor")
 
     # 1) 类型合法性
     if req.resource_type not in GLOBAL_LIBRARY_ASSET_TYPES:
@@ -321,9 +321,9 @@ async def from_project(
 
     # 2) 加载项目
     try:
-        project = get_project_manager().load_project(req.project_name)
+        project = get_project_manager().load_project(access.storage_key or access.project_name)
     except FileNotFoundError as exc:
-        raise NotFoundError("asset_target_project_not_found", project=req.project_name) from exc
+        raise NotFoundError("asset_target_project_not_found", project=access.project_name) from exc
     except Exception:
         logger.exception("Failed to load project '%s' for from-project", req.project_name)
         raise HTTPException(status_code=500, detail=_t("asset_load_project_failed"))
@@ -519,7 +519,10 @@ async def apply_to_project(
         access = await resolve_project_access(req.target_project or "", user, session, required_role="editor")
     if req.conflict_policy == "overwrite" and access.role != "owner":
         raise HTTPException(status_code=403, detail=_t("project_access_denied", name=access.project_name))
-    target_project = access.project_name
+    # Use the immutable ID for file-backed operations; the display name is
+    # intentionally allowed to repeat and is only used in user-facing output.
+    target_project = access.storage_key or access.project_id
+    target_project_display_name = access.project_name
 
     # 2) 校验目标项目存在
     project_manager = get_project_manager()
@@ -528,7 +531,7 @@ async def apply_to_project(
     except ProjectAssetNameConflictError as exc:
         raise HTTPException(status_code=409, detail=localize_project_asset_name_conflict(exc, _t)) from exc
     except FileNotFoundError as exc:
-        raise NotFoundError("asset_target_project_not_found", project=target_project) from exc
+        raise NotFoundError("asset_target_project_not_found", project=target_project_display_name) from exc
 
     succeeded: list[dict] = []
     skipped: list[dict] = []

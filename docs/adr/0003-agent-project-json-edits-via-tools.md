@@ -6,7 +6,7 @@ status: proposed
 
 Agent 今天能用裸 `Write`/`Edit`（甚至 Bash 的 `echo>`/`sed`/`python -c`）直改 `scripts/*.json` 与 `project.json`，只过一个 PreToolUse 的 **JSON 语法** hook——结构错误（`duration_seconds` 越界、缺 `image_prompt`、`ReferenceVideoUnit` 的 shots↔duration 不一致）照样落盘，绕开 `_write_script_unlocked` 统一入口（ADR-0002）。这条旁路让「单一守卫点」是假的。我们决定把 Agent 对项目 JSON 数据的一切写入收归一组 in-process MCP 工具，并在工具外**禁止**裸字节写入这两类文件，使 ADR-0002 的结构校验真正只有一个强制点。
 
-工具集（均为 in-process MCP `arcreel`，跑在 server 进程、不在 agent sandbox 内）：
+工具集（均为 in-process MCP `matrixspooll`，跑在 server 进程、不在 agent sandbox 内）：
 
 - `get_episode_script_revision` + `patch_episode_script` — 先读取 canonical JSON `sha256-v1` revision，再提交 `{script, expected_revision, operations[]}`。operations 是有序的 `update` / `insert_after` / `move_after` / `remove`，按 `segment_id` / `scene_id` / `unit_id` / `shot_id` 定位，各内容/生成模式通用。服务在项目锁内复核 revision，对内存 candidate 顺序应用全批，再统一预检结构、项目引用、适用的 Artifact Manifest basis 与 SpeechComposition；任一失败返回稳定 `code`、`operation_index`、unit/field location、`next_action`，整批零写入。
 - `insert_segment` / `remove_segment` / `split_segment` — Agent 的结构性便捷工具保留原调用形状，但只负责机械投影成上述正式 operations，提交与 result 都委托同一编辑服务。**id 稳定不重排**，插入/拆分按模式发新 id 并加 `_{子序号}` 后缀：narration/drama 的 segments/scenes 用 `E{集}S{序号}`、reference 的 units 用 `E{集}U{序号}`。split 的首份以 remove + 同 id reinsert 表达，服务从被移除的原条目恢复其 `generated_assets` / `end_frame_image`；其余新身份清空资产。
@@ -26,7 +26,7 @@ Agent 今天能用裸 `Write`/`Edit`（甚至 Bash 的 `echo>`/`sed`/`python -c`
 - **denyWrite 内核级生效的实测**：`denyWrite` 走与 `denyRead` 相同的 `filesystem` passthrough（后者已在生产用于保护 `.env` 等，机制可信）。其对 Bash 子进程的内核级写拒绝是 SDK 文档承诺的同字段行为；落地后建议做一次 live smoke test（sandbox 启用时在 Bash 工具内 `echo > scripts/x.json` 应被内核拒、而 MCP 工具写盘正常）以翻 `accepted`。
 - **编辑不删除已有媒体，也不改写 `generated_assets`**。改 prompt 后旧媒体由显式重新生成替换；结构 remove 只移除剧本引用，项目内已有文件继续保留。split 的同 id 锚点延续旧资产，新派生 id 清空资产。Manifest currency 在读时由 basis 比较推导，不把 stale 状态写进剧本。
 - **structured basis 只登记正式直接输入**：narration / drama（包括 reference_video 路线）存在 canonical step1 时，用该 step1 构造 episode-script basis；无 step1 时不登记。ad 当前没有 canonical step1，编辑服务不以修改后的 script 自身制造 basis，避免产物自引用。
-- 工具**返回文本**是 agent-facing（免 i18n）；工具**显示名**是 user-facing，须在 `ARCREEL_MCP_TOOL_IDS` 注册并补 `tool_name_<id>` 三语（zh/en/vi）。
+- 工具**返回文本**是 agent-facing（免 i18n）；工具**显示名**是 user-facing，须在 `MATRIXSPOOLL_MCP_TOOL_IDS` 注册并补 `tool_name_<id>` 三语（zh/en/vi）。
 - 与 ADR-0002 同源：本 ADR 是其「Agent 裸写入面收归」承诺的兑现。reference_video 的结构工具作用于顶层 `video_units`；unit 的 `duration_seconds` 是独立编排字段，不从成员 shots 求和。结构校验 / 编辑核心 / metadata 重算共用 `script_editor.resolve_items` 判别。
 
 ## 「不更坏」语义的边界限定（post-#604 根因迭代）

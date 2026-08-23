@@ -13,12 +13,13 @@ class AgentSession(TimestampMixin, UserOwnedMixin, Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     sdk_session_id: Mapped[str] = mapped_column(String, unique=True)
-    project_id: Mapped[str | None] = mapped_column(
+    project_id: Mapped[str] = mapped_column(
         String,
         ForeignKey("project_registry.id", ondelete="CASCADE"),
-        nullable=True,
+        nullable=False,
     )
     project_name: Mapped[str] = mapped_column(String, nullable=False)
+    actor_username: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str] = mapped_column(String, server_default="")
     status: Mapped[str] = mapped_column(String, server_default="idle")
     # 分支会话指针：非空即表示本会话已被改写分叉取代（见 docs/adr/0058）。

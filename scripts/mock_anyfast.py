@@ -1,7 +1,7 @@
 """Local AnyFast-compatible mock service for cost-free development checks.
 
 The mock intentionally mirrors the documented HTTP envelopes instead of the
-internal ArcReel backend objects. It is safe to run locally and never calls an
+internal MatrixSpooll backend objects. It is safe to run locally and never calls an
 external provider.
 
 Run with::
@@ -449,6 +449,6 @@ def create_app(*, api_key: str = DEFAULT_API_KEY, scenario: str | None = None) -
 
 
 app = create_app(
-    api_key=os.getenv("ARCREEL_MOCK_ANYFAST_API_KEY", DEFAULT_API_KEY),
-    scenario=os.getenv("ARCREEL_MOCK_ANYFAST_SCENARIO", DEFAULT_SCENARIO),
+    api_key=os.getenv("MATRIXSPOOLL_MOCK_ANYFAST_API_KEY", DEFAULT_API_KEY),
+    scenario=os.getenv("MATRIXSPOOLL_MOCK_ANYFAST_SCENARIO", DEFAULT_SCENARIO),
 )

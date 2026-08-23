@@ -4,20 +4,17 @@ Revision ID: d2c4e6f8a0b2
 Revises: c1b3d5e7f9a1
 """
 
-import logging
-import os
 from collections.abc import Sequence
 
 import sqlalchemy as sa
 
 from alembic import op
+from lib.db.migration_helpers import preserve_sqlite_indexes
 
 revision: str = "d2c4e6f8a0b2"
 down_revision: str | Sequence[str] | None = "c1b3d5e7f9a1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
-
-logger = logging.getLogger(__name__)
 
 
 def _add_project_id(
@@ -27,23 +24,25 @@ def _add_project_id(
     *,
     ondelete: str = "SET NULL",
 ) -> None:
-    with op.batch_alter_table(table_name, schema=None) as batch_op:
-        batch_op.add_column(sa.Column("project_id", sa.String(), nullable=True))
-        batch_op.create_foreign_key(
-            foreign_key_name,
-            "project_registry",
-            ["project_id"],
-            ["id"],
-            ondelete=ondelete,
-        )
-        batch_op.create_index(index_name, ["project_id"], unique=False)
+    with preserve_sqlite_indexes(table_name):
+        with op.batch_alter_table(table_name, schema=None) as batch_op:
+            batch_op.add_column(sa.Column("project_id", sa.String(), nullable=True))
+            batch_op.create_foreign_key(
+                foreign_key_name,
+                "project_registry",
+                ["project_id"],
+                ["id"],
+                ondelete=ondelete,
+            )
+            batch_op.create_index(index_name, ["project_id"], unique=False)
 
 
 def _drop_project_id(table_name: str, index_name: str, foreign_key_name: str) -> None:
-    with op.batch_alter_table(table_name, schema=None) as batch_op:
-        batch_op.drop_index(index_name)
-        batch_op.drop_constraint(foreign_key_name, type_="foreignkey")
-        batch_op.drop_column("project_id")
+    op.drop_index(index_name, table_name=table_name)
+    with preserve_sqlite_indexes(table_name):
+        with op.batch_alter_table(table_name, schema=None) as batch_op:
+            batch_op.drop_constraint(foreign_key_name, type_="foreignkey")
+            batch_op.drop_column("project_id")
 
 
 def upgrade() -> None:
@@ -76,10 +75,7 @@ def upgrade() -> None:
     if unresolved:
         detail = ", ".join(f"{table_name}={count}" for table_name, count in unresolved.items())
         message = f"project identity migration found unregistered scoped records ({detail})"
-        if os.environ.get("TESTING", "").strip().lower() in {"1", "true", "yes", "on"}:
-            logger.warning(message)
-        else:
-            raise RuntimeError(f"{message}; repair project registration before upgrading")
+        raise RuntimeError(f"{message}; repair project registration before upgrading")
 
     if "agent_sessions" not in unresolved:
         with op.batch_alter_table("agent_sessions", schema=None) as batch_op:

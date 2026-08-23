@@ -25,9 +25,10 @@ update_docs: engine-b
 
 ```bash
 git clone https://github.com/MockMine/MatrixSpooll.git
-cd MatrixSpooll/deploy
+cd MatrixSpooll/deploy/production
 cp .env.example .env
-docker compose up -d
+# 编辑 .env，设置 POSTGRES_PASSWORD 和认证配置
+docker compose -f docker-compose.yml up -d --build
 ```
 
 启动后访问 `http://localhost:1241`；部署在其他主机上时，将 `localhost` 换成主机地址。
@@ -36,11 +37,12 @@ Windows 原生环境可以运行项目创建等基础流程，但 Agent 沙箱�
 
 ### Docker 启动后打不开，或者容器反复重启怎么办？ {#docker-wont-start}
 
-在实际使用的 `deploy/` 或 `deploy/production/` 目录执行：
+在 `deploy/production/` 目录执行：
 
 ```bash
 docker compose ps
-docker compose logs arcreel
+docker compose logs matrixspooll
+docker compose logs postgres
 ```
 
 依次检查：
@@ -70,7 +72,7 @@ docker compose up -d --force-recreate
 先完成备份，再在对应的 Compose 目录执行：
 
 ```bash
-docker compose build arcreel
+docker compose build matrixspooll
 docker compose up -d
 ```
 
@@ -82,12 +84,13 @@ MatrixSpooll 启动时会自动执行数据库与项目结构迁移。正常更�
 
 默认 Docker 部署的主要数据位于 Compose 目录：
 
-- `projects/`：项目、素材和默认 SQLite 数据库
+- `projects/`：项目、素材和媒体文件
+- `pgdata/`：PostgreSQL 数据目录
 - `.env`：登录与部署配置
 - `vertex_keys/`：Vertex 凭据文件
 - `claude_data/`：Agent 会话数据
 
-生产 PostgreSQL 部署还需要备份 PostgreSQL 数据库。全站备份应同时覆盖项目目录、数据库与所需凭据；PostgreSQL 使用 `pg_dump` / `pg_restore`，SQLite 应在停止服务后复制，或使用 SQLite 在线备份机制。
+全站备份必须同时覆盖项目目录、PostgreSQL 数据库与所需凭据；数据库使用 `pg_dump` 导出，并按[部署与运维](../ops/deployment.md#backup-and-restore)中的流程定期演练恢复。
 
 Web UI 的项目 ZIP 适合迁移单个项目，但不包含全局供应商配置、账号配置、任务记录、费用记录或 Agent 会话，因此不能代替全站备份。
 
@@ -307,7 +310,7 @@ MatrixSpooll 可以提供基于 AGPL-3.0 的定制开发、私有化部署和技
 前端的通用错误提示无法说明根因。先展开任务错误，再查看服务端日志和供应商返回的状态码。Docker 部署可在 Compose 目录执行：
 
 ```bash
-docker compose logs arcreel
+docker compose logs matrixspooll
 ```
 
 也可以在设置页“关于”中下载诊断日志。诊断包会尝试遮蔽系统摘要中的已知凭据，但不会在下载时对已有日志再次全文脱敏；分享前必须人工检查整个诊断包，并删除 API Key、Token、密码、完整 `.env`、私人接口地址和项目内容。

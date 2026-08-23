@@ -10,7 +10,7 @@ description: 广告/短片项目的工作流入口。当用户提到做视频、
 
 ## 工作流步骤
 
-先调用 `mcp__arcreel__get_workflow_plan({})` 取回权威计划。把 `steps[]`、`blockers` 与 `next_action`
+先调用 `mcp__matrixspooll__get_workflow_plan({})` 取回权威计划。把 `steps[]`、`blockers` 与 `next_action`
 当作阶段判断的唯一真相源（`plan.status` 内嵌 `project` / `target` / `gates` / `artifacts` 快照）；
 Read 只补充创作输入与产品 soft gate 信息。每次动作完成后刷新计划。
 `next_action.type == "none"` 时展示 blockers 并停止变更。
@@ -34,21 +34,21 @@ Read 只补充创作输入与产品 soft gate 信息。每次动作完成后刷�
 调用工具或 dispatch subagent 时带入 `target.episode`、`next_action.args` 与 `requested_ids`，不二次检查 `generation_mode` 或 `grid_storyboard` 来改选阶段。步骤内的产品原图与 sheet 过目规则是执行动作前的 soft gate。
 
 1. **确认项目状态**：按计划确认 `content_mode=ad` 与项目级 `generation_mode`；Read `project.json` 补充 `title`、`target_duration`、`brief` 与 `products`。生成路线创建后不可更改。
-2. **创作输入**：带货项目未登记产品或缺原图时，引导用户在 WebUI 上传；原图是保真锚点。用 `mcp__arcreel__patch_project` 写产品描述、品牌与 `brief`。通用短片不索要产品。
+2. **创作输入**：带货项目未登记产品或缺原图时，引导用户在 WebUI 上传；原图是保真锚点。用 `mcp__matrixspooll__patch_project` 写产品描述、品牌与 `brief`。通用短片不索要产品。
 3. **起草卖点**：产品的 `selling_points` 为空时，根据 brief、描述与原图起草，与用户确认后用 `patch_project` 写回。
-4. **资产定义与设计图**：定义角色、场景、道具后，对每个类型取 `artifacts.asset_sheets[type].missing_ids` 与 `requested_ids` 的交集，调用 `mcp__arcreel__generate_assets({"type": type, "names": [该类型 requested_ids]})`。产品 sheet 在产品资产页生成。
-5. **一键生成剧本**：调用 `mcp__arcreel__generate_episode_script({"episode": 1})`。广告不走 step1；storyboard 路线直接产出 `shots[]`，reference 路线直接产出自包含 `video_units[]`。总时长偏离 `target_duration` 时提醒用户，不阻塞保存。
+4. **资产定义与设计图**：定义角色、场景、道具后，对每个类型取 `artifacts.asset_sheets[type].missing_ids` 与 `requested_ids` 的交集，调用 `mcp__matrixspooll__generate_assets({"type": type, "names": [该类型 requested_ids]})`。产品 sheet 在产品资产页生成。
+5. **一键生成剧本**：调用 `mcp__matrixspooll__generate_episode_script({"episode": 1})`。广告不走 step1；storyboard 路线直接产出 `shots[]`，reference 路线直接产出自包含 `video_units[]`。总时长偏离 `target_duration` 时提醒用户，不阻塞保存。
 6. **sheet 过目（软门禁）**：产品有 `product_sheet` 时，请用户在首次分镜或参考视频生成前确认它与真品一致；只有原图时直接继续。
 7. **编排与生成**：
 
-   - `repair_video_units`：Read `target.script`，只处理 `requested_ids` 对应的 unit。先调用 `mcp__arcreel__get_episode_script_revision({"script": target.script_filename})`；再用一次 `mcp__arcreel__patch_episode_script({"script": target.script_filename, "expected_revision": revision, "operations": [{"op": "update", "id": unit_id, "fields": {"shots": [...], "references": [...], "duration_seconds": ...}}]})` 写回全部 unit 的完整规划（每个 unit 一条有序 update）；由工具重算 `needs_replan`，不要直接编辑标记。每个 unit 保持单一发声归属，产品/角色/场景/道具都用 `@[名称]`。修复后立即用 `generate_video_selected` 点名重做这些 unit，再刷新状态。
+   - `repair_video_units`：Read `target.script`，只处理 `requested_ids` 对应的 unit。先调用 `mcp__matrixspooll__get_episode_script_revision({"script": target.script_filename})`；再用一次 `mcp__matrixspooll__patch_episode_script({"script": target.script_filename, "expected_revision": revision, "operations": [{"op": "update", "id": unit_id, "fields": {"shots": [...], "references": [...], "duration_seconds": ...}}]})` 写回全部 unit 的完整规划（每个 unit 一条有序 update）；由工具重算 `needs_replan`，不要直接编辑标记。每个 unit 保持单一发声归属，产品/角色/场景/道具都用 `@[名称]`。修复后立即用 `generate_video_selected` 点名重做这些 unit，再刷新状态。
    - `next_action.type == "generate_storyboards"` → 调
-     `mcp__arcreel__generate_storyboards({"script": target.script_filename, "segment_ids": requested_ids})`
+     `mcp__matrixspooll__generate_storyboards({"script": target.script_filename, "segment_ids": requested_ids})`
    - `next_action.type == "generate_grid"` → 调
-     `mcp__arcreel__generate_grid({"script": target.script_filename, "scene_ids": requested_ids})`
+     `mcp__matrixspooll__generate_grid({"script": target.script_filename, "scene_ids": requested_ids})`
    - `next_action.type == "choose_narration_delivery"` → 本次请求含叙述旁白。**显式说明**并在
      「使用当前 TTS」与「后期配音」之间二选一，选择经 `narration_delivery` 带进下一次
-     `mcp__arcreel__get_workflow_plan`（不持久化，每次查询都要重新带上）。未配置 TTS 时默认后期配音，
+     `mcp__matrixspooll__get_workflow_plan`（不持久化，每次查询都要重新带上）。未配置 TTS 时默认后期配音，
      不要为了让视频继续而建议用户去配置 TTS 供应商；选 TTS 时先显式生成并让用户试听，再按
      预检返回的 `problems[].action` 处理（action 是权威，不要按 `code` 自己推）
    - `next_action.type == "confirm_request_duration"` → 按 `admission.confirmation.tiers[]` 逐档位展示
@@ -58,8 +58,8 @@ Read 只补充创作输入与产品 soft gate 信息。每次动作完成后刷�
      `problems[].code`、原因与 `problems[].action`（被 `blocked_unit_ids` 连累的 unit 带
      `generation_batch_admission_withheld`，如实说明不是它自身有问题）；修掉被拒 unit 后整批重来，
      不拆批先跑通过的那一半。入队时若 `requested_ids` 非空则调
-     `mcp__arcreel__generate_video_selected({"script": target.script_filename, "scene_ids": requested_ids, "narration_delivery": chosen_narration_delivery})`；
-     `requested_ids` 为空时才调 `mcp__arcreel__generate_video_episode({"script": target.script_filename, "narration_delivery": chosen_narration_delivery})`。
+     `mcp__matrixspooll__generate_video_selected({"script": target.script_filename, "scene_ids": requested_ids, "narration_delivery": chosen_narration_delivery})`；
+     `requested_ids` 为空时才调 `mcp__matrixspooll__generate_video_episode({"script": target.script_filename, "narration_delivery": chosen_narration_delivery})`。
      `narration_delivery` 必填，填本次已向用户确认的那个值：省略或写错值一律返回工具错误、不入队
      任何任务，也不退回后期配音；没和用户确认过就先走 `choose_narration_delivery`，不要自己填。
      返回后按逐 ID 分账陈述结果（`succeeded` / `failed` / `blocked` / `skipped`），并把 workflow 步骤
@@ -79,7 +79,7 @@ Read 只补充创作输入与产品 soft gate 信息。每次动作完成后刷�
 
 ## 镜头时长约束
 
-storyboard 分镜时长取视频模型 `supported_durations` 成员，可用 `mcp__arcreel__get_video_capabilities` 查询。reference unit 使用剧本模型允许的正整数编排时长，生成预检再投影到供应商档位。发现非法值时先用 `patch_episode_script` 修正。
+storyboard 分镜时长取视频模型 `supported_durations` 成员，可用 `mcp__matrixspooll__get_video_capabilities` 查询。reference unit 使用剧本模型允许的正整数编排时长，生成预检再投影到供应商档位。发现非法值时先用 `patch_episode_script` 修正。
 
 ## 边界
 

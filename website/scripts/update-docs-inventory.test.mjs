@@ -8,7 +8,7 @@ import test from "node:test";
 const script = resolve(import.meta.dirname, "update-docs-inventory.mjs");
 
 function withRepo(files, run) {
-  const root = mkdtempSync(join(tmpdir(), "arcreel-update-docs-"));
+  const root = mkdtempSync(join(tmpdir(), "matrixspooll-update-docs-"));
   try {
     for (const [path, content] of Object.entries(files)) {
       const absolutePath = join(root, path);

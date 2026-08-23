@@ -364,7 +364,7 @@ for provider, api_key, cred_path, base_url in rows:
 
 - [ ] **Step 4: 验证表结构**
 
-运行: `uv run python -c "import sqlite3; conn = sqlite3.connect('projects/.arcreel.db'); print([r[1] for r in conn.execute('PRAGMA table_info(provider_credential)').fetchall()])"`
+运行: `uv run python -c "import sqlite3; conn = sqlite3.connect('projects/.matrixspooll.db'); print([r[1] for r in conn.execute('PRAGMA table_info(provider_credential)').fetchall()])"`
 预期: 输出列名列表，包含 `provider`, `name`, `api_key`, `credentials_path`, `base_url`, `is_active`, `created_at`, `updated_at`
 
 - [ ] **Step 5: 提交**

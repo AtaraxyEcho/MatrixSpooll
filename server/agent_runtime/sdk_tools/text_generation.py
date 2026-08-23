@@ -86,6 +86,7 @@ from server.agent_runtime.sdk_tools._context import (
     MAX_INSTRUCTIONS_LEN,
     ToolContext,
     fetch_video_caps,
+    invoke_with_optional_actor,
     read_instructions_arg,
     reference_unit_duration_tiers,
     resolve_video_caps,
@@ -398,7 +399,11 @@ def generate_episode_script_tool(ctx: ToolContext):
                     "is_error": True,
                 }
 
-            generator = await ScriptGenerator.create(project_path)
+            generator = await invoke_with_optional_actor(
+                ScriptGenerator.create,
+                project_path,
+                actor_user_id=ctx.actor_user_id,
+            )
             result_path = await generator.generate(episode=episode, instructions=instructions)
             return {"content": [{"type": "text", "text": f"✅ 剧本生成完成: {result_path}"}]}
         except FileNotFoundError as exc:
@@ -577,13 +582,15 @@ def normalize_drama_script_tool(ctx: ToolContext):
             # 消除「结构→自由文本→结构」双重转写。本地解析复用同一 schema 保持同口径校验。
             schema = build_drama_normalized_script_model(supported_durations)
             generator = await TextGenerator.create(TextTaskType.SCRIPT, project_name=ctx.project_name)
-            result = await generator.generate(
+            result = await invoke_with_optional_actor(
+                generator.generate,
                 TextGenerationRequest(
                     prompt=prompt,
                     response_schema=schema,
                     max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
                 ),
                 project_name=ctx.project_name,
+                actor_user_id=ctx.actor_user_id,
             )
             content = _parse_normalized_content(result.text, schema)
 
@@ -1581,13 +1588,15 @@ def split_reference_video_units_tool(ctx: ToolContext):
             # 由下方机械派生（正文内的语法则由 parser 后校验兜底，schema 管不到）。
             schema = build_reference_units_step1_model(split_caps.durations)
             generator = await TextGenerator.create(TextTaskType.SCRIPT, project_name=ctx.project_name)
-            result = await generator.generate(
+            result = await invoke_with_optional_actor(
+                generator.generate,
                 TextGenerationRequest(
                     prompt=prompt,
                     response_schema=schema,
                     max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
                 ),
                 project_name=ctx.project_name,
+                actor_user_id=ctx.actor_user_id,
             )
             flat = _parse_step1_json(result.text, schema, label="step1 拆分内容", top_shape="{units}")
 
@@ -1736,7 +1745,11 @@ def validate_and_promote_draft_tool(ctx: ToolContext):
                     }
                 # 用异步工厂而非裸构造：晋升同样经 _add_metadata 落盘，裸构造会把
                 # metadata.generator 记成 "unknown"，与直接生成路径的同一份产物对不上。
-                generator = await ScriptGenerator.create(project_path)
+                generator = await invoke_with_optional_actor(
+                    ScriptGenerator.create,
+                    project_path,
+                    actor_user_id=ctx.actor_user_id,
+                )
                 result_path = await generator.promote_reference_step2_draft(episode)
                 return {"content": [{"type": "text", "text": f"✅ step2 视觉展开已校验通过并晋升: {result_path}"}]}
 
@@ -1907,13 +1920,15 @@ def split_narration_segments_tool(ctx: ToolContext):
             # 结构化输出：response_schema 复用既有 NarrationStep1Draft（片段 schema）；
             # 本地解析复用同一 schema 保持同口径校验。片段时长的成员约束由下方 _validate_narration_segments 兜底。
             generator = await TextGenerator.create(TextTaskType.SCRIPT, project_name=ctx.project_name)
-            result = await generator.generate(
+            result = await invoke_with_optional_actor(
+                generator.generate,
                 TextGenerationRequest(
                     prompt=prompt,
                     response_schema=NarrationStep1Draft,
                     max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
                 ),
                 project_name=ctx.project_name,
+                actor_user_id=ctx.actor_user_id,
             )
             content = _parse_step1_json(
                 result.text, NarrationStep1Draft, label="step1 拆分内容", top_shape="{segments}"
