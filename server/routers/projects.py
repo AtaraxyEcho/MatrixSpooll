@@ -642,9 +642,9 @@ async def list_projects(
     if is_auth_enabled() and database_auth_initialized():
         if user.role == "admin":
             accessible = await list_accessible_projects(user.id, session, include_all=True)
-            # The project API exposes project roles only; administrators have
-            # owner-equivalent access without changing the persisted member role.
-            role_by_project_id = {row.id: "owner" for row in accessible}
+            # 超管对任意项目保留 owner 保底；普通管理员仅只读（viewer），
+            # 使前端据此隐藏设置 / 成员 / 删除等操作入口。
+            role_by_project_id = {row.id: ("owner" if user.is_superadmin else "viewer") for row in accessible}
         else:
             accessible = await list_accessible_projects(user.id, session)
             member_rows = await session.execute(
@@ -656,10 +656,17 @@ async def list_projects(
         # may repeat and therefore must never be used for lookup or paths.
         project_names = [row.storage_key for row in accessible]
         registry_by_name = {row.storage_key: row for row in accessible}
+        # 批量查询项目持有者（owner）信息，供项目卡片展示归属标签。
+        owner_by_id: dict[str, User] = {}
+        if registry_by_name:
+            owner_ids = {row.owner_id for row in registry_by_name.values()}
+            owner_rows = await session.scalars(select(User).where(User.id.in_(owner_ids)))
+            owner_by_id = {owner.id: owner for owner in owner_rows.all()}
     else:
         project_names = get_project_manager().list_projects()
         registry_by_name = {}
         role_by_project_id = {}
+        owner_by_id = {}
 
     def _sync():
         manager = get_project_manager()
@@ -668,6 +675,12 @@ async def list_projects(
         for name in project_names:
             try:
                 display_name = registry_by_name[name].name if name in registry_by_name else name
+                owner = owner_by_id.get(registry_by_name[name].owner_id) if name in registry_by_name else None
+                owner_fields = {
+                    "owner_username": owner.username if owner else None,
+                    "owner_nickname": owner.nickname if owner else None,
+                    "owner_avatar_path": owner.avatar_path if owner else None,
+                }
                 # 尝试加载项目元数据
                 if manager.project_exists(name):
                     project = manager.load_project(name)
@@ -721,6 +734,7 @@ async def list_projects(
                             "content_mode": project.get("content_mode"),
                             "thumbnail": thumbnail,
                             "status": status,
+                            **owner_fields,
                         }
                     )
                 else:
@@ -738,6 +752,7 @@ async def list_projects(
                             "content_mode": None,
                             "thumbnail": None,
                             "status": {},
+                            **owner_fields,
                         }
                     )
             except Exception as e:
@@ -756,6 +771,7 @@ async def list_projects(
                         "content_mode": None,
                         "thumbnail": None,
                         "status": {},
+                        **owner_fields,
                     }
                 )
 
@@ -1297,12 +1313,13 @@ async def list_project_member_candidates(
 ):
     """List active accounts the project owner may still add as members.
 
-    Owner only. Excludes the owner and accounts already on the project, so the
-    UI can render a checkbox list without further filtering.
+    Owner only. Excludes the owner, accounts already on the project, and the
+    acting user themselves (relevant when an admin operates on someone else's
+    project and would otherwise see themselves as an addable candidate).
     """
 
     access = await resolve_project_access(name, user, session, required_role="owner")
-    existing_ids = {access.owner_id}
+    existing_ids = {access.owner_id, user.id}
     member_ids = await session.scalars(
         select(ProjectMember.user_id).where(ProjectMember.project_id == access.project_id)
     )
@@ -1358,6 +1375,7 @@ async def add_project_member(
         ).all()
     )
     existing_ids.add(access.owner_id)
+    existing_ids.add(user.id)
 
     added: list[dict[str, str]] = []
     for account_id in target_ids:

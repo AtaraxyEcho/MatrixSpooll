@@ -8,8 +8,9 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link } from "wouter";
-import { MoreHorizontal, Trash2 } from "lucide-react";
+import { MoreHorizontal, Settings, Trash2, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { API } from "@/api";
 import { getProjectDisplayName } from "@/utils/project-display";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { hashHue, posterGridStyle } from "@/components/ui/darkroom-tokens";
@@ -321,7 +322,10 @@ interface ProjectCardBaseProps {
  * 工作台——演示项目进的是只读工作台，删除则只对真实项目成立。
  */
 type ProjectCardProps = ProjectCardBaseProps &
-  ({ readOnly: true; onDelete?: never } | { readOnly?: false; onDelete: () => void });
+  (
+    | { readOnly: true; onDelete?: never; onOpenMembers?: never }
+    | { readOnly?: false; onDelete: () => void; onOpenMembers: () => void }
+  );
 
 export function ProjectCard(props: ProjectCardProps) {
   const { project, styleLabel } = props;
@@ -363,6 +367,13 @@ export function ProjectCard(props: ProjectCardProps) {
   const episodes =
     status?.episodes_summary ?? { total: 0, scripted: 0, in_production: 0, completed: 0 };
   const projectDisplayName = getProjectDisplayName(project.title, t("untitled_project"));
+  const projectRouteRef = project.project_id ?? project.id ?? project.name;
+  const canOpenSettings = project.current_role !== "viewer";
+  const ownerDisplay = project.owner_nickname || project.owner_username || null;
+  const ownerAvatarUrl = project.owner_avatar_path
+    ? API.getAvatarUrl(project.owner_avatar_path, project.owner_avatar_path)
+    : null;
+  const ownerInitial = ownerDisplay ? ownerDisplay.slice(0, 1).toUpperCase() : "";
   const contentModeLabel = project.content_mode === "free"
     ? t("free_creation")
     : project.content_mode === "ad"
@@ -410,6 +421,17 @@ export function ProjectCard(props: ProjectCardProps) {
             {styleLabel}
           </span>
         </div>
+
+        {ownerDisplay ? (
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] text-text-3" title={t("lobby_card_owner")}>
+            {ownerAvatarUrl ? (
+              <img src={ownerAvatarUrl} alt="" className="h-4 w-4 shrink-0 rounded-full border border-hairline object-cover" />
+            ) : (
+              <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full border border-hairline bg-bg-grad-a/60 text-[8px] font-semibold text-text-3">{ownerInitial}</span>
+            )}
+            <span className="truncate">{ownerDisplay}</span>
+          </div>
+        ) : null}
 
         <div className="mb-3 flex items-center gap-2">
           <PhasePill phase={phase} label={phaseLabel} />
@@ -485,7 +507,7 @@ export function ProjectCard(props: ProjectCardProps) {
         </span>
       ) : null}
       <Link
-        href={`/app/projects/${project.project_id ?? project.id ?? project.name}`}
+        href={`/app/projects/${projectRouteRef}`}
         className="block w-full text-left text-text no-underline outline-none"
         aria-label={linkLabel}
       >
@@ -518,6 +540,34 @@ export function ProjectCard(props: ProjectCardProps) {
               ref={menuRef}
               className="absolute right-0 bottom-[calc(100%+6px)] min-w-[148px] overflow-hidden rounded-md border border-hairline bg-bg-grad-a/95 shadow-[0_18px_40px_-22px_oklch(0_0_0_/_0.7)] backdrop-blur"
             >
+              {canOpenSettings ? (
+                <Link
+                  href={`/app/projects/${projectRouteRef}/settings`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuOpen(false);
+                  }}
+                  aria-label={`${t("project_settings")} — ${projectDisplayName}`}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-text-2 transition-colors hover:bg-accent-dim hover:text-text focus-visible:bg-accent-dim focus-visible:outline-none"
+                >
+                  <Settings className="h-3.5 w-3.5" aria-hidden />
+                  {t("project_settings")}
+                </Link>
+              ) : null}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  props.onOpenMembers();
+                }}
+                aria-label={`${t("project_members_title")} — ${projectDisplayName}`}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-text-2 transition-colors hover:bg-accent-dim hover:text-text focus-visible:bg-accent-dim focus-visible:outline-none"
+              >
+                <Users className="h-3.5 w-3.5" aria-hidden />
+                {t("project_members_title")}
+              </button>
               <button
                 type="button"
                 onClick={(e) => {
@@ -527,7 +577,7 @@ export function ProjectCard(props: ProjectCardProps) {
                   props.onDelete();
                 }}
                 aria-label={`${t("delete_project")} — ${projectDisplayName}`}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-danger-2 transition-colors hover:bg-danger-soft focus-visible:bg-danger-soft focus-visible:outline-none"
+                className="flex w-full items-center gap-2 border-t border-hairline-soft px-3 py-2 text-left text-[12.5px] text-danger-2 transition-colors hover:bg-danger-soft focus-visible:bg-danger-soft focus-visible:outline-none"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 {t("delete_project")}

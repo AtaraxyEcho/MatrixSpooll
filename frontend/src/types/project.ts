@@ -210,6 +210,10 @@ export interface ProjectSummary {
   status: ProjectStatus | Record<string, never>;
   /** Role for the authenticated user in this project. */
   current_role?: "owner" | "editor" | "viewer" | null;
+  /** 项目持有者（owner）信息，用于展示归属标签。 */
+  owner_username?: string | null;
+  owner_nickname?: string | null;
+  owner_avatar_path?: string | null;
 }
 
 /** Stable project reference accepted by the API adapter during migration. */

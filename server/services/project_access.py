@@ -68,7 +68,7 @@ def _required_role(request: Request, project_name: str) -> str:
 
     is_project_root = len(segments) == project_index + 2
     is_member_management = len(segments) > project_index + 2 and segments[project_index + 2] == "members"
-    if is_project_root or is_member_management:
+    if is_member_management or (is_project_root and request.method == "DELETE"):
         return "owner"
     return "editor"
 
@@ -190,8 +190,11 @@ async def resolve_project_access(
             ProjectMember.user_id == user.id,
         )
     )
-    if user.role == "admin" or registry.owner_id == user.id:
+    if user.is_superadmin or registry.owner_id == user.id:
         effective_role = "owner"
+    elif user.role == "admin":
+        # 普通管理员（非超管）对所有项目只读：可查看，不可写、不可成员管理。
+        effective_role = "viewer"
     else:
         effective_role = member.role if member else None
     if effective_role is None or ROLE_ORDER.get(effective_role, 0) < ROLE_ORDER.get(required_role, 0):
@@ -241,7 +244,8 @@ async def require_project_request_access(
     Routers also contain global endpoints such as ``/projects`` and ``/tasks``;
     those are intentionally skipped here and use their own user/project list
     query. The HTTP method provides a conservative default: reads require
-    viewer, mutations editor, and project/member administration owner.
+    viewer, mutations require editor, and deletion/member administration
+    require owner.
     """
 
     target = project_name or name

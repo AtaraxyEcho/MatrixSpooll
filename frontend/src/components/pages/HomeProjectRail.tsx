@@ -10,6 +10,7 @@ interface HomeProjectRailProps {
   projects: ProjectSummary[];
   styleLabels: Record<string, string>;
   onDelete: (project: ProjectSummary) => void;
+  onOpenMembers: (project: ProjectSummary) => void;
   onCreate: () => void;
 }
 
@@ -29,7 +30,7 @@ function NewProjectRailCard({ onClick, t }: { onClick: () => void; t: TFunction 
   );
 }
 
-export function HomeProjectRail({ projects, styleLabels, onDelete, onCreate }: HomeProjectRailProps) {
+export function HomeProjectRail({ projects, styleLabels, onDelete, onOpenMembers, onCreate }: HomeProjectRailProps) {
   const { t } = useTranslation("dashboard");
   const railRef = useRef<HTMLDivElement>(null);
 
@@ -81,6 +82,7 @@ export function HomeProjectRail({ projects, styleLabels, onDelete, onCreate }: H
               project={project}
               styleLabel={styleLabels[project.name] ?? t("style_not_set")}
               onDelete={() => onDelete(project)}
+              onOpenMembers={() => onOpenMembers(project)}
             />
           </div>
         ))}

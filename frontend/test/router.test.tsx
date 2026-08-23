@@ -348,8 +348,27 @@ describe("AppRoutes", () => {
   });
 
   it("still renders project settings for a real project", async () => {
+    vi.spyOn(API, "getProject").mockResolvedValue({
+      current_role: "owner",
+      project: { title: "Demo" } as never,
+      scripts: {},
+    });
     renderAt("/app/projects/demo/settings");
     expect(await screen.findByTestId("project-settings-page")).toBeInTheDocument();
+  });
+
+  it("redirects viewers away from project settings", async () => {
+    vi.spyOn(API, "getProject").mockResolvedValue({
+      current_role: "viewer",
+      project: { title: "Viewer project", content_mode: "narration" } as never,
+      scripts: {},
+    });
+
+    renderAt("/app/projects/shared/settings");
+
+    expect(await screen.findByTestId("studio-layout")).toBeInTheDocument();
+    expect(screen.queryByTestId("project-settings-page")).not.toBeInTheDocument();
+    expect(screen.getByText("查看者无法访问项目设置")).toBeInTheDocument();
   });
 
   it("redirects unauthenticated non-nested protected route to /login", async () => {

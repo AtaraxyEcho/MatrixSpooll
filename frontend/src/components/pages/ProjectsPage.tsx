@@ -27,6 +27,7 @@ import { useProjectsStore } from "@/stores/projects-store";
 import { useAppStore } from "@/stores/app-store";
 import { useConfigStatusStore } from "@/stores/config-status-store";
 import { ArchiveDiagnosticsDialog } from "@/components/shared/ArchiveDiagnosticsDialog";
+import { ProjectMembersDialog } from "@/components/shared/ProjectMembersDialog";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { GlassModal } from "@/components/ui/GlassModal";
 import { ProgressBar } from "@/components/ui/ProgressBar";
@@ -808,12 +809,13 @@ interface ProjectListViewProps {
   hasProjects: boolean;
   styleLabels: Record<string, string>;
   onDelete: (project: ProjectSummary) => void;
+  onOpenMembers: (project: ProjectSummary) => void;
   onCreate: () => void;
   onClearFilter: () => void;
   t: TFunction;
 }
 
-function ProjectListView({ projects, hasProjects, styleLabels, onDelete, onCreate, onClearFilter, t }: ProjectListViewProps) {
+function ProjectListView({ projects, hasProjects, styleLabels, onDelete, onOpenMembers, onCreate, onClearFilter, t }: ProjectListViewProps) {
   return (
     <section
       className="app-project-list"
@@ -872,6 +874,7 @@ function ProjectListView({ projects, hasProjects, styleLabels, onDelete, onCreat
                 styleLabels[project.project_id ?? project.id ?? project.name] ?? t("dashboard:style_not_set")
               }
               onDelete={() => onDelete(project)}
+              onOpenMembers={() => onOpenMembers(project)}
             />
           ))}
         </div>
@@ -908,6 +911,7 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
   const [importDiagnostics, setImportDiagnostics] =
     useState<ImportDiagnosticsState | null>(null);
   const [deletingProject, setDeletingProject] = useState<ProjectSummary | null>(null);
+  const [membersProject, setMembersProject] = useState<ProjectSummary | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [phaseFilter, setPhaseFilter] = useState<PhaseFilter>("all");
   const [contentModeFilter, setContentModeFilter] = useState<ContentModeFilter>(() => {
@@ -1165,6 +1169,7 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
                 hasProjects={projects.length > 0}
                 styleLabels={styleLabels}
                 onDelete={setDeletingProject}
+                onOpenMembers={setMembersProject}
                 onCreate={() => setShowCreateModal(true)}
                 onClearFilter={() => {
                   setPhaseFilter("all");
@@ -1194,6 +1199,7 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
                 projects={filteredProjects}
                 styleLabels={styleLabels}
                 onDelete={setDeletingProject}
+                onOpenMembers={setMembersProject}
                 onCreate={() => setShowCreateModal(true)}
               />
             )}
@@ -1255,6 +1261,11 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
       )}
 
       {showCreateModal && <CreateProjectModal />}
+
+      <ProjectMembersDialog
+        project={membersProject}
+        onClose={() => setMembersProject(null)}
+      />
 
       <ConfirmDialog
         open={!!deletingProject}

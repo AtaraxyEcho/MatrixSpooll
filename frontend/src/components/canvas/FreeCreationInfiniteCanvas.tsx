@@ -1439,7 +1439,18 @@ export function FreeCreationInfiniteCanvas({
               ) : (
                 <div role="button" tabIndex={0} className="block h-[154px] w-full bg-black" onClick={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} onKeyDown={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
                   {upload.media_type === "image" ? <img src={uploadMediaUrl(projectName, upload)} alt={upload.original_filename} loading="lazy" decoding="async" className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
-                    <video src={uploadMediaUrl(projectName, upload)} preload="metadata" className="h-full w-full object-contain" aria-label={upload.original_filename} />
+                    <video
+                      src={uploadMediaUrl(projectName, upload)}
+                      preload="metadata"
+                      muted
+                      playsInline
+                      className="h-full w-full object-contain"
+                      aria-label={upload.original_filename}
+                      onLoadedMetadata={(event) => {
+                        const video = event.currentTarget;
+                        if (video.duration > 0.1) video.currentTime = 0.1;
+                      }}
+                    />
                   ) : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="max-w-[90%] truncate text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto mt-16 h-5 w-5 -translate-y-1/2 text-[var(--color-text-muted)]" aria-hidden />}
                 </div>
               )}

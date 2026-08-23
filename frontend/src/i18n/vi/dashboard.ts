@@ -298,6 +298,12 @@ export default {
   'save_password': 'Lưu mật khẩu',
   'changing_password': 'Đang lưu mật khẩu...',
   'nickname': 'Biệt danh',
+  'email': 'Email',
+  'email_placeholder': 'you@example.com',
+  'email_hint': 'Được dùng làm thông tin liên hệ và hiển thị cho quản trị viên.',
+  'save_profile': 'Lưu hồ sơ',
+  'saving_profile': 'Đang lưu hồ sơ...',
+  'profile_save_failed': 'Không thể cập nhật hồ sơ, vui lòng thử lại.',
   'nickname_hint': 'Hiển thị trong trình đơn người dùng ở thanh trên; để trống sẽ hiển thị tên tài khoản.',
   'nickname_placeholder': 'Biệt danh của bạn',
   'save_nickname': 'Lưu biệt danh',
@@ -910,6 +916,7 @@ export default {
 
   // ProjectSettingsPage
   'project_settings': 'Cài đặt dự án',
+  'project_settings_permission_denied': 'Người xem không thể truy cập cài đặt dự án',
   'project_members_kicker': 'Cộng tác',
   'project_members_title': 'Thành viên dự án',
   'project_members_description': 'Các thành viên dùng chung dự án này. Chỉ chủ sở hữu có thể đổi quyền hoặc chuyển quyền sở hữu.',
@@ -1716,6 +1723,7 @@ export default {
   'list_source_files_failed': 'Tải danh sách tệp gốc thất bại: {{message}}',
   'lobby_brand_subtitle': 'Studio',
   'lobby_card_actions': 'Hành động dự án',
+  'lobby_card_owner': 'Chủ sở hữu dự án',
   'lobby_card_needs_repair': 'CẦN SỬA',
   'lobby_card_stale_assets_one': '{{count}} ảnh thiết kế cũ hơn nội dung hiện tại',
   'lobby_card_stale_assets_other': '{{count}} ảnh thiết kế cũ hơn nội dung hiện tại',

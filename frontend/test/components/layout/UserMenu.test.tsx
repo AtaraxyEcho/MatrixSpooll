@@ -95,7 +95,7 @@ describe("UserMenu", () => {
     expect(screen.getByLabelText(/^新密码/)).toBeInTheDocument();
   });
 
-  it("logs out, clears the session and redirects to login with the return path", () => {
+  it("confirms logout, clears the session and redirects to login with the return path", () => {
     useAuthStore.setState({
       token: "tok-123",
       username: "alice",
@@ -107,6 +107,7 @@ describe("UserMenu", () => {
 
     fireEvent.click(screen.getByTitle("alice"));
     fireEvent.click(screen.getByText("登出"));
+    fireEvent.click(screen.getByRole("button", { name: "登出" }));
 
     expect(useAuthStore.getState().token).toBeNull();
     expect(useAuthStore.getState().username).toBeNull();

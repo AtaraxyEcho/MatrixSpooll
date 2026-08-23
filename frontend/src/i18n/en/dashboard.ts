@@ -331,6 +331,12 @@ export default {
   'save_password': 'Save password',
   'changing_password': 'Saving password...',
   'nickname': 'Nickname',
+  'email': 'Email',
+  'email_placeholder': 'you@example.com',
+  'email_hint': 'Used as contact information and shown to administrators.',
+  'save_profile': 'Save profile',
+  'saving_profile': 'Saving profile...',
+  'profile_save_failed': 'Failed to update profile, please retry.',
   'nickname_hint': 'Shown in the top bar user menu; leave empty to fall back to your username.',
   'nickname_placeholder': 'Your nickname',
   'save_nickname': 'Save nickname',
@@ -964,6 +970,7 @@ export default {
 
   // ProjectSettingsPage
   'project_settings': 'Project Settings',
+  'project_settings_permission_denied': 'Viewers cannot access project settings',
   'project_members_kicker': 'Collaboration',
   'project_members_title': 'Project members',
   'project_members_description': 'Members share this project. Only the owner can change access or transfer ownership.',
@@ -1937,6 +1944,7 @@ export default {
   'lobby_new_project_kicker': 'START · NEW REEL',
   'lobby_new_project_title': 'New project',
   'lobby_card_actions': 'Project actions',
+  'lobby_card_owner': 'Project owner',
   'openclaw': 'OpenClaw',
   'openclaw_title': 'OpenClaw integration guide',
   'openclaw_subtitle': 'Connect [[brand]] to your OpenClaw AI agent',

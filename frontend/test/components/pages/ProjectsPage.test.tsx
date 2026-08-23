@@ -144,6 +144,59 @@ describe("ProjectsPage", () => {
     expect(screen.getByText("50%")).toBeInTheDocument();
   });
 
+  it("hides project settings from viewers and opens the members dialog", async () => {
+    vi.spyOn(API, "listProjects").mockResolvedValue({
+      projects: [
+        {
+          name: "shared",
+          title: "Shared Project",
+          style: "Anime",
+          current_role: "viewer",
+          thumbnail: null,
+          status: {},
+        },
+      ],
+    });
+    const listMembers = vi.spyOn(API, "listProjectMembers").mockResolvedValue({
+      members: [
+        { user_id: "owner-1", username: "owner", role: "owner", is_owner: true },
+        { user_id: "viewer-1", username: "viewer", role: "viewer", is_owner: false },
+      ],
+    });
+
+    renderPage("list");
+    fireEvent.click(await screen.findByRole("button", { name: /项目操作.*Shared Project/ }));
+
+    expect(screen.queryByRole("link", { name: /项目设置/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /项目成员/ }));
+
+    const dialog = await screen.findByRole("dialog", { name: "项目成员" });
+    expect(dialog).toHaveClass("w-fit");
+    expect(dialog).toHaveClass("max-w-[min(56rem,calc(100vw-2rem))]");
+    await waitFor(() => expect(listMembers).toHaveBeenCalledWith("shared"));
+  });
+
+  it("links editors to project settings from the project menu", async () => {
+    vi.spyOn(API, "listProjects").mockResolvedValue({
+      projects: [
+        {
+          name: "editable",
+          title: "Editable Project",
+          style: "Anime",
+          current_role: "editor",
+          thumbnail: null,
+          status: {},
+        },
+      ],
+    });
+
+    const { location } = renderPage("list");
+    fireEvent.click(await screen.findByRole("button", { name: /项目操作.*Editable Project/ }));
+    fireEvent.click(screen.getByRole("link", { name: /项目设置/ }));
+
+    expect(location.history?.at(-1)).toBe("/app/projects/editable/settings");
+  });
+
   it("filters by the four merged phases and counts each pill", async () => {
     vi.spyOn(API, "listProjects").mockResolvedValue({
       projects: [

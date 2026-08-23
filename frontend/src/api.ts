@@ -186,6 +186,7 @@ export interface LoginResponse {
   role?: "admin" | "member" | null;
   nickname?: string | null;
   avatar_path?: string | null;
+  email?: string | null;
 }
 
 export interface LegalAttributionResponse {
