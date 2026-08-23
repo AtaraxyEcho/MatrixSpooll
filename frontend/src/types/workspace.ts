@@ -1,3 +1,5 @@
+import type { FreeCreationCanvasAppliedPatch } from "./free-creation";
+
 export type ProjectEventSource = "webui" | "worker" | "filesystem";
 
 export interface ProjectChangeFocus {
@@ -27,6 +29,7 @@ export interface ProjectChange {
     | "draft"
     | "grid"
     | "free_creation"
+    | "free_creation_canvas"
     // task 不是项目实体，而是任务终态的刷新信号（important=false / focus=null）：
     // 只用来重拉任务列表与受影响画布，不进通知与聚焦跳转。
     | "task";
@@ -53,6 +56,7 @@ export interface ProjectChange {
   focus?: ProjectChangeFocus | null;
   important: boolean;
   asset_fingerprints?: Record<string, number>;
+  canvas_patch?: FreeCreationCanvasAppliedPatch;
 }
 
 export interface ProjectChangeBatchPayload {

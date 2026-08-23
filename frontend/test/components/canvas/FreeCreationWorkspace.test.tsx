@@ -16,7 +16,15 @@ const t = i18n.getFixedT("zh", "dashboard");
 describe("FreeCreationWorkspace", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.spyOn(API, "listFreeCreations").mockResolvedValue({ creations: [] });
+    vi.spyOn(API, "getFreeCreationCanvasIndex").mockResolvedValue({
+      version: 1,
+      creation_total: 0,
+      reference_total: 0,
+      total: 0,
+      creations: [],
+      references: [],
+      built_at: "2026-08-23T00:00:00Z",
+    });
     vi.spyOn(API, "listFreeCreationRequests").mockResolvedValue({ requests: [] });
     vi.spyOn(API, "listFreeSubtitleTracks").mockResolvedValue({ tracks: [] });
     vi.spyOn(API, "getFreeCreationCanvas").mockResolvedValue({
@@ -214,7 +222,12 @@ describe("FreeCreationWorkspace", () => {
   });
 
   it("automatically uses a canvas image as an omni reference", async () => {
-    vi.mocked(API.listFreeCreationReferences).mockResolvedValue({
+    vi.mocked(API.getFreeCreationCanvasIndex).mockResolvedValue({
+      version: 1,
+      creation_total: 0,
+      reference_total: 1,
+      total: 1,
+      creations: [],
       references: [{
         reference_id: "ref-1",
         type: "upload",
@@ -224,6 +237,7 @@ describe("FreeCreationWorkspace", () => {
         size_bytes: 1024,
         created_at: "2026-08-19T00:00:00Z",
       }],
+      built_at: "2026-08-23T00:00:00Z",
     });
     render(<FreeCreationWorkspace projectName="demo" />);
 
@@ -256,7 +270,12 @@ describe("FreeCreationWorkspace", () => {
   });
 
   it("assigns the first canvas image to the first-frame slot in frame mode", async () => {
-    vi.mocked(API.listFreeCreationReferences).mockResolvedValue({
+    vi.mocked(API.getFreeCreationCanvasIndex).mockResolvedValue({
+      version: 1,
+      creation_total: 0,
+      reference_total: 1,
+      total: 1,
+      creations: [],
       references: [{
         reference_id: "ref-frames",
         type: "upload",
@@ -266,6 +285,7 @@ describe("FreeCreationWorkspace", () => {
         size_bytes: 1024,
         created_at: "2026-08-19T00:00:00Z",
       }],
+      built_at: "2026-08-23T00:00:00Z",
     });
     const create = vi.spyOn(API, "createFreeCreation").mockResolvedValue({
       success: true,
@@ -295,7 +315,11 @@ describe("FreeCreationWorkspace", () => {
   });
 
   it("does not expose unsupported video editing as a parent action", async () => {
-    vi.mocked(API.listFreeCreations).mockResolvedValue({
+    vi.mocked(API.getFreeCreationCanvasIndex).mockResolvedValue({
+      version: 1,
+      creation_total: 1,
+      reference_total: 0,
+      total: 1,
       creations: [{
         creation_id: "c_0123456789abcdef0125",
         output_type: "video",
@@ -304,6 +328,8 @@ describe("FreeCreationWorkspace", () => {
         prompt: "source clip",
         media_path: "creations/c_0123456789abcdef0125.mp4",
       }],
+      references: [],
+      built_at: "2026-08-23T00:00:00Z",
     });
     const { container } = render(<FreeCreationWorkspace projectName="demo" />);
 

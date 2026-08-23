@@ -40,7 +40,40 @@ export interface FreeCreationCanvasState {
   hidden_reference_ids?: string[];
   groups?: Array<{ group_id: string; member_ids: string[] }>;
   show_relations?: boolean;
+  node_revisions?: Record<string, number>;
+  recent_patch_ids?: string[];
+  last_patch?: FreeCreationCanvasAppliedPatch | null;
   updated_at: string | null;
+}
+
+export interface FreeCreationCanvasAppliedPatch {
+  patch_id: string;
+  actor_id: string;
+  base_revision: number;
+  revision: number;
+  changes: Omit<FreeCreationCanvasPatch, "patch_id" | "base_revision" | "target_revisions">;
+}
+
+export interface FreeCreationCanvasPatch {
+  patch_id: string;
+  base_revision: number;
+  target_revisions: Record<string, number>;
+  position_updates?: Record<string, { x: number; y: number }>;
+  hidden_creation_updates?: Record<string, boolean>;
+  hidden_reference_updates?: Record<string, boolean>;
+  group_upserts?: Array<{ group_id: string; member_ids: string[] }>;
+  group_deletes?: string[];
+  show_relations?: boolean;
+}
+
+export interface FreeCreationCanvasIndex {
+  version: number;
+  creation_total: number;
+  reference_total: number;
+  total: number;
+  creations: FreeCreation[];
+  references: FreeCreationUpload[];
+  built_at: string;
 }
 
 export interface FreeCreation {

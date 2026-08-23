@@ -258,6 +258,14 @@ export function useProjectEventsSSE(projectName?: string | null): void {
           if (entityChanges.some((change) => change.entity_type === "free_creation")) {
             useFreeCreationStore.getState().invalidateCreations();
           }
+          const canvasPatches = entityChanges.flatMap((change) => (
+            change.entity_type === "free_creation_canvas" && change.canvas_patch
+              ? [change.canvas_patch]
+              : []
+          ));
+          if (canvasPatches.length) {
+            useFreeCreationStore.getState().publishCanvasPatches(projectName, canvasPatches);
+          }
 
           // 提取并更新 asset fingerprints（零延迟，立即写入 store）
           const mergedFingerprints: Record<string, number> = {};

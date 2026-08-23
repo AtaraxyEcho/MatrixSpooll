@@ -812,17 +812,6 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
                 </fieldset>
               </SectionCard>
 
-              {/* 项目成员：位于画面比例下方，操作列固定宽度确保删除按钮可见 */}
-              <div data-testid="project-members-settings-section">
-                <SectionCard
-                  kicker={t("project_members_kicker")}
-                  title={t("project_members_title")}
-                  description={t("project_members_description")}
-                >
-                  <ProjectMembersSection project={projectName} currentRole={projectRole} />
-                </SectionCard>
-              </div>
-
               {/* Generation route — fixed workflow projects only. */}
               {contentMode !== "free" && (
                 <SectionCard kicker="Pipeline Mode">
@@ -935,6 +924,16 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
                 </>
               )}
 
+            </div>
+
+            <div className="min-w-0 lg:col-span-12" data-testid="project-members-settings-section">
+              <SectionCard
+                kicker={t("project_members_kicker")}
+                title={t("project_members_title")}
+                description={t("project_members_description")}
+              >
+                <ProjectMembersSection project={projectName} currentRole={projectRole} />
+              </SectionCard>
             </div>
 
           </div>

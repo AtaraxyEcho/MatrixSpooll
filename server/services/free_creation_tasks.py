@@ -19,6 +19,7 @@ from lib.project_manager import get_project_manager
 from lib.resource_paths import resource_relative_path
 from lib.thumbnail import extract_video_thumbnail
 from lib.version_manager import VersionManager
+from server.services.free_creation_index import invalidate_free_creation_index
 from server.services.free_creation_planner import plan_video_references
 from server.services.free_creation_workspace import extract_reference_text
 from server.services.generation_context import (
@@ -48,6 +49,7 @@ def write_creation_metadata(project_path: Path, creation_id: str, data: dict[str
     path = creation_metadata_path(project_path, creation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(path, data)
+    invalidate_free_creation_index(project_path)
 
 
 def load_creation_metadata(project_path: Path, creation_id: str) -> dict[str, Any] | None:
@@ -82,6 +84,7 @@ def delete_creation_metadata(project_path: Path, creation_id: str) -> dict[str, 
         if not data.get("deleted_at"):
             data["deleted_at"] = _now()
             atomic_write_json(path, data)
+            invalidate_free_creation_index(project_path)
     return data
 
 
@@ -95,6 +98,7 @@ def restore_creation_metadata(project_path: Path, creation_id: str) -> dict[str,
             raise FileNotFoundError(creation_id)
         if data.pop("deleted_at", None) is not None:
             atomic_write_json(path, data)
+            invalidate_free_creation_index(project_path)
     return data
 
 

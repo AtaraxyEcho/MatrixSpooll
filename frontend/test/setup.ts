@@ -20,6 +20,28 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   };
 }
 
+if (typeof HTMLCanvasElement !== "undefined") {
+  const contextStub = {
+    beginPath: vi.fn(),
+    clearRect: vi.fn(),
+    drawImage: vi.fn(),
+    fillRect: vi.fn(),
+    fillText: vi.fn(),
+    lineTo: vi.fn(),
+    moveTo: vi.fn(),
+    restore: vi.fn(),
+    save: vi.fn(),
+    setLineDash: vi.fn(),
+    setTransform: vi.fn(),
+    stroke: vi.fn(),
+    strokeRect: vi.fn(),
+  };
+  Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+    configurable: true,
+    value: vi.fn(() => contextStub),
+  });
+}
+
 if (
   typeof window !== "undefined"
   && (
