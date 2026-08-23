@@ -215,9 +215,10 @@ export function UserMenu() {
         open={passwordOpen}
         onClose={() => setPasswordOpen(false)}
         ariaLabel={t("dashboard:account_security")}
-        widthClassName="w-full max-w-lg"
+        widthClassName="w-full max-w-xl"
+        panelStyle={{ maxHeight: "min(720px, calc(100vh - 48px))" }}
       >
-        <div className="p-5">
+        <div className="max-h-[min(720px,calc(100vh-48px))] overflow-y-auto p-5">
           <AccountSecuritySection />
         </div>
       </GlassModal>

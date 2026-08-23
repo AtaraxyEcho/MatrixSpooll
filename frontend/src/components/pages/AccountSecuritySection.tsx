@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { KeyRound, Loader2, Trash2, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth-store";
@@ -19,6 +19,7 @@ export function AccountSecuritySection() {
   const storedAvatar = useAuthStore((state) => state.avatarPath);
   const storedUsername = useAuthStore((state) => state.username);
   const [nickname, setNickname] = useState(storedNickname ?? "");
+  const [email, setEmail] = useState("");
   const [savingNickname, setSavingNickname] = useState(false);
   const [nicknameError, setNicknameError] = useState("");
   const [nicknameSuccess, setNicknameSuccess] = useState(false);
@@ -34,12 +35,33 @@ export function AccountSecuritySection() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
 
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    void fetch("/api/v1/auth/me", {
+      headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("profile request failed");
+        return (await response.json()) as { nickname?: unknown; email?: unknown };
+      })
+      .then((payload) => {
+        if (cancelled) return;
+        setNickname(typeof payload.nickname === "string" ? payload.nickname : "");
+        setEmail(typeof payload.email === "string" ? payload.email : "");
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
   const handleNicknameSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setNicknameError("");
     setNicknameSuccess(false);
     if (!token) {
-      setNicknameError(t("dashboard:nickname_save_failed"));
+      setNicknameError(t("dashboard:profile_save_failed"));
       return;
     }
     setSavingNickname(true);
@@ -52,19 +74,20 @@ export function AccountSecuritySection() {
           "Accept-Language": i18n.language || "zh",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ nickname: nickname.trim() || null }),
+        body: JSON.stringify({ nickname: nickname.trim() || null, email: email.trim() || null }),
       });
-      if (!response.ok) throw await readError(response, t("dashboard:nickname_save_failed"));
-      const payload = (await response.json()) as { nickname?: unknown };
+      if (!response.ok) throw await readError(response, t("dashboard:profile_save_failed"));
+      const payload = (await response.json()) as { nickname?: unknown; email?: unknown };
       const next =
         typeof payload.nickname === "string" && payload.nickname.length > 0
           ? payload.nickname
           : null;
       useAuthStore.setState({ nickname: next });
       setNickname(next ?? "");
+      setEmail(typeof payload.email === "string" ? payload.email : "");
       setNicknameSuccess(true);
     } catch (err) {
-      setNicknameError(err instanceof Error ? err.message : t("dashboard:nickname_save_failed"));
+      setNicknameError(err instanceof Error ? err.message : t("dashboard:profile_save_failed"));
     } finally {
       setSavingNickname(false);
     }
@@ -243,6 +266,19 @@ export function AccountSecuritySection() {
           {avatarError && <p role="alert" className="text-sm text-red-200">{avatarError}</p>}
           {avatarSuccess && <p role="status" className="text-sm text-emerald-300">{t("dashboard:avatar_success")}</p>}
           <div>
+            <FieldLabel htmlFor="account-email">{t("dashboard:email")}</FieldLabel>
+            <input
+              id="account-email"
+              type="email"
+              maxLength={254}
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className={INPUT_CLS}
+              placeholder={t("dashboard:email_placeholder")}
+            />
+            <p className="mt-1.5 text-xs text-text-4">{t("dashboard:email_hint")}</p>
+          </div>
+          <div>
             <FieldLabel htmlFor="account-nickname">{t("dashboard:nickname")}</FieldLabel>
             <input
               id="account-nickname"
@@ -259,7 +295,7 @@ export function AccountSecuritySection() {
           {nicknameSuccess && <p role="status" className="text-sm text-emerald-300">{t("dashboard:nickname_saved")}</p>}
           <button type="submit" disabled={savingNickname} className={`${ACCENT_BTN_CLS} justify-center`} style={ACCENT_BUTTON_STYLE}>
             {savingNickname && <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden />}
-            {savingNickname ? t("dashboard:saving_nickname") : t("dashboard:save_nickname")}
+            {savingNickname ? t("dashboard:saving_profile") : t("dashboard:save_profile")}
           </button>
         </form>
       </div>

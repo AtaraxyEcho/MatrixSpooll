@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { CircleCheck, CircleX, Info, TriangleAlert, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/stores/app-store";
 import { UI_LAYERS } from "@/utils/ui-layers";
 
@@ -27,6 +28,7 @@ const ICON_COLORS = {
 const AUTO_DISMISS_MS = 4000;
 
 export function ToastOverlay() {
+  const { t } = useTranslation("common");
   const toast = useAppStore((s) => s.toast);
   const clearToast = useAppStore((s) => s.clearToast);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -66,7 +68,7 @@ export function ToastOverlay() {
           type="button"
           onClick={clearToast}
           className="ml-1 shrink-0 rounded p-0.5 opacity-50 hover:opacity-100 transition-opacity cursor-pointer"
-          aria-label="关闭提示"
+          aria-label={t("close")}
         >
           <X className="h-3.5 w-3.5" />
         </button>

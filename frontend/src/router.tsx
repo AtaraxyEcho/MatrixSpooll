@@ -22,7 +22,7 @@ import {
   DEMO_PROJECT_NAME,
   isDemoProject,
 } from "@/onboarding/demo-project";
-import { setApiReadOnly } from "@/api";
+import { API, setApiReadOnly } from "@/api";
 import { useProjectsStore } from "@/stores/projects-store";
 import { useAppStore } from "@/stores/app-store";
 import { useAssistantStore } from "@/stores/assistant-store";
@@ -111,6 +111,70 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   return <>{children}</>;
+}
+
+type ProjectSettingsResponse = Awaited<ReturnType<typeof API.getProject>>;
+type ProjectSettingsAccessState =
+  | { projectRef: string; status: "loading" }
+  | { projectRef: string; status: "allowed"; response: ProjectSettingsResponse }
+  | { projectRef: string; status: "denied" }
+  | { projectRef: string; status: "error" };
+
+function ProjectSettingsAccessGuard() {
+  const params = useParams<{ projectName: string }>();
+  const projectRef = params.projectName ?? "";
+  const { t } = useTranslation(["common", "dashboard"]);
+  const [access, setAccess] = useState<ProjectSettingsAccessState>({
+    projectRef,
+    status: "loading",
+  });
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void API.getProject(projectRef, { signal: controller.signal })
+      .then((response) => {
+        if (controller.signal.aborted) return;
+        if (response.current_role === "owner" || response.current_role === "editor") {
+          setAccess({ projectRef, status: "allowed", response });
+          return;
+        }
+        useAppStore.getState().pushToast(
+          t("dashboard:project_settings_permission_denied"),
+          "warning",
+        );
+        setAccess({ projectRef, status: "denied" });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        useAppStore.getState().pushToast(errMsg(error, t("common:error")), "error");
+        setAccess({ projectRef, status: "error" });
+      });
+
+    return () => controller.abort();
+  }, [projectRef, t]);
+
+  if (access.projectRef !== projectRef || access.status === "loading") {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex h-screen items-center justify-center gap-2 bg-bg text-[13px] text-text-4"
+      >
+        <Loader2 aria-hidden className="h-4 w-4 motion-safe:animate-spin" />
+        <span>{t("common:loading")}</span>
+      </div>
+    );
+  }
+
+  if (access.status === "denied") {
+    return <Redirect to={`~${ROUTE_APP_PROJECTS}/${encodeURIComponent(projectRef)}`} />;
+  }
+  if (access.status === "error") {
+    return <Redirect to={`~${ROUTE_APP}`} />;
+  }
+
+  return <ProjectSettingsPage initialProjectResponse={access.response} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -368,7 +432,7 @@ export function AppRoutes() {
         {/* Project settings — full-screen, must be before the nested workspace route */}
         <Route path={`${ROUTE_APP_PROJECTS}/:projectName/${WORKSPACE_ROUTE_SETTINGS}`}>
           <AuthGuard>
-            <ProjectSettingsPage />
+            <ProjectSettingsAccessGuard />
           </AuthGuard>
         </Route>
 

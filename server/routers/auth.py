@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -31,6 +32,7 @@ from server.auth import (
     revoke_user_session,
     update_user_password,
 )
+from server.services.user_validation import NICKNAME_MAX_LENGTH, validate_nickname
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,14 @@ router = APIRouter()
 
 ALLOWED_AVATAR_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
+
+
+def _normalize_email(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
 
 # 公开端点：拿到 token 之前必须可达，注册时不挂 Bearer 依赖。
 public_router = APIRouter()
@@ -53,6 +63,7 @@ class TokenResponse(BaseModel):
     role: str | None = None
     nickname: str | None = None
     avatar_path: str | None = None
+    email: str | None = None
 
 
 class VerifyResponse(BaseModel):
@@ -67,6 +78,9 @@ class CurrentUserResponse(BaseModel):
     role: str
     nickname: str | None = None
     avatar_path: str | None = None
+    email: str | None = None
+    last_login_at: datetime | None = None
+    last_login_ip: str | None = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -75,7 +89,8 @@ class ChangePasswordRequest(BaseModel):
 
 
 class ProfileUpdateRequest(BaseModel):
-    nickname: str | None = Field(default=None, max_length=100)
+    nickname: str | None = Field(default=None, max_length=NICKNAME_MAX_LENGTH)
+    email: str | None = Field(default=None, max_length=254)
 
 
 class AuthStatusResponse(BaseModel):
@@ -137,6 +152,7 @@ async def login_for_access_token(
                 role=user.role,
                 nickname=user.nickname,
                 avatar_path=user.avatar_path,
+                email=user.email,
             )
 
     if is_auth_enabled() and (
@@ -175,11 +191,17 @@ async def verify(
     return VerifyResponse(valid=True, username=current_user.sub, role=current_user.role)
 
 
-async def _load_user_profile(user_id: str) -> tuple[str | None, str | None]:
+async def _load_user_profile(
+    user_id: str,
+) -> tuple[str | None, str | None, str | None, datetime | None, str | None]:
     """按 users.id 取 (nickname, avatar_path)；记录不存在时返回 (None, None)。"""
     async with async_session_factory() as s:
         user = (await s.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
-    return (user.nickname, user.avatar_path) if user else (None, None)
+    return (
+        (user.nickname, user.avatar_path, user.email, user.last_login_at, user.last_login_ip)
+        if user
+        else (None, None, None, None, None)
+    )
 
 
 def _delete_avatar_file(rel_path: str) -> None:
@@ -196,13 +218,16 @@ def _delete_avatar_file(rel_path: str) -> None:
 
 @router.get("/auth/me", response_model=CurrentUserResponse)
 async def current_user(current_user: CurrentUser) -> CurrentUserResponse:
-    nickname, avatar_path = await _load_user_profile(current_user.id)
+    nickname, avatar_path, email, last_login_at, last_login_ip = await _load_user_profile(current_user.id)
     return CurrentUserResponse(
         id=current_user.id,
         username=current_user.sub,
         role=current_user.role,
         nickname=nickname,
         avatar_path=avatar_path,
+        email=email,
+        last_login_at=last_login_at,
+        last_login_ip=last_login_ip,
     )
 
 
@@ -212,23 +237,35 @@ async def update_profile(
     current_user: CurrentUser,
     _t: Translator,
 ) -> CurrentUserResponse:
-    """更新当前用户资料（当前仅昵称）；空串按清空处理，回退显示 username。"""
-    nickname = req.nickname.strip() if isinstance(req.nickname, str) else None
-    if nickname == "":
-        nickname = None
+    """更新当前用户资料（昵称/邮箱）；空串昵称按清空处理，回退显示 username。"""
+    nickname = validate_nickname(req.nickname, _t)
     async with async_session_factory() as s:
         user = (await s.execute(select(User).where(User.id == current_user.id))).scalar_one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail=_t("admin_user_not_found"))
-        user.nickname = nickname
+        if "nickname" in req.model_fields_set:
+            if nickname is not None:
+                existing = await s.execute(select(User).where(User.nickname == nickname, User.id != current_user.id))
+                if existing.scalar_one_or_none() is not None:
+                    raise HTTPException(status_code=409, detail=_t("admin_nickname_exists"))
+            user.nickname = nickname
+        if "email" in req.model_fields_set:
+            user.email = _normalize_email(req.email)
         await s.commit()
+        nickname = user.nickname
         avatar_path = user.avatar_path
+        email = user.email
+        last_login_at = user.last_login_at
+        last_login_ip = user.last_login_ip
     return CurrentUserResponse(
         id=current_user.id,
         username=current_user.sub,
         role=current_user.role,
         nickname=nickname,
         avatar_path=avatar_path,
+        email=email,
+        last_login_at=last_login_at,
+        last_login_ip=last_login_ip,
     )
 
 
@@ -258,6 +295,9 @@ async def update_avatar(
         user.avatar_path = rel
         await s.commit()
         nickname = user.nickname
+        email = user.email
+        last_login_at = user.last_login_at
+        last_login_ip = user.last_login_ip
     if old and old != rel:
         _delete_avatar_file(old)
     return CurrentUserResponse(
@@ -266,6 +306,9 @@ async def update_avatar(
         role=current_user.role,
         nickname=nickname,
         avatar_path=rel,
+        email=email,
+        last_login_at=last_login_at,
+        last_login_ip=last_login_ip,
     )
 
 
@@ -283,6 +326,9 @@ async def remove_avatar(
         user.avatar_path = None
         await s.commit()
         nickname = user.nickname
+        email = user.email
+        last_login_at = user.last_login_at
+        last_login_ip = user.last_login_ip
     if old:
         _delete_avatar_file(old)
     return CurrentUserResponse(
@@ -291,6 +337,9 @@ async def remove_avatar(
         role=current_user.role,
         nickname=nickname,
         avatar_path=None,
+        email=email,
+        last_login_at=last_login_at,
+        last_login_ip=last_login_ip,
     )
 
 

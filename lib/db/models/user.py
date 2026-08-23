@@ -1,7 +1,9 @@
 """User model for multi-user infrastructure."""
 
+from datetime import datetime
+
 import sqlalchemy as sa
-from sqlalchemy import Boolean, Index, String
+from sqlalchemy import Boolean, DateTime, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lib.db.base import Base, TimestampMixin
@@ -32,3 +34,6 @@ class User(TimestampMixin, Base):
     nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # 头像相对路径（_avatars/{user_id}.{ext}）；为空时 UI 用昵称/账号首字母占位
     avatar_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_login_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)

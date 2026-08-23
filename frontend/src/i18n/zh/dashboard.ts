@@ -332,6 +332,12 @@ export default {
   'save_password': '保存密码',
   'changing_password': '正在保存密码…',
   'nickname': '昵称',
+  'email': '邮箱',
+  'email_placeholder': 'you@example.com',
+  'email_hint': '用于联系用户，并向管理员展示。',
+  'save_profile': '保存资料',
+  'saving_profile': '正在保存资料…',
+  'profile_save_failed': '资料更新失败，请重试。',
   'nickname_hint': '显示在顶栏用户菜单中的昵称，留空则显示账号名。',
   'nickname_placeholder': '你的昵称',
   'save_nickname': '保存昵称',
@@ -963,6 +969,7 @@ export default {
 
   // ProjectSettingsPage
   'project_settings': '项目设置',
+  'project_settings_permission_denied': '查看者无法访问项目设置',
   'project_members_kicker': '项目协作',
   'project_members_title': '项目成员',
   'project_members_description': '成员可共同访问此项目。只有所有者可以调整权限或转移所有权。',
@@ -1936,6 +1943,7 @@ export default {
   'lobby_new_project_kicker': 'START · NEW REEL',
   'lobby_new_project_title': '新建项目',
   'lobby_card_actions': '项目操作',
+  'lobby_card_owner': '项目持有者',
   'openclaw': 'OpenClaw',
   'openclaw_title': 'OpenClaw 集成指南',
   'openclaw_subtitle': '将 [[brand]] 接入 OpenClaw AI Agent',

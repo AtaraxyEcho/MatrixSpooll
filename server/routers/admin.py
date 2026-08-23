@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.db import get_async_session
@@ -23,13 +23,23 @@ from lib.i18n import Translator
 from server.auth import AdminUser, generate_password, hash_password, revoke_all_user_sessions
 from server.routers.tasks import _localize_task
 from server.services.audit import AuditAction, AuditResourceType, record_audit_event
+from server.services.user_validation import NICKNAME_MAX_LENGTH, validate_nickname
 
 router = APIRouter(prefix="/admin", tags=["管理员"])
+
+USERNAME_MIN_LENGTH = 4
+USERNAME_MAX_LENGTH = 32
+USERNAME_SEPARATORS = frozenset("._-")
 
 
 class AdminUserSummary(BaseModel):
     id: str
     username: str
+    nickname: str | None
+    avatar_path: str | None
+    email: str | None
+    last_login_at: datetime | None
+    last_login_ip: str | None
     role: Literal["admin", "member"]
     is_superadmin: bool
     is_active: bool
@@ -38,12 +48,16 @@ class AdminUserSummary(BaseModel):
 
 
 class CreateUserRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=80)
+    username: str
+    email: str | None = Field(default=None, max_length=254)
+    nickname: str | None = Field(default=None, max_length=NICKNAME_MAX_LENGTH)
     password: str | None = Field(default=None, min_length=8, max_length=200)
     role: Literal["admin", "member"] = "member"
 
 
 class UpdateUserRequest(BaseModel):
+    email: str | None = Field(default=None, max_length=254)
+    nickname: str | None = Field(default=None, max_length=NICKNAME_MAX_LENGTH)
     role: Literal["admin", "member"] | None = None
     is_active: bool | None = None
 
@@ -123,8 +137,39 @@ class AdminTaskStatsResponse(BaseModel):
     stats: dict[str, int]
 
 
-def _normalize_username(value: str) -> str:
-    return " ".join(value.strip().split())
+def _validate_username(value: str, translate: Callable[..., str]) -> str:
+    username = value.strip()
+    if not username:
+        raise HTTPException(status_code=422, detail=translate("admin_username_required"))
+    if not USERNAME_MIN_LENGTH <= len(username) <= USERNAME_MAX_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=translate(
+                "admin_username_length",
+                min=USERNAME_MIN_LENGTH,
+                max=USERNAME_MAX_LENGTH,
+            ),
+        )
+    if not username[0].isascii() or not username[0].isalpha():
+        raise HTTPException(status_code=422, detail=translate("admin_username_start"))
+    if any(
+        not character.isascii() or (not character.isalnum() and character not in USERNAME_SEPARATORS)
+        for character in username
+    ):
+        raise HTTPException(status_code=422, detail=translate("admin_username_characters"))
+    if username[-1] in USERNAME_SEPARATORS or any(
+        current in USERNAME_SEPARATORS and following in USERNAME_SEPARATORS
+        for current, following in zip(username, username[1:], strict=False)
+    ):
+        raise HTTPException(status_code=422, detail=translate("admin_username_separators"))
+    return username
+
+
+def _normalize_email(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
 
 
 def _as_summary(user: User) -> AdminUserSummary:
@@ -132,6 +177,11 @@ def _as_summary(user: User) -> AdminUserSummary:
     return AdminUserSummary(
         id=user.id,
         username=user.username,
+        nickname=user.nickname,
+        avatar_path=user.avatar_path,
+        email=user.email,
+        last_login_at=user.last_login_at,
+        last_login_ip=user.last_login_ip,
         role=role,  # type: ignore[arg-type]
         is_superadmin=bool(user.is_superadmin),
         is_active=user.is_active,
@@ -165,12 +215,13 @@ async def list_users(
     _admin: AdminUser,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
-    username: str | None = Query(default=None, min_length=1, max_length=80),
+    username: str | None = Query(default=None, min_length=1, max_length=254),
     session: AsyncSession = Depends(get_async_session),
 ) -> AdminUsersResponse:
     filters = []
     if username:
-        filters.append(User.username.ilike(f"%{username.strip()}%"))
+        pattern = f"%{username.strip()}%"
+        filters.append(or_(User.username.ilike(pattern), User.email.ilike(pattern)))
     total_result = await session.execute(select(func.count()).select_from(User).where(*filters))
     total = int(total_result.scalar_one())
     result = await session.execute(
@@ -430,17 +481,23 @@ async def create_user(
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
 ) -> CreateUserResponse:
-    username = _normalize_username(body.username)
-    if not username:
-        raise HTTPException(status_code=422, detail=_t("admin_username_required"))
-    existing = await session.execute(select(User).where(User.username == username))
+    username = _validate_username(body.username, _t)
+    existing = await session.execute(select(User).where(func.lower(User.username) == username.lower()))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail=_t("admin_user_exists"))
+
+    nickname = validate_nickname(body.nickname, _t)
+    if nickname is not None:
+        existing_nickname = await session.execute(select(User).where(User.nickname == nickname))
+        if existing_nickname.scalar_one_or_none() is not None:
+            raise HTTPException(status_code=409, detail=_t("admin_nickname_exists"))
 
     temporary_password = body.password or generate_password()
     user = User(
         id=uuid4().hex,
         username=username,
+        email=_normalize_email(body.email),
+        nickname=nickname,
         password_hash=hash_password(temporary_password),
         role=body.role,
         is_active=True,
@@ -490,6 +547,15 @@ async def update_user(
 
     previous_role = user.role
     previous_active = user.is_active
+    if "email" in body.model_fields_set:
+        user.email = _normalize_email(body.email)
+    if "nickname" in body.model_fields_set:
+        nickname = validate_nickname(body.nickname, _t)
+        if nickname is not None:
+            existing_nickname = await session.execute(select(User).where(User.nickname == nickname, User.id != user.id))
+            if existing_nickname.scalar_one_or_none() is not None:
+                raise HTTPException(status_code=409, detail=_t("admin_nickname_exists"))
+        user.nickname = nickname
     user.role = next_role
     user.is_active = next_active
     if not user.is_active:
@@ -510,6 +576,46 @@ async def update_user(
     await session.commit()
     await session.refresh(user)
     return _as_summary(user)
+
+
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_user(
+    user_id: str,
+    admin: AdminUser,
+    _t: Translator,
+    session: AsyncSession = Depends(get_async_session),
+) -> None:
+    """Delete a user account (physical delete, DB cascades related records).
+
+    Guard rails: superadmin is immutable; an admin cannot delete itself; the
+    last active admin is protected; a user who still owns projects must transfer
+    ownership first.
+    """
+
+    user = await _get_user(session, user_id, _t)
+    _reject_superadmin_mutation(user, _t)
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail=_t("admin_cannot_delete_self"))
+    if user.role == "admin" and user.is_active and await _active_admin_count(session) <= 1:
+        raise HTTPException(status_code=400, detail=_t("admin_last_admin"))
+    owned_project = await session.scalar(
+        select(ProjectRegistry.name).where(ProjectRegistry.owner_id == user.id).limit(1)
+    )
+    if owned_project is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=_t("admin_project_owner_delete_forbidden", project=owned_project),
+        )
+    await session.delete(user)
+    record_audit_event(
+        session,
+        actor=admin,
+        action=AuditAction.USER_DELETE,
+        resource_type=AuditResourceType.USER,
+        resource_id=user.id,
+        details={"username": user.username},
+    )
+    await session.commit()
 
 
 @router.post("/users/{user_id}/reset-password", response_model=PasswordResponse)

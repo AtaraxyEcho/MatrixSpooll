@@ -79,6 +79,26 @@ describe("ProjectSettingsPage – style picker", () => {
     mockBuiltinAgentProfile();
   });
 
+  it("uses the full settings width for project members and keeps owner actions visible", async () => {
+    vi.spyOn(API, "getProject").mockResolvedValue({
+      current_role: "owner",
+      project: { title: "Demo", episodes: [], characters: {}, clues: {} },
+      scripts: {},
+    } as unknown as Awaited<ReturnType<typeof API.getProject>>);
+    vi.spyOn(API, "listProjectMembers").mockResolvedValue({
+      members: [
+        { user_id: "owner-1", username: "owner", role: "owner", is_owner: true },
+        { user_id: "editor-1", username: "editor", role: "editor", is_owner: false },
+      ],
+    });
+
+    renderAt("/app/projects/demo/settings");
+
+    const section = await screen.findByTestId("project-members-settings-section");
+    expect(section).toHaveClass("lg:col-span-12");
+    expect(await screen.findByRole("button", { name: "移除" })).toBeInTheDocument();
+  });
+
   it("shows customized Agent Profile files and resets only after destructive confirmation", async () => {
     vi.spyOn(API, "getProject").mockResolvedValue({
       project: { title: "Demo", episodes: [], characters: {}, clues: {} },

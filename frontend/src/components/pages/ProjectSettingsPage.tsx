@@ -97,7 +97,14 @@ function SectionCard({ kicker, title, description, children, footer }: SectionCa
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function ProjectSettingsPage() {
+type ProjectSettingsResponse = Awaited<ReturnType<typeof API.getProject>>;
+
+interface ProjectSettingsPageProps {
+  initialProjectResponse?: ProjectSettingsResponse;
+  params?: { projectName?: string };
+}
+
+export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsPageProps = {}) {
   const { t } = useTranslation("dashboard");
   const params = useParams<{ projectName: string }>();
   const projectName = params.projectName || "";
@@ -228,7 +235,7 @@ export function ProjectSettingsPage() {
 
     voidCall(Promise.all([
       API.getSystemConfig(),
-      API.getProject(projectName),
+      initialProjectResponse ?? API.getProject(projectName),
       getProviderModels().catch(() => [] as ProviderInfo[]),
       getCustomProviderModels().catch(() => [] as CustomProviderInfo[]),
     ]).then(([configRes, projectRes, providerList, customProviderList]) => {
@@ -346,7 +353,7 @@ export function ProjectSettingsPage() {
     }));
 
     return () => { disposed = true; };
-  }, [projectName]);
+  }, [initialProjectResponse, projectName]);
 
   // blob: URL 所有权集中：StylePicker 只通过 onChange 更换引用，
   // revoke 统一在此 effect 做（URL 变更或卸载时）。
@@ -780,7 +787,7 @@ export function ProjectSettingsPage() {
               )}
             </div>
 
-            {/* 右栏：输出形态 / 管线 / 语速 / 配音 / 项目成员 */}
+            {/* 右栏：输出形态 / 管线 / 语速 / 配音 */}
             <div className="min-w-0 space-y-5 lg:col-span-5 xl:col-span-4">
               {options && (
                 <>
@@ -804,6 +811,17 @@ export function ProjectSettingsPage() {
                   />
                 </fieldset>
               </SectionCard>
+
+              {/* 项目成员：位于画面比例下方，操作列固定宽度确保删除按钮可见 */}
+              <div data-testid="project-members-settings-section">
+                <SectionCard
+                  kicker={t("project_members_kicker")}
+                  title={t("project_members_title")}
+                  description={t("project_members_description")}
+                >
+                  <ProjectMembersSection project={projectName} currentRole={projectRole} />
+                </SectionCard>
+              </div>
 
               {/* Generation route — fixed workflow projects only. */}
               {contentMode !== "free" && (
@@ -917,15 +935,8 @@ export function ProjectSettingsPage() {
                 </>
               )}
 
-              {/* 项目成员 */}
-              <SectionCard
-                kicker={t("project_members_kicker")}
-                title={t("project_members_title")}
-                description={t("project_members_description")}
-              >
-                <ProjectMembersSection project={projectName} currentRole={projectRole} />
-              </SectionCard>
             </div>
+
           </div>
         </div>
       </div>

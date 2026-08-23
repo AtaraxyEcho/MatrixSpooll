@@ -375,16 +375,15 @@ export function ProjectMembersSection({ project, currentRole }: ProjectMembersSe
     setSelectedIds(new Set());
     setDialogRole("viewer");
     setShowAddDialog(true);
-    if (candidates.length === 0) {
-      setCandidatesLoading(true);
-      try {
-        const result = await API.listProjectMemberCandidates(project);
-        setCandidates(result.candidates);
-      } catch (err) {
-        setCandidatesError(err instanceof Error ? err.message : t("project_members_request_failed"));
-      } finally {
-        setCandidatesLoading(false);
-      }
+    // 每次打开都重新拉取候选：确保已加入的成员从列表中被过滤，避免旧缓存
+    setCandidatesLoading(true);
+    try {
+      const result = await API.listProjectMemberCandidates(project);
+      setCandidates(result.candidates);
+    } catch (err) {
+      setCandidatesError(err instanceof Error ? err.message : t("project_members_request_failed"));
+    } finally {
+      setCandidatesLoading(false);
     }
   };
 
@@ -462,14 +461,14 @@ export function ProjectMembersSection({ project, currentRole }: ProjectMembersSe
         <div className="flex items-center gap-2 py-5 text-[12px] text-text-3"><Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden />{t("project_members_loading")}</div>
       ) : members.length ? (
         <div className="overflow-x-auto rounded-[9px] border border-hairline-soft">
-          <table className="w-full min-w-[560px] text-left text-[12px]">
+          <table className="w-full min-w-[400px] table-fixed text-left text-[12px]">
             <thead className="border-b border-hairline-soft bg-bg-grad-a/35 text-[10px] uppercase tracking-[0.12em] text-text-4">
-              <tr><th className="px-3 py-2.5">{t("project_member_account")}</th><th className="px-3 py-2.5">{t("project_member_role")}</th><th className="px-3 py-2.5 text-right">{t("project_member_actions")}</th></tr>
+              <tr><th className="px-3 py-2.5">{t("project_member_account")}</th><th className="w-[160px] px-3 py-2.5">{t("project_member_role")}</th><th className="w-[96px] px-3 py-2.5 text-right">{t("project_member_actions")}</th></tr>
             </thead>
             <tbody className="divide-y divide-hairline-soft">
               {members.map((member) => (
                 <tr key={member.user_id}>
-                  <td className="px-3 py-3"><span className="inline-flex items-center gap-2 text-text"><UserRound className="h-3.5 w-3.5 text-text-4" aria-hidden />{member.username}</span></td>
+                  <td className="px-3 py-3"><span className="inline-flex min-w-0 max-w-full items-center gap-2 text-text"><UserRound className="h-3.5 w-3.5 shrink-0 text-text-4" aria-hidden /><span className="truncate" title={member.username}>{member.username}</span></span></td>
                   <td className="px-3 py-3">
                     {member.is_owner ? (
                       <span className="inline-flex items-center gap-1.5 text-accent-2"><ShieldCheck className="h-3.5 w-3.5" aria-hidden />{t("project_role_owner")}</span>

@@ -15,6 +15,7 @@ class AuditAction(StrEnum):
 
     USER_CREATE = "system.users.create"
     USER_UPDATE = "system.users.update"
+    USER_DELETE = "system.users.delete"
     USER_RESET_PASSWORD = "system.users.reset_password"
     USER_REVOKE_SESSIONS = "system.users.revoke_sessions"
     SESSION_REVOKE = "system.sessions.revoke"

@@ -401,6 +401,60 @@ async def test_request_dependency_allows_viewer_reads_and_rejects_writes(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_request_dependency_allows_editor_settings_but_reserves_administration_for_owner(
+    tmp_path,
+    monkeypatch,
+):
+    factory, engine = await _make_database()
+    try:
+        (tmp_path / "shared-project").mkdir()
+        monkeypatch.setattr(project_access, "get_project_manager", lambda: _ProjectManager(tmp_path))
+        await _seed_project(factory)
+
+        async def override_session():
+            async with factory() as session:
+                yield session
+
+        scoped = APIRouter(dependencies=[Depends(project_access.require_project_request_access)])
+
+        @scoped.patch("/projects/{project_name}")
+        async def update_settings(project_name: str):
+            return {"project": project_name}
+
+        @scoped.delete("/projects/{project_name}")
+        async def delete_project(project_name: str):
+            return {"project": project_name}
+
+        @scoped.post("/projects/{project_name}/members/{user_id}")
+        async def update_members(project_name: str, user_id: str):
+            return {"project": project_name, "user": user_id}
+
+        app = FastAPI()
+        register_error_handlers(app)
+        app.dependency_overrides[get_current_user] = lambda: CurrentUserInfo(
+            id="editor",
+            sub="editor",
+            role="member",
+        )
+        app.dependency_overrides[project_access.get_async_session] = override_session
+        app.include_router(scoped)
+
+        with TestClient(app) as client:
+            assert client.patch("/projects/shared-project").status_code == 200
+            assert client.delete("/projects/shared-project").status_code == 403
+            assert client.post("/projects/shared-project/members/viewer").status_code == 403
+
+            app.dependency_overrides[get_current_user] = lambda: CurrentUserInfo(
+                id="viewer",
+                sub="viewer",
+                role="member",
+            )
+            assert client.patch("/projects/shared-project").status_code == 403
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_body_scoped_project_endpoints_reject_non_members(tmp_path, monkeypatch):
     factory, engine = await _make_database()
     try:

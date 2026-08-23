@@ -53,6 +53,7 @@ class CurrentUserInfo(BaseModel):
     role: str = "member"
     session_id: str | None = None
     auth_method: Literal["jwt", "api_key", "anonymous"] = "jwt"
+    is_superadmin: bool = False
 
     model_config = ConfigDict(frozen=True)
 
@@ -95,6 +96,8 @@ def _anonymous_user() -> "CurrentUserInfo":
         sub=_ANONYMOUS_USER_SUB,
         role="admin",
         auth_method="anonymous",
+        # 本地/测试单用户等同超管，保留完整项目操作能力，避免降权回归。
+        is_superadmin=True,
     )
 
 
@@ -256,6 +259,9 @@ async def create_user_session(
                 )
                 .values(revoked_at=now, updated_at=now)
             )
+            await db_session.execute(
+                update(User).where(User.id == user.id).values(last_login_at=now, last_login_ip=ip_address)
+            )
             row = UserSession(
                 id=session_id,
                 user_id=user.id,
@@ -346,6 +352,7 @@ async def _session_user(payload: dict) -> CurrentUserInfo | None:
         sub=user.username,
         role=user.role if user.role in {"admin", "member"} else "member",
         session_id=session.id,
+        is_superadmin=user.is_superadmin,
     )
 
 
@@ -768,7 +775,7 @@ async def _payload_to_user(
         async with async_session_factory() as db_session:
             user = await db_session.scalar(select(User).where(User.username == subject, User.is_active.is_(True)))
         if user is not None:
-            return CurrentUserInfo(id=user.id, sub=user.username, role=user.role)
+            return CurrentUserInfo(id=user.id, sub=user.username, role=user.role, is_superadmin=user.is_superadmin)
     raise HTTPException(
         status_code=401,
         detail=_t("session_invalid"),

@@ -86,6 +86,95 @@ async def test_member_cannot_read_audit_events(db_factory) -> None:
     assert response.status_code == 403
 
 
+@pytest.mark.parametrize(
+    ("username", "expected_detail"),
+    [
+        ("abc", "用户名长度必须为 4–32 位"),
+        ("1alice", "用户名必须以英文字母开头"),
+        ("_alice", "用户名必须以英文字母开头"),
+        ("张三alice", "用户名必须以英文字母开头"),
+        ("alice smith", "用户名仅支持英文字母、数字及 . _ -"),
+        ("alice!", "用户名仅支持英文字母、数字及 . _ -"),
+        ("alice..smith", "用户名不能以符号结尾或连续使用符号"),
+        ("alice-", "用户名不能以符号结尾或连续使用符号"),
+    ],
+)
+async def test_admin_rejects_invalid_usernames(db_factory, username: str, expected_detail: str) -> None:
+    async with _client(db_factory) as client:
+        response = await client.post(
+            "/api/v1/admin/users",
+            headers={"Accept-Language": "zh"},
+            json={"username": username, "password": "valid-password-123", "role": "member"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == expected_detail
+
+
+async def test_admin_accepts_valid_username_and_normalizes_email(db_factory) -> None:
+    async with db_factory() as session:
+        session.add(
+            User(
+                id="admin-user",
+                username="admin",
+                password_hash="hash",
+                role="admin",
+                is_active=True,
+                is_superadmin=True,
+            )
+        )
+        await session.commit()
+
+    async with _client(db_factory) as client:
+        response = await client.post(
+            "/api/v1/admin/users",
+            json={
+                "username": "Alice.dev-1",
+                "email": "  ALICE@example.com ",
+                "password": "valid-password-123",
+                "role": "member",
+            },
+        )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["user"]["username"] == "Alice.dev-1"
+    assert payload["user"]["email"] == "alice@example.com"
+
+
+async def test_admin_rejects_username_that_differs_only_by_case(db_factory) -> None:
+    async with db_factory() as session:
+        session.add_all(
+            [
+                User(
+                    id="admin-user",
+                    username="admin",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=True,
+                ),
+                User(
+                    id="existing-user",
+                    username="Alice",
+                    password_hash="hash",
+                    role="member",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with _client(db_factory) as client:
+        response = await client.post(
+            "/api/v1/admin/users",
+            json={"username": "alice", "password": "valid-password-123", "role": "member"},
+        )
+
+    assert response.status_code == 409
+
+
 async def test_admin_can_list_and_filter_login_sessions(db_factory) -> None:
     now = datetime.now(UTC)
     async with db_factory() as session:
@@ -129,3 +218,32 @@ async def test_admin_can_list_and_filter_login_sessions(db_factory) -> None:
     assert payload["sessions"][0]["id"] == "session-active"
     assert payload["sessions"][0]["status"] == "active"
     assert "token_id" not in payload["sessions"][0]
+
+
+async def test_admin_can_search_users_by_email_and_view_login_metadata(db_factory) -> None:
+    last_login_at = datetime(2026, 8, 23, 9, 30, tzinfo=UTC)
+    async with db_factory() as session:
+        session.add(
+            User(
+                id="user-contact",
+                username="alice",
+                password_hash="hash",
+                email="alice@example.com",
+                last_login_at=last_login_at,
+                last_login_ip="2001:db8::10",
+                role="member",
+                is_active=True,
+                is_superadmin=False,
+            )
+        )
+        await session.commit()
+
+    async with _client(db_factory) as client:
+        response = await client.get("/api/v1/admin/users", params={"username": "EXAMPLE"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["users"][0]["email"] == "alice@example.com"
+    assert payload["users"][0]["last_login_ip"] == "2001:db8::10"
+    assert payload["users"][0]["last_login_at"].startswith("2026-08-23T09:30:00")
