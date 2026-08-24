@@ -30,37 +30,19 @@ interface CanvasSceneLayerProps {
   lod: CanvasLod;
 }
 
-const imageCache = new Map<string, HTMLImageElement>();
-const IMAGE_CACHE_LIMIT = 256;
-
-function cacheImage(url: string, image: HTMLImageElement): void {
-  imageCache.delete(url);
-  imageCache.set(url, image);
-  while (imageCache.size > IMAGE_CACHE_LIMIT) {
-    const oldest = imageCache.keys().next().value;
-    if (typeof oldest === "string") imageCache.delete(oldest);
-  }
+function nodeFillColor(mediaType: CanvasRenderNode["mediaType"], compact: boolean): string {
+  const alpha = compact ? 0.76 : 0.34;
+  if (mediaType === "video") return `rgba(74, 164, 159, ${alpha})`;
+  if (mediaType === "audio") return `rgba(194, 143, 67, ${alpha})`;
+  if (mediaType === "text") return `rgba(124, 132, 146, ${alpha})`;
+  return `rgba(151, 126, 204, ${alpha})`;
 }
 
-function statusColor(status?: string): string {
-  if (status === "failed" || status === "cancelled") return "#e25555";
-  if (status === "running" || status === "queued" || status === "cancelling") return "#d49b46";
-  return "#4fa785";
-}
-
-function drawImageContain(
-  context: CanvasRenderingContext2D,
-  image: HTMLImageElement,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-): void {
-  const sourceRatio = image.naturalWidth / image.naturalHeight;
-  const targetRatio = width / height;
-  const drawWidth = sourceRatio > targetRatio ? width : height * sourceRatio;
-  const drawHeight = sourceRatio > targetRatio ? width / sourceRatio : height;
-  context.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
+function typeMarkerColor(mediaType: CanvasRenderNode["mediaType"]): string {
+  if (mediaType === "video") return "rgba(104, 211, 202, 0.95)";
+  if (mediaType === "audio") return "rgba(239, 181, 89, 0.95)";
+  if (mediaType === "text") return "rgba(191, 199, 211, 0.95)";
+  return "rgba(192, 166, 244, 0.95)";
 }
 
 export function CanvasSceneLayer({
@@ -77,8 +59,6 @@ export function CanvasSceneLayer({
     const canvas = canvasRef.current;
     if (!canvas || viewport.width <= 0 || viewport.height <= 0) return;
     let disposed = false;
-    let frame = 0;
-
     const draw = () => {
       if (disposed) return;
       const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
@@ -115,33 +95,28 @@ export function CanvasSceneLayer({
       for (const node of nodes) {
         const nodeWidth = node.maxX - node.minX;
         const nodeHeight = node.maxY - node.minY;
-        context.fillStyle = "rgba(24, 29, 36, 0.96)";
-        context.fillRect(node.minX, node.minY, nodeWidth, nodeHeight);
-        if (node.thumbnailUrl) {
-          let image = imageCache.get(node.thumbnailUrl);
-          if (!image) {
-            image = new Image();
-            image.decoding = "async";
-            image.src = node.thumbnailUrl;
-            cacheImage(node.thumbnailUrl, image);
-            image.addEventListener("load", () => {
-              if (!disposed) frame = window.requestAnimationFrame(draw);
-            }, { once: true });
-          }
-          if (image.complete && image.naturalWidth > 0) {
-            const mediaHeight = Math.max(1, nodeHeight - 28);
-            drawImageContain(context, image, node.minX, node.minY, nodeWidth, mediaHeight);
-          }
+        const selected = selectedIds.has(node.id);
+        context.save();
+        if (selected) {
+          context.shadowColor = "rgba(185, 157, 238, 0.72)";
+          context.shadowBlur = 18 / camera.scale;
         }
-        context.fillStyle = statusColor(node.status);
-        context.fillRect(node.minX, node.maxY - 6 / camera.scale, nodeWidth, 6 / camera.scale);
-        context.strokeStyle = selectedIds.has(node.id) ? "#69c6ea" : "rgba(255,255,255,0.18)";
-        context.lineWidth = (selectedIds.has(node.id) ? 3 : 1) / camera.scale;
-        context.strokeRect(node.minX, node.minY, nodeWidth, nodeHeight);
-        if (lod === "overview" && nodeWidth * camera.scale >= 86) {
-          context.fillStyle = "rgba(245,248,251,0.88)";
-          context.font = `${12 / camera.scale}px system-ui, sans-serif`;
-          context.fillText(node.label.slice(0, 28), node.minX + 10 / camera.scale, node.maxY - 14 / camera.scale);
+        context.fillStyle = nodeFillColor(node.mediaType, lod === "compact");
+        context.fillRect(node.minX, node.minY, nodeWidth, nodeHeight);
+        context.restore();
+        if (selected) {
+          context.strokeStyle = "rgba(192, 166, 244, 0.98)";
+          context.lineWidth = 2 / camera.scale;
+          context.strokeRect(node.minX, node.minY, nodeWidth, nodeHeight);
+        }
+        if (lod === "overview") {
+          const markerSize = 9 / camera.scale;
+          context.fillStyle = typeMarkerColor(node.mediaType);
+          context.fillRect(node.minX + 10 / camera.scale, node.minY + 10 / camera.scale, markerSize, markerSize);
+          if (node.status === "failed" || node.status === "running") {
+            context.fillStyle = node.status === "failed" ? "rgba(224, 82, 82, 0.98)" : "rgba(192, 166, 244, 0.98)";
+            context.fillRect(node.maxX - 19 / camera.scale, node.minY + 10 / camera.scale, markerSize, markerSize);
+          }
         }
       }
     };
@@ -149,7 +124,6 @@ export function CanvasSceneLayer({
     draw();
     return () => {
       disposed = true;
-      if (frame) window.cancelAnimationFrame(frame);
     };
   }, [camera.scale, camera.x, camera.y, groups, lod, nodes, selectedIds, viewport]);
 

@@ -61,6 +61,10 @@
 
     /* 阴影 */
     --shadow-glow: 0 0 0 1px oklch(0.76 0.09 295 / 0.28), 0 18px 40px oklch(0 0 0 / 0.45);
+    --shadow-canvas: none;
+    --shadow-canvas-hover: 0 0 0 1px var(--color-accent), 0 14px 28px -20px oklch(0 0 0 / 0.9);
+    --shadow-selected: 0 0 0 2px var(--color-accent), 0 18px 36px -18px oklch(0 0 0 / 0.9), 0 0 24px -12px var(--color-accent-glow);
+    --shadow-dragging: 0 26px 52px -18px oklch(0 0 0 / 0.95), 0 0 0 2px var(--color-accent);
 
     /* ---- Legacy aliases — 旧组件继续可用，逐步迁移 ---- */
     --color-ink-950: oklch(0.148 0.009 260);
@@ -139,6 +143,71 @@ body {
 /* 统一焦点指示（a11y） */
 @utility focus-ring {
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)];
+}
+
+.canvas-node-label {
+    transform: scale(var(--canvas-label-inverse-scale));
+}
+
+.canvas-node-card {
+    box-shadow: var(--shadow-canvas);
+    transition: filter 140ms ease, box-shadow 140ms ease, transform 140ms ease, opacity 140ms ease;
+}
+
+.canvas-node-shell:hover .canvas-node-card {
+    filter: brightness(1.05);
+    box-shadow: var(--shadow-canvas-hover);
+    transform: translateY(-1px);
+}
+
+.canvas-node-shell[data-selected="true"] .canvas-node-card,
+.canvas-node-shell:focus-visible .canvas-node-card {
+    box-shadow: var(--shadow-selected);
+    transform: translateY(-2px);
+}
+
+.canvas-node-shell[data-dragging="true"] .canvas-node-card {
+    box-shadow: var(--shadow-dragging);
+    opacity: 0.78;
+    transform: translateY(-5px);
+}
+
+.canvas-node-actions {
+    opacity: 0;
+    transform: translateY(2px);
+    transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.canvas-node-shell:hover .canvas-node-actions,
+.canvas-node-shell:focus-within .canvas-node-actions,
+.canvas-node-shell[data-selected="true"] .canvas-node-actions {
+    opacity: 1;
+    transform: none;
+}
+
+.canvas-media-skeleton {
+    background:
+        linear-gradient(100deg, transparent 25%, oklch(1 0 0 / 0.07) 45%, transparent 65%),
+        var(--color-surface-2);
+    background-size: 240% 100%;
+    animation: canvas-media-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes canvas-media-shimmer {
+    from { background-position: 110% 0; }
+    to { background-position: -110% 0; }
+}
+
+@media (hover: none) {
+    .canvas-node-shell:not([data-selected="true"]):hover .canvas-node-card {
+        filter: none;
+        box-shadow: var(--shadow-canvas);
+        transform: none;
+    }
+
+    .canvas-node-shell[data-selected="true"] .canvas-node-actions {
+        opacity: 1;
+    }
 }
 
 /* 打字机 caret 闪烁 — 紫色 accent-2 + accent-glow */

@@ -1,13 +1,10 @@
-/* eslint-disable jsx-a11y/media-has-caption */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
-  Captions,
   Clapperboard,
   Download,
   Eye,
   EyeOff,
-  FileText,
   Group,
   Keyboard,
   LayoutGrid,
@@ -35,6 +32,11 @@ import {
   CanvasSceneLayer,
   type CanvasRenderNode,
 } from "@/components/canvas/free-creation/CanvasSceneLayer";
+import { CanvasMediaThumbnail } from "@/components/canvas/free-creation/CanvasMediaThumbnail";
+import {
+  CanvasNodeLabel,
+  CanvasNodeStatusDot,
+} from "@/components/canvas/free-creation/CanvasNodeLabel";
 import {
   CanvasSpatialIndex,
   clampCameraToBounds,
@@ -103,7 +105,16 @@ interface FreeCreationInfiniteCanvasProps {
 type PointerOperation =
   | { kind: "pan"; pointerId: number; start: Point; origin: Point }
   | { kind: "marquee"; pointerId: number; start: Point; current: Point; additive: boolean }
-  | { kind: "nodes"; pointerId: number; start: Point; origins: Record<string, Point> };
+  | {
+    kind: "nodes";
+    pointerId: number;
+    pointerType: string;
+    start: Point;
+    origins: Record<string, Point>;
+    selection: string[];
+    active: boolean;
+    touchReady: boolean;
+  };
 
 interface ContextMenuState {
   nodeId: string;
@@ -123,6 +134,9 @@ const PLACEMENT_PADDING = 24;
 const SUBTITLE_NODE_WIDTH = 236;
 const SUBTITLE_NODE_HEIGHT = 166;
 const SUBTITLE_NODE_GAP = 32;
+const DESKTOP_DRAG_THRESHOLD = 4;
+const TOUCH_DRAG_THRESHOLD = 8;
+const TOUCH_DRAG_HOLD_MS = 240;
 
 interface CanvasBounds {
   left: number;
@@ -178,6 +192,24 @@ function initialPosition(index: number): Point {
   return { x: 96 + column * (NODE_WIDTH + NODE_GAP_X), y: 88 + row * (NODE_HEIGHT + NODE_GAP_Y) };
 }
 
+export function parseCanvasAspectRatio(value: string | undefined): number | null {
+  if (!value) return null;
+  const normalized = value.trim();
+  const match = normalized.match(/^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/);
+  if (match) {
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    return width > 0 && height > 0 ? width / height : null;
+  }
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+export function canvasNodeHeightForAspectRatio(aspectRatio: number | null, fallback: number): number {
+  if (!aspectRatio || !Number.isFinite(aspectRatio) || aspectRatio <= 0) return fallback;
+  return Math.round(NODE_WIDTH / aspectRatio);
+}
+
 function subtitlePosition(parent: Point, index: number): Point {
   return {
     x: parent.x + NODE_WIDTH + NODE_GAP_X,
@@ -189,6 +221,7 @@ function nodeBox(
   nodeId: string,
   positions: Record<string, Point>,
   uploadsById: ReadonlyMap<string, FreeCreationUpload>,
+  nodeHeights: Readonly<Record<string, number>> = {},
 ): CanvasNodeBox | null {
   const position = positions[nodeId];
   if (!position) return null;
@@ -196,7 +229,7 @@ function nodeBox(
     x: position.x,
     y: position.y,
     width: NODE_WIDTH,
-    height: uploadsById.has(nodeId) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT,
+    height: nodeHeights[nodeId] ?? (uploadsById.has(nodeId) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT),
   };
 }
 
@@ -249,6 +282,7 @@ export function arrangeCanvasNodes(
   currentPositions: Record<string, Point>,
   creations: FreeCreation[],
   uploads: FreeCreationUpload[],
+  nodeHeights: Readonly<Record<string, number>> = {},
 ): Record<string, Point> {
   const ids = [...new Set(nodeIds)];
   if (!ids.length) return { ...currentPositions };
@@ -267,13 +301,17 @@ export function arrangeCanvasNodes(
         || left.localeCompare(right);
     });
     const columnCount = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(orderedIds.length))));
-    orderedIds.forEach((id, index) => {
-      const height = uploadsById.has(id) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
-      next[id] = {
-        x: minX + (index % columnCount) * (NODE_WIDTH + NODE_GAP_X),
-        y: minY + Math.floor(index / columnCount) * (height + NODE_GAP_Y),
-      };
-    });
+    let rowY = minY;
+    for (let rowStart = 0; rowStart < orderedIds.length; rowStart += columnCount) {
+      const rowIds = orderedIds.slice(rowStart, rowStart + columnCount);
+      const rowHeight = Math.max(...rowIds.map((id) => (
+        nodeHeights[id] ?? (uploadsById.has(id) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT)
+      )));
+      rowIds.forEach((id, column) => {
+        next[id] = { x: minX + column * (NODE_WIDTH + NODE_GAP_X), y: rowY };
+      });
+      rowY += rowHeight + NODE_GAP_Y;
+    }
     return next;
   }
   const incoming = new Map<string, string[]>();
@@ -315,41 +353,53 @@ export function arrangeCanvasNodes(
       const rightY = currentPositions[right]?.y ?? 0;
       return leftY - rightY || left.localeCompare(right);
     });
-    layerIds.forEach((id, index) => {
-      const height = uploadsById.has(id) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
-      const previous = currentPositions[id];
-      const centeredOffset = layerIds.length > 1 ? (index - (layerIds.length - 1) / 2) * (height + NODE_GAP_Y) : 0;
+    let layerY = minY;
+    layerIds.forEach((id) => {
+      const height = nodeHeights[id] ?? (uploadsById.has(id) ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT);
       next[id] = {
         x: minX + layer * (NODE_WIDTH + NODE_GAP_X + 96),
-        y: minY + centeredOffset + (layerIds.length > 1 ? (layerIds.length - 1) * (height + NODE_GAP_Y) / 2 : 0),
+        y: layerY,
       };
-      if (!previous) next[id].y = minY + index * (height + NODE_GAP_Y);
+      layerY += height + NODE_GAP_Y;
     });
   }
   return next;
 }
 
-function overlapsPosition(candidate: Point, occupied: Point[]): boolean {
-  return occupied.some((position) => (
+function overlapsPosition(
+  candidate: Point,
+  candidateHeight: number,
+  occupied: Point[],
+  occupiedHeights: readonly number[],
+): boolean {
+  return occupied.some((position, index) => (
     candidate.x < position.x + NODE_WIDTH + PLACEMENT_PADDING
     && candidate.x + NODE_WIDTH + PLACEMENT_PADDING > position.x
-    && candidate.y < position.y + NODE_HEIGHT + PLACEMENT_PADDING
-    && candidate.y + NODE_HEIGHT + PLACEMENT_PADDING > position.y
+    && candidate.y < position.y + (occupiedHeights[index] ?? NODE_HEIGHT) + PLACEMENT_PADDING
+    && candidate.y + candidateHeight + PLACEMENT_PADDING > position.y
   ));
 }
 
-function isWithinBounds(point: Point, bounds: CanvasBounds): boolean {
+function isWithinBounds(point: Point, bounds: CanvasBounds, height: number): boolean {
   return point.x >= bounds.left
     && point.y >= bounds.top
     && point.x + NODE_WIDTH <= bounds.right
-    && point.y + NODE_HEIGHT <= bounds.bottom;
+    && point.y + height <= bounds.bottom;
+}
+
+interface CanvasPlacementOptions {
+  candidateHeight?: number;
+  occupiedHeights?: readonly number[];
 }
 
 export function findOpenCanvasPosition(
   occupied: Point[],
   bounds: CanvasBounds,
   preferred?: Point,
+  options: CanvasPlacementOptions = {},
 ): { position: Point; visible: boolean } {
+  const candidateHeight = options.candidateHeight ?? NODE_HEIGHT;
+  const occupiedHeights = options.occupiedHeights ?? [];
   const candidates: Point[] = [];
   if (preferred) {
     const stepX = NODE_WIDTH + NODE_GAP_X;
@@ -376,12 +426,15 @@ export function findOpenCanvasPosition(
     }
   }
 
-  const visible = candidates.find((candidate) => isWithinBounds(candidate, bounds) && !overlapsPosition(candidate, occupied));
+  const visible = candidates.find((candidate) => (
+    isWithinBounds(candidate, bounds, candidateHeight)
+    && !overlapsPosition(candidate, candidateHeight, occupied, occupiedHeights)
+  ));
   if (visible) return { position: visible, visible: true };
-  const available = candidates.find((candidate) => !overlapsPosition(candidate, occupied));
+  const available = candidates.find((candidate) => !overlapsPosition(candidate, candidateHeight, occupied, occupiedHeights));
   if (available) return { position: available, visible: false };
   let index = occupied.length;
-  while (overlapsPosition(initialPosition(index), occupied)) index += 1;
+  while (overlapsPosition(initialPosition(index), candidateHeight, occupied, occupiedHeights)) index += 1;
   return { position: initialPosition(index), visible: false };
 }
 
@@ -404,12 +457,19 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
 
 function isNodeControlTarget(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest(
-    "button, a, input, textarea, select, video, audio, [role='button']:not([data-canvas-node='true'])",
+    "button, a, input, textarea, select, audio, [role='button']:not([data-canvas-node='true'])",
   ));
 }
 
 function uploadMediaUrl(projectName: string, upload: FreeCreationUpload): string {
   return upload.url ?? API.getFileUrl(projectName, upload.path);
+}
+
+function creationLabel(creation: FreeCreation, fallback: string): string {
+  const prompt = creation.prompt?.trim();
+  if (prompt) return prompt;
+  const filename = creation.media_path?.split(/[\\/]/).at(-1);
+  return filename || fallback;
 }
 
 function sharedCanvasState(
@@ -479,6 +539,7 @@ export function FreeCreationInfiniteCanvas({
   const nativeNodeDragRef = useRef(false);
   const mediaPlaybackRef = useRef(new Map<string, { currentTime: number; playing: boolean }>());
   const pointerFrameRef = useRef<number | null>(null);
+  const touchHoldTimerRef = useRef<number | null>(null);
   const pendingPointerRef = useRef<{ pointerId: number; clientX: number; clientY: number; altKey: boolean } | null>(null);
   const historyRef = useRef(new CanvasCommandHistory<CanvasHistoryState>({
     maxCommands: 50,
@@ -506,6 +567,7 @@ export function FreeCreationInfiniteCanvas({
   const [canvasLoadError, setCanvasLoadError] = useState(false);
   const [canvasReloadToken, setCanvasReloadToken] = useState(0);
   const [dragActive, setDragActive] = useState(false);
+  const [draggingIds, setDraggingIds] = useState<string[]>([]);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [snapGuides, setSnapGuides] = useState<CanvasSnapGuide[]>([]);
@@ -514,6 +576,7 @@ export function FreeCreationInfiniteCanvas({
   const [viewportAnimating, setViewportAnimating] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 1280, height: 720 });
   const [lod, setLod] = useState<CanvasLod>("detail");
+  const [mediaAspectRatios, setMediaAspectRatios] = useState<Record<string, number>>({});
   const camera = useMemo(() => ({ x: pan.x, y: pan.y, scale }), [pan.x, pan.y, scale]);
   const canvasEvents = useFreeCreationStore((state) => state.canvasEvents);
   const canvasReady = hydratedProject === projectName;
@@ -527,6 +590,16 @@ export function FreeCreationInfiniteCanvas({
 
   const rememberVideoPlayback = useCallback((id: string, video: HTMLVideoElement) => {
     mediaPlaybackRef.current.set(id, { currentTime: video.currentTime, playing: !video.paused });
+  }, []);
+
+  const rememberMediaDimensions = useCallback((id: string, width: number, height: number) => {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+    const aspectRatio = width / height;
+    setMediaAspectRatios((current) => (
+      Math.abs((current[id] ?? 0) - aspectRatio) < 0.001
+        ? current
+        : { ...current, [id]: aspectRatio }
+    ));
   }, []);
 
   useEffect(() => {
@@ -630,13 +703,6 @@ export function FreeCreationInfiniteCanvas({
     () => new Map(creations.map((creation) => [creation.creation_id, creation])),
     [creations],
   );
-  const subtitleCountByCreation = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const track of subtitleTracks) {
-      counts.set(track.creation_id, (counts.get(track.creation_id) ?? 0) + 1);
-    }
-    return counts;
-  }, [subtitleTracks]);
   const uploadsById = useMemo(
     () => new Map(uploads.map((upload) => [upload.reference_id, upload])),
     [uploads],
@@ -651,6 +717,24 @@ export function FreeCreationInfiniteCanvas({
     () => uploads.filter((upload) => showHidden || !hiddenUploadSet.has(upload.reference_id)),
     [hiddenUploadSet, showHidden, uploads],
   );
+  const nodeHeights = useMemo(() => {
+    const heights: Record<string, number> = {};
+    for (const upload of uploads) {
+      const usesMediaRatio = upload.media_type === "image" || upload.media_type === "video";
+      heights[upload.reference_id] = usesMediaRatio
+        ? canvasNodeHeightForAspectRatio(mediaAspectRatios[upload.reference_id] ?? null, UPLOAD_NODE_HEIGHT)
+        : UPLOAD_NODE_HEIGHT;
+    }
+    for (const creation of creations) {
+      const mediaType = creationMediaType(creation);
+      const usesMediaRatio = mediaType === "image" || mediaType === "video";
+      const aspectRatio = mediaAspectRatios[creation.creation_id] ?? parseCanvasAspectRatio(creation.aspect_ratio);
+      heights[creation.creation_id] = usesMediaRatio
+        ? canvasNodeHeightForAspectRatio(aspectRatio, NODE_HEIGHT)
+        : NODE_HEIGHT;
+    }
+    return heights;
+  }, [creations, mediaAspectRatios, uploads]);
   const allNodes = useMemo(
     () => [
       ...uploads.map((upload) => ({ id: upload.reference_id, kind: "upload" as const })),
@@ -659,6 +743,7 @@ export function FreeCreationInfiniteCanvas({
     [orderedCreations, uploads],
   );
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const draggingSet = useMemo(() => new Set(draggingIds), [draggingIds]);
   const groupByMember = useMemo(() => {
     const result = new Map<string, CanvasGroup>();
     for (const group of groups) {
@@ -669,7 +754,7 @@ export function FreeCreationInfiniteCanvas({
   const groupFrames = useMemo<CanvasGroupFrame[]>(() => groups.flatMap((group, index) => {
     const members = group.member_ids
       .filter((memberId) => !hiddenSet.has(memberId) && !hiddenUploadSet.has(memberId))
-      .map((memberId) => nodeBox(memberId, positions, uploadsById))
+      .map((memberId) => nodeBox(memberId, positions, uploadsById, nodeHeights))
       .filter((box): box is CanvasNodeBox => Boolean(box));
     if (members.length < 2) return [];
     const padding = 22;
@@ -679,7 +764,7 @@ export function FreeCreationInfiniteCanvas({
     const right = Math.max(...members.map((box) => box.x + box.width)) + padding;
     const bottom = Math.max(...members.map((box) => box.y + box.height)) + padding;
     return [{ groupId: group.group_id, labelIndex: index + 1, x: left, y: top, width: right - left, height: bottom - top }];
-  }), [groups, hiddenSet, hiddenUploadSet, positions, uploadsById]);
+  }), [groups, hiddenSet, hiddenUploadSet, nodeHeights, positions, uploadsById]);
   const canvasNodes = useMemo<CanvasRenderNode[]>(() => [
     ...visibleUploads.flatMap((upload) => {
       const position = positions[upload.reference_id];
@@ -690,7 +775,7 @@ export function FreeCreationInfiniteCanvas({
         minX: position.x,
         minY: position.y,
         maxX: position.x + NODE_WIDTH,
-        maxY: position.y + UPLOAD_NODE_HEIGHT,
+        maxY: position.y + (nodeHeights[upload.reference_id] ?? UPLOAD_NODE_HEIGHT),
         label: upload.original_filename,
         mediaType: upload.media_type,
         status: "succeeded",
@@ -710,7 +795,7 @@ export function FreeCreationInfiniteCanvas({
         minX: position.x,
         minY: position.y,
         maxX: position.x + NODE_WIDTH,
-        maxY: position.y + NODE_HEIGHT,
+        maxY: position.y + (nodeHeights[creation.creation_id] ?? NODE_HEIGHT),
         label: creation.prompt || creation.creation_id,
         mediaType,
         status: creation.status,
@@ -739,7 +824,7 @@ export function FreeCreationInfiniteCanvas({
         status: "succeeded",
       }];
     }),
-  ], [hiddenSet, positions, projectName, subtitleTracks, visibleCreations, visibleUploads]);
+  ], [hiddenSet, nodeHeights, positions, projectName, subtitleTracks, visibleCreations, visibleUploads]);
   const canvasNodesById = useMemo(() => new Map(canvasNodes.map((node) => [node.id, node])), [canvasNodes]);
   const spatialIndex = useMemo(() => new CanvasSpatialIndex(canvasNodes), [canvasNodes]);
   const contentBounds = useMemo(() => computeContentBounds(canvasNodes), [canvasNodes]);
@@ -988,6 +1073,7 @@ export function FreeCreationInfiniteCanvas({
     disposedRef.current = true;
     if (viewportAnimationTimerRef.current !== null) window.clearTimeout(viewportAnimationTimerRef.current);
     if (pointerFrameRef.current !== null) window.cancelAnimationFrame(pointerFrameRef.current);
+    if (touchHoldTimerRef.current !== null) window.clearTimeout(touchHoldTimerRef.current);
     if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
     if (viewportSaveTimerRef.current !== null) window.clearTimeout(viewportSaveTimerRef.current);
   }, []);
@@ -1017,7 +1103,7 @@ export function FreeCreationInfiniteCanvas({
       ? selectedIds.filter((id) => visibleSet.has(id))
       : visibleIds;
     if (targetIds.length < (scope === "selected" ? 2 : 1)) return;
-    const next = arrangeCanvasNodes(targetIds, positionsRef.current, creations, uploads);
+    const next = arrangeCanvasNodes(targetIds, positionsRef.current, creations, uploads, nodeHeights);
     const changed = targetIds.some((id) => {
       const current = positionsRef.current[id];
       const arranged = next[id];
@@ -1027,7 +1113,7 @@ export function FreeCreationInfiniteCanvas({
     const before = captureHistoryState();
     commitHistoryState(before, { ...before, positions: { ...before.positions, ...next } });
     setContextMenu(null);
-  }, [captureHistoryState, commitHistoryState, creations, readOnly, selectedIds, uploads, visibleCreations, visibleUploads]);
+  }, [captureHistoryState, commitHistoryState, creations, nodeHeights, readOnly, selectedIds, uploads, visibleCreations, visibleUploads]);
 
   const fitView = useCallback((scope: "all" | "selected") => {
     const bounds = scope === "selected" ? selectedBounds : contentBounds;
@@ -1044,14 +1130,14 @@ export function FreeCreationInfiniteCanvas({
     viewportAnimationTimerRef.current = window.setTimeout(() => setViewportAnimating(false), 240);
   }, [contentBounds, selectedBounds, viewportSize]);
 
-  const focusCanvasPosition = useCallback((position: Point) => {
+  const focusCanvasPosition = useCallback((position: Point, nodeHeight = NODE_HEIGHT) => {
     const surface = surfaceRef.current;
     const width = surface?.clientWidth || 1280;
     const height = surface?.clientHeight || 720;
     setViewportAnimating(true);
     setPan({
       x: width / 2 - (position.x + NODE_WIDTH / 2) * scale,
-      y: height / 2 - (position.y + NODE_HEIGHT / 2) * scale,
+      y: height / 2 - (position.y + nodeHeight / 2) * scale,
     });
     if (viewportAnimationTimerRef.current !== null) window.clearTimeout(viewportAnimationTimerRef.current);
     viewportAnimationTimerRef.current = window.setTimeout(() => setViewportAnimating(false), 240);
@@ -1064,12 +1150,12 @@ export function FreeCreationInfiniteCanvas({
     if (!missing.length) return;
     const next = { ...positions };
     const bounds = visiblePlacementBounds();
-    let focusTarget: Point | null = null;
+    let focusTarget: { position: Point; height: number } | null = null;
     if (missing.length > 32) {
       const placementIndex = new CanvasSpatialIndex(allNodes.flatMap((node) => {
         const position = next[node.id];
         if (!position) return [];
-        const height = node.kind === "upload" ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT;
+        const height = nodeHeights[node.id] ?? (node.kind === "upload" ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT);
         return [{
           id: node.id,
           kind: node.kind,
@@ -1081,12 +1167,13 @@ export function FreeCreationInfiniteCanvas({
       }));
       let slot = 0;
       for (const node of missing) {
+        const nodeHeight = nodeHeights[node.id] ?? (node.kind === "upload" ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT);
         let candidate = initialPosition(slot);
         while (placementIndex.search({
           minX: candidate.x,
           minY: candidate.y,
           maxX: candidate.x + NODE_WIDTH,
-          maxY: candidate.y + NODE_HEIGHT,
+          maxY: candidate.y + nodeHeight,
         }).length) {
           slot += 1;
           candidate = initialPosition(slot);
@@ -1098,25 +1185,30 @@ export function FreeCreationInfiniteCanvas({
           minX: candidate.x - PLACEMENT_PADDING,
           minY: candidate.y - PLACEMENT_PADDING,
           maxX: candidate.x + NODE_WIDTH + PLACEMENT_PADDING,
-          maxY: candidate.y + (node.kind === "upload" ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT) + PLACEMENT_PADDING,
+          maxY: candidate.y + nodeHeight + PLACEMENT_PADDING,
         });
         slot += 1;
       }
     } else {
-      missing.forEach((node, index) => {
-        const occupied = Object.values(next);
+      for (const [index, node] of missing.entries()) {
+        const occupiedEntries = Object.entries(next);
+        const occupied = occupiedEntries.map(([, position]) => position);
+        const nodeHeight = nodeHeights[node.id] ?? (node.kind === "upload" ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT);
         const result = occupied.length === 0 && index === 0
           ? { position: initialPosition(0), visible: true }
-          : findOpenCanvasPosition(occupied, bounds);
+          : findOpenCanvasPosition(occupied, bounds, undefined, {
+            candidateHeight: nodeHeight,
+            occupiedHeights: occupiedEntries.map(([id]) => nodeHeights[id] ?? NODE_HEIGHT),
+          });
         next[node.id] = result.position;
-        if (!result.visible) focusTarget = result.position;
-      });
+        if (!result.visible) focusTarget = { position: result.position, height: nodeHeight };
+      }
     }
     // New nodes arrive from the project event stream, so placement synchronizes external state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPositions(next);
-    if (focusTarget) focusCanvasPosition(focusTarget);
-  }, [allNodes, canvasReady, focusCanvasPosition, positions, visiblePlacementBounds]);
+    if (focusTarget) focusCanvasPosition(focusTarget.position, focusTarget.height);
+  }, [allNodes, canvasReady, focusCanvasPosition, nodeHeights, positions, visiblePlacementBounds]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
@@ -1296,7 +1388,7 @@ export function FreeCreationInfiniteCanvas({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const beginNodeDrag = (event: React.PointerEvent<HTMLElement>, creationId: string) => {
+  const beginNodeInteraction = (event: React.PointerEvent<HTMLElement>, nodeId: string) => {
     if (event.button !== 0 || readOnly) return;
     if (spacePressed) {
       beginCanvasPan(event);
@@ -1304,41 +1396,43 @@ export function FreeCreationInfiniteCanvas({
     }
     event.preventDefault();
     event.stopPropagation();
-    const groupedIds = groupByMember.get(creationId)?.member_ids ?? [];
-    const nextSelection = selectedSet.has(creationId)
-      ? [...new Set([...selectedIds, ...groupedIds])]
-      : groupedIds.length ? groupedIds : [creationId];
-    publishSelection(nextSelection);
+    const groupedIds = groupByMember.get(nodeId)?.member_ids ?? [];
+    const nextSelection = event.shiftKey
+      ? selectedSet.has(nodeId)
+        ? selectedIds.filter((id) => id !== nodeId)
+        : [...new Set([...selectedIds, nodeId])]
+      : selectedSet.has(nodeId)
+        ? [...new Set([...selectedIds, ...groupedIds])]
+        : groupedIds.length ? groupedIds : [nodeId];
     const origins = Object.fromEntries(nextSelection.map((id) => [id, positions[id] ?? { x: 0, y: 0 }]));
     pointerRef.current = {
       kind: "nodes",
       pointerId: event.pointerId,
+      pointerType: event.pointerType,
       start: { x: event.clientX, y: event.clientY },
       origins,
+      selection: nextSelection,
+      active: false,
+      touchReady: event.pointerType !== "touch",
     };
+    if (touchHoldTimerRef.current !== null) window.clearTimeout(touchHoldTimerRef.current);
+    if (event.pointerType === "touch") {
+      touchHoldTimerRef.current = window.setTimeout(() => {
+        const operation = pointerRef.current;
+        if (operation?.kind === "nodes" && operation.pointerId === event.pointerId) {
+          pointerRef.current = { ...operation, touchReady: true };
+        }
+      }, TOUCH_DRAG_HOLD_MS);
+    }
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
+  const beginNodeDrag = (event: React.PointerEvent<HTMLElement>, creationId: string) => {
+    beginNodeInteraction(event, creationId);
+  };
+
   const beginUploadDrag = (event: React.PointerEvent<HTMLElement>, referenceId: string) => {
-    if (event.button !== 0 || readOnly) return;
-    if (spacePressed) {
-      beginCanvasPan(event);
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    const groupedIds = groupByMember.get(referenceId)?.member_ids ?? [];
-    const nextSelection = selectedSet.has(referenceId)
-      ? [...new Set([...selectedIds, ...groupedIds])]
-      : groupedIds.length ? groupedIds : [referenceId];
-    publishSelection(nextSelection);
-    pointerRef.current = {
-      kind: "nodes",
-      pointerId: event.pointerId,
-      start: { x: event.clientX, y: event.clientY },
-      origins: Object.fromEntries(nextSelection.map((id) => [id, positions[id] ?? { x: 0, y: 0 }])),
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    beginNodeInteraction(event, referenceId);
   };
 
   const handleSurfacePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1397,6 +1491,15 @@ export function FreeCreationInfiniteCanvas({
       return;
     }
     if (operation.kind === "nodes") {
+      const distance = Math.hypot(clientX - operation.start.x, clientY - operation.start.y);
+      const threshold = operation.pointerType === "touch" ? TOUCH_DRAG_THRESHOLD : DESKTOP_DRAG_THRESHOLD;
+      if (!operation.active && (distance < threshold || !operation.touchReady)) return;
+      if (!operation.active) {
+        const activeOperation = { ...operation, active: true };
+        pointerRef.current = activeOperation;
+        publishSelection(operation.selection);
+        setDraggingIds(operation.selection);
+      }
       const dx = (clientX - operation.start.x) / scale;
       const dy = (clientY - operation.start.y) / scale;
       const updates = Object.fromEntries(
@@ -1439,6 +1542,10 @@ export function FreeCreationInfiniteCanvas({
     applyPointerUpdate(event.pointerId, event.clientX, event.clientY, event.altKey);
     const operation = pointerRef.current;
     if (!operation || operation.pointerId !== event.pointerId) return;
+    if (touchHoldTimerRef.current !== null) {
+      window.clearTimeout(touchHoldTimerRef.current);
+      touchHoldTimerRef.current = null;
+    }
     if (operation.kind === "marquee") {
       const left = Math.min(operation.start.x, operation.current.x);
       const top = Math.min(operation.start.y, operation.current.y);
@@ -1456,7 +1563,7 @@ export function FreeCreationInfiniteCanvas({
       publishSelection(operation.additive ? [...new Set([...selectedIds, ...hitIds])] : hitIds);
     } else if (operation.kind === "nodes") {
       setSnapGuides([]);
-      const moved = Object.entries(operation.origins).some(([id, origin]) => {
+      const moved = operation.active && Object.entries(operation.origins).some(([id, origin]) => {
         const current = positionsRef.current[id];
         return current && (current.x !== origin.x || current.y !== origin.y);
       });
@@ -1466,6 +1573,8 @@ export function FreeCreationInfiniteCanvas({
           { ...after, positions: { ...after.positions, ...operation.origins } },
           after,
         );
+      } else if (!operation.active) {
+        publishSelection(operation.selection);
       }
     } else if (operation.kind === "pan") {
       const next = clampCameraToBounds(
@@ -1480,6 +1589,7 @@ export function FreeCreationInfiniteCanvas({
       setPan({ x: next.x, y: next.y });
     }
     pointerRef.current = null;
+    setDraggingIds([]);
     setSnapGuides([]);
     setMarquee(null);
   };
@@ -1539,19 +1649,24 @@ export function FreeCreationInfiniteCanvas({
     const next = { ...positionsRef.current };
     const placements: Record<string, Point> = {};
     const bounds = visiblePlacementBounds();
-    let focusTarget: Point | null = null;
-    uploaded.forEach((upload, index) => {
+    let focusTarget: { position: Point; height: number } | null = null;
+    for (const [index, upload] of uploaded.entries()) {
+      const occupiedEntries = Object.entries(next);
       const result = findOpenCanvasPosition(
-        Object.values(next),
+        occupiedEntries.map(([, position]) => position),
         bounds,
         { x: preferred.x + index * 20, y: preferred.y + index * 20 },
+        {
+          candidateHeight: UPLOAD_NODE_HEIGHT,
+          occupiedHeights: occupiedEntries.map(([id]) => nodeHeights[id] ?? NODE_HEIGHT),
+        },
       );
       next[upload.reference_id] = result.position;
       placements[upload.reference_id] = result.position;
-      if (!result.visible) focusTarget = result.position;
-    });
+      if (!result.visible) focusTarget = { position: result.position, height: UPLOAD_NODE_HEIGHT };
+    }
     setPositions((current) => ({ ...current, ...placements }));
-    if (focusTarget) focusCanvasPosition(focusTarget);
+    if (focusTarget) focusCanvasPosition(focusTarget.position, focusTarget.height);
   };
 
   const hideNodes = (nodeIds: string[]) => {
@@ -1747,6 +1862,33 @@ export function FreeCreationInfiniteCanvas({
     }
   };
 
+  const selectNodeLabel = (nodeId: string, selected: boolean, additive: boolean) => {
+    if (additive) {
+      publishSelection(selected ? selectedIds.filter((id) => id !== nodeId) : [...selectedIds, nodeId]);
+      return;
+    }
+    publishSelection([nodeId]);
+  };
+
+  const openNodeMenu = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    kind: ContextMenuState["kind"],
+    nodeId: string,
+  ) => {
+    event.stopPropagation();
+    if (!selectedSet.has(nodeId)) publishSelection([nodeId]);
+    const rect = event.currentTarget.getBoundingClientRect();
+    const surface = surfaceRef.current?.getBoundingClientRect();
+    const surfaceWidth = surface?.width ?? 260;
+    const surfaceHeight = surface?.height ?? 200;
+    setContextMenu({
+      kind,
+      nodeId,
+      x: Math.min(Math.max(4, rect.right - (surface?.left ?? 0)), surfaceWidth - 196),
+      y: Math.min(Math.max(4, rect.bottom - (surface?.top ?? 0)), surfaceHeight - 156),
+    });
+  };
+
   return (
     <div
       ref={surfaceRef}
@@ -1919,41 +2061,62 @@ export function FreeCreationInfiniteCanvas({
           if (!position) return null;
           const selected = selectedSet.has(upload.reference_id);
           const hidden = hiddenUploadSet.has(upload.reference_id);
+          const dragging = draggingSet.has(upload.reference_id);
           const claim: FreeCreationReferenceClaim = {
             type: "upload",
             reference_id: upload.reference_id,
             role: freeCreationUploadRole(upload.media_type),
           };
           return (
-               <div role="button" aria-pressed={selected} key={upload.reference_id} ref={(node) => { if (node) nodeRefs.current.set(upload.reference_id, node); else nodeRefs.current.delete(upload.reference_id); }} draggable={false} onDragStart={(event) => { event.preventDefault(); event.stopPropagation(); nativeNodeDragRef.current = true; }} onDragEnd={() => { nativeNodeDragRef.current = false; }} data-canvas-node="true" data-canvas-id={upload.reference_id} tabIndex={0} aria-label={selected ? [upload.original_filename, t("free_creation_selected")].join(", ") : upload.original_filename} onKeyDown={(event) => handleNodeKeyboard(event, upload.reference_id, selected)} className={`absolute overflow-hidden rounded-md border-2 bg-[var(--color-surface-2)] shadow-[0_16px_30px_-18px_oklch(0_0_0_/_0.95)] ${selected ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent-dim)]" : "border-[var(--color-hairline-strong)]"} ${hidden ? "opacity-55" : ""}`} style={{ left: position.x, top: position.y, width: NODE_WIDTH, height: UPLOAD_NODE_HEIGHT }} onPointerDown={(event) => { if (event.button === 0 && spacePressed) { beginCanvasPan(event); return; } if (event.button === 0 && (event.ctrlKey || event.metaKey)) { event.preventDefault(); return; } if (event.button === 0 && !event.shiftKey && !isNodeControlTarget(event.target)) { beginUploadDrag(event, upload.reference_id); return; } if (event.button === 0 && !event.shiftKey) publishSelection([upload.reference_id]); else if (event.button === 0 && event.shiftKey) publishSelection(selected ? selectedIds.filter((id) => id !== upload.reference_id) : [...selectedIds, upload.reference_id]); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onPreview?.({ kind: "upload", upload }); }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (readOnly) return; if (!selectedSet.has(upload.reference_id)) publishSelection([upload.reference_id]); const rect = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "upload", nodeId: upload.reference_id, x: Math.min(Math.max(4, event.clientX - (rect?.left ?? 0)), (rect?.width ?? 260) - 196), y: Math.min(Math.max(4, event.clientY - (rect?.top ?? 0)), (rect?.height ?? 200) - 156) }); }}>
-              <div className="flex h-10 items-center justify-between border-b border-[var(--color-hairline)] px-3 text-xs font-medium text-[var(--color-text-2)]" onPointerDown={(event) => beginUploadDrag(event, upload.reference_id)}><span className="truncate">{upload.original_filename}</span><span className="text-[10px] text-[var(--color-text-muted)]">{t("free_creation_reference")}</span></div>
-              {upload.media_type === "audio" ? (
-                <div className="block h-[154px] w-full bg-black">
-                  <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio src={uploadMediaUrl(projectName, upload)} preload="none" controls className="w-full" aria-label={upload.original_filename} /></div>
-                </div>
-              ) : (
-                <div role="button" tabIndex={0} className="block h-[154px] w-full bg-black" onClick={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} onKeyDown={(event) => handleReferenceShortcut(event, claim, upload.original_filename)} title={t("free_creation_reference_shortcut")}>
-                  {upload.media_type === "image" ? <img src={uploadMediaUrl(projectName, upload)} alt={upload.original_filename} loading="lazy" decoding="async" className="h-full w-full object-contain" /> : upload.media_type === "video" ? (
-                    <video
-                      data-canvas-media-id={upload.reference_id}
-                      src={API.getFreeCreationReferenceProxyUrl(projectName, upload.reference_id)}
-                      poster={API.getFreeCreationReferenceCoverUrl(projectName, upload.reference_id)}
-                      preload="metadata"
-                      muted
-                      playsInline
-                      className="h-full w-full object-contain"
-                      aria-label={upload.original_filename}
-                      onLoadedMetadata={(event) => {
-                        restoreVideoPlayback(upload.reference_id, event.currentTarget, 0.1);
-                      }}
-                      onPlay={(event) => rememberVideoPlayback(upload.reference_id, event.currentTarget)}
-                      onPause={(event) => rememberVideoPlayback(upload.reference_id, event.currentTarget)}
-                      onTimeUpdate={(event) => rememberVideoPlayback(upload.reference_id, event.currentTarget)}
-                    />
-                  ) : upload.media_type === "text" ? <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]"><FileText className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><span className="max-w-[90%] truncate text-xs">{t("media_type_text")}</span></div> : <Link2 className="mx-auto mt-16 h-5 w-5 -translate-y-1/2 text-[var(--color-text-muted)]" aria-hidden />}
-                </div>
-              )}
-              <div className="flex h-11 items-center justify-end px-2"><button type="button" onClick={(event) => { event.stopPropagation(); onReference(claim, upload.original_filename); }} className="focus-ring inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button></div>
+            <div
+              role="button"
+              aria-pressed={selected}
+              key={upload.reference_id}
+              ref={(node) => { if (node) nodeRefs.current.set(upload.reference_id, node); else nodeRefs.current.delete(upload.reference_id); }}
+              draggable={false}
+              onDragStart={(event) => { event.preventDefault(); event.stopPropagation(); nativeNodeDragRef.current = true; }}
+              onDragEnd={() => { nativeNodeDragRef.current = false; }}
+              data-canvas-node="true"
+              data-canvas-id={upload.reference_id}
+              data-selected={selected}
+              data-dragging={dragging}
+              tabIndex={0}
+              aria-label={selected ? [upload.original_filename, t("free_creation_selected")].join(", ") : upload.original_filename}
+              onKeyDown={(event) => {
+                if (event.ctrlKey || event.metaKey) handleReferenceShortcut(event, claim, upload.original_filename);
+                else handleNodeKeyboard(event, upload.reference_id, selected);
+              }}
+              className={`canvas-node-shell group/node absolute overflow-visible rounded-lg outline-none ${hidden ? "opacity-55" : ""}`}
+              style={{ left: position.x, top: position.y, width: NODE_WIDTH, height: nodeHeights[upload.reference_id] ?? UPLOAD_NODE_HEIGHT }}
+              onPointerDown={(event) => {
+                if (event.button === 0 && spacePressed) { beginCanvasPan(event); return; }
+                if (event.button === 0 && (event.ctrlKey || event.metaKey)) { event.preventDefault(); return; }
+                if (event.button === 0 && !isNodeControlTarget(event.target)) beginUploadDrag(event, upload.reference_id);
+              }}
+              onClick={(event) => handleReferenceShortcut(event, claim, upload.original_filename)}
+              onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onPreview?.({ kind: "upload", upload }); }}
+              onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (readOnly) return; if (!selectedSet.has(upload.reference_id)) publishSelection([upload.reference_id]); const rect = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "upload", nodeId: upload.reference_id, x: Math.min(Math.max(4, event.clientX - (rect?.left ?? 0)), (rect?.width ?? 260) - 196), y: Math.min(Math.max(4, event.clientY - (rect?.top ?? 0)), (rect?.height ?? 200) - 156) }); }}
+            >
+              {lod === "detail" ? <CanvasNodeLabel label={upload.original_filename} mediaType={upload.media_type} scale={scale} selected={selected} title={`${upload.original_filename} · ${t("free_creation_reference")}`} onSelect={(additive) => selectNodeLabel(upload.reference_id, selected, additive)} /> : null}
+              <div className="canvas-node-card relative h-full w-full overflow-hidden rounded-lg bg-[var(--color-surface-2)]" data-canvas-drag-surface="true">
+                <CanvasMediaThumbnail
+                  key={`${upload.reference_id}:${upload.path}`}
+                  mediaType={upload.media_type}
+                  label={upload.original_filename}
+                  src={upload.media_type === "video" ? API.getFreeCreationReferenceProxyUrl(projectName, upload.reference_id) : upload.media_type === "text" ? undefined : uploadMediaUrl(projectName, upload)}
+                  poster={upload.media_type === "video" ? API.getFreeCreationReferenceCoverUrl(projectName, upload.reference_id) : undefined}
+                  mediaId={upload.reference_id}
+                  textContent={t("media_type_text")}
+                  playLabel={t("free_creation_video_play")}
+                  pauseLabel={t("free_creation_video_pause")}
+                  onIntrinsicSize={(width, height) => rememberMediaDimensions(upload.reference_id, width, height)}
+                  onVideoLoadedMetadata={(video) => restoreVideoPlayback(upload.reference_id, video, 0.1)}
+                  onVideoPlay={(video) => rememberVideoPlayback(upload.reference_id, video)}
+                  onVideoPause={(video) => rememberVideoPlayback(upload.reference_id, video)}
+                  onVideoTimeUpdate={(video) => rememberVideoPlayback(upload.reference_id, video)}
+                />
+                {!readOnly ? <div className="canvas-node-actions absolute bottom-2 right-2 z-30 rounded-md bg-black/55 p-0.5 backdrop-blur-sm" onPointerDown={(event) => event.stopPropagation()}><button type="button" className="focus-ring grid h-7 w-7 place-items-center rounded text-[var(--color-text-2)] hover:bg-white/10 hover:text-[var(--color-text)]" onClick={(event) => openNodeMenu(event, "upload", upload.reference_id)} aria-label={t("free_creation_more_actions")} title={t("free_creation_more_actions")}><MoreHorizontal className="h-4 w-4" aria-hidden /></button></div> : null}
+              </div>
             </div>
           );
         })}
@@ -1963,9 +2126,22 @@ export function FreeCreationInfiniteCanvas({
           if (!position) return null;
           const selected = selectedSet.has(creation.creation_id);
           const hidden = hiddenSet.has(creation.creation_id);
+          const dragging = draggingSet.has(creation.creation_id);
           const mediaType = creationMediaType(creation);
           const referenceRole = creationReferenceRole(creation);
           const statusLabel = t(`free_creation_status_${creation.status}`);
+          const label = creationLabel(creation, t(`free_creation_${creation.output_type}`));
+          const claim: FreeCreationReferenceClaim = {
+            type: "creation",
+            creation_id: creation.creation_id,
+            version: creation.version,
+            role: referenceRole,
+          };
+          const mediaUrl = creation.status === "succeeded" && creation.media_path
+            ? mediaType === "video"
+              ? API.getFreeCreationProxyUrl(projectName, creation.creation_id, creation.version)
+              : API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)
+            : undefined;
           return (
             <div
               key={creation.creation_id}
@@ -1975,13 +2151,18 @@ export function FreeCreationInfiniteCanvas({
               onDragStart={(event) => { event.preventDefault(); event.stopPropagation(); nativeNodeDragRef.current = true; }}
               onDragEnd={() => { nativeNodeDragRef.current = false; }}
               data-canvas-id={creation.creation_id}
+              data-selected={selected}
+              data-dragging={dragging}
               role="button"
               tabIndex={0}
               aria-pressed={selected}
-              aria-label={selected ? `${creation.prompt || t("free_creation")}, ${t("free_creation_selected")}` : creation.prompt || t("free_creation")}
-              onKeyDown={(event) => handleNodeKeyboard(event, creation.creation_id, selected)}
-              className={`absolute overflow-hidden rounded-md border-2 bg-[var(--color-surface-2)] shadow-[0_16px_30px_-18px_oklch(0_0_0_/_0.95)] ${selected ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent-dim)]" : "border-[var(--color-hairline-strong)]"} ${hidden ? "opacity-55" : ""}`}
-              style={{ left: position.x, top: position.y, width: NODE_WIDTH, height: NODE_HEIGHT }}
+              aria-label={selected ? `${label}, ${statusLabel}, ${t("free_creation_selected")}` : `${label}, ${statusLabel}`}
+              onKeyDown={(event) => {
+                if (event.ctrlKey || event.metaKey) handleReferenceShortcut(event, claim, label);
+                else handleNodeKeyboard(event, creation.creation_id, selected);
+              }}
+              className={`canvas-node-shell group/node absolute overflow-visible rounded-lg outline-none ${hidden ? "opacity-55" : ""}`}
+              style={{ left: position.x, top: position.y, width: NODE_WIDTH, height: nodeHeights[creation.creation_id] ?? NODE_HEIGHT }}
               onPointerDown={(event) => {
                 if (event.button === 0 && spacePressed) {
                   beginCanvasPan(event);
@@ -1991,29 +2172,38 @@ export function FreeCreationInfiniteCanvas({
                   event.preventDefault();
                   return;
                 }
-                if (event.button === 0 && !event.shiftKey && !isNodeControlTarget(event.target)) {
+                if (event.button === 0 && !isNodeControlTarget(event.target)) {
                   beginNodeDrag(event, creation.creation_id);
-                  return;
                 }
-                if (event.button === 0 && !event.shiftKey) publishSelection([creation.creation_id]);
-                else if (event.button === 0 && event.shiftKey) publishSelection(selected ? selectedIds.filter((id) => id !== creation.creation_id) : [...selectedIds, creation.creation_id]);
+              }}
+              onClick={(event) => {
+                if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, claim, label);
               }}
               onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); if (creation.status === "succeeded" && creation.media_path) onPreview?.({ kind: "creation", creation }); }}
               onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (readOnly) return; if (!selectedSet.has(creation.creation_id)) publishSelection([creation.creation_id]); const rect = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "creation", nodeId: creation.creation_id, x: Math.min(Math.max(4, event.clientX - (rect?.left ?? 0)), (rect?.width ?? 260) - 196), y: Math.min(Math.max(4, event.clientY - (rect?.top ?? 0)), (rect?.height ?? 200) - 156) }); }}
             >
-              <div className="flex h-10 items-center justify-between gap-2 border-b border-[var(--color-hairline)] px-3" onPointerDown={(event) => beginNodeDrag(event, creation.creation_id)}>
-                <span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] font-semibold text-[var(--color-text)]"><span className="truncate">{t(`free_creation_${creation.output_type}`)}</span>{creation.sequence_index !== null && creation.sequence_index !== undefined ? <span className="shrink-0 rounded bg-[var(--color-accent-dim)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--color-accent-2)]">{t("free_creation_storyboard_shot_badge", { index: creation.sequence_index + 1 })}</span> : null}</span>
-                <div className="flex items-center gap-1"><span className="text-[10px] text-[var(--color-text-muted)]">{statusLabel}</span>{!readOnly ? <button type="button" className="focus-ring grid h-7 w-7 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.05)]" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); if (!selectedSet.has(creation.creation_id)) publishSelection([creation.creation_id]); const rect = event.currentTarget.getBoundingClientRect(); const surface = surfaceRef.current?.getBoundingClientRect(); const surfaceWidth = surface?.width ?? 260; const surfaceHeight = surface?.height ?? 200; setContextMenu({ kind: "creation", nodeId: creation.creation_id, x: Math.min(Math.max(4, rect.right - (surface?.left ?? 0)), surfaceWidth - 196), y: Math.min(Math.max(4, rect.bottom - (surface?.top ?? 0)), surfaceHeight - 156) }); }} aria-label={t("free_creation_more_actions")} title={t("free_creation_more_actions")}><MoreHorizontal className="h-4 w-4" aria-hidden /></button> : null}</div>
+              {lod === "detail" ? <CanvasNodeLabel label={label} mediaType={mediaType} scale={scale} selected={selected} title={[label, statusLabel, creation.error].filter(Boolean).join(" · ")} onSelect={(additive) => selectNodeLabel(creation.creation_id, selected, additive)} /> : null}
+              <div className="canvas-node-card relative h-full w-full overflow-hidden rounded-lg bg-[var(--color-surface-2)]" data-canvas-drag-surface="true">
+                <CanvasMediaThumbnail
+                  key={`${creation.creation_id}:${creation.version ?? 0}:${creation.status}`}
+                  mediaType={mediaType}
+                  label={label}
+                  src={mediaUrl}
+                  poster={mediaType === "video" && mediaUrl ? API.getFreeCreationCoverUrl(projectName, creation.creation_id, creation.version) : undefined}
+                  pending={["queued", "running", "cancelling"].includes(creation.status)}
+                  failureMessage={creation.status === "failed" ? creation.error || t("free_creation_failed") : creation.status === "cancelled" ? statusLabel : undefined}
+                  mediaId={creation.creation_id}
+                  playLabel={t("free_creation_video_play")}
+                  pauseLabel={t("free_creation_video_pause")}
+                  onIntrinsicSize={(width, height) => rememberMediaDimensions(creation.creation_id, width, height)}
+                  onVideoLoadedMetadata={(video) => restoreVideoPlayback(creation.creation_id, video, 0.1)}
+                  onVideoPlay={(video) => rememberVideoPlayback(creation.creation_id, video)}
+                  onVideoPause={(video) => rememberVideoPlayback(creation.creation_id, video)}
+                  onVideoTimeUpdate={(video) => rememberVideoPlayback(creation.creation_id, video)}
+                />
+                <CanvasNodeStatusDot status={creation.status} label={statusLabel} />
+                {!readOnly ? <div className="canvas-node-actions absolute bottom-2 right-2 z-30 flex items-center gap-0.5 rounded-md bg-black/55 p-0.5 backdrop-blur-sm" onPointerDown={(event) => event.stopPropagation()}>{renderActions(creation)}<button type="button" className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-2)] hover:bg-white/10 hover:text-[var(--color-text)]" onClick={(event) => openNodeMenu(event, "creation", creation.creation_id)} aria-label={t("free_creation_more_actions")} title={t("free_creation_more_actions")}><MoreHorizontal className="h-4 w-4" aria-hidden /></button></div> : null}
               </div>
-              <div role="button" tabIndex={creation.status === "succeeded" && creation.media_path ? 0 : -1} className="h-[174px] bg-black" onClick={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation")); }} onKeyDown={(event) => { if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, { type: "creation", creation_id: creation.creation_id, version: creation.version, role: referenceRole }, creation.prompt || t("free_creation")); }} title={creation.status === "succeeded" && creation.media_path ? t("free_creation_reference_shortcut") : undefined}>
-                {creation.status === "succeeded" && creation.media_path ? mediaType === "video" ? (
-                  <video data-canvas-media-id={creation.creation_id} className="h-full w-full object-contain" src={API.getFreeCreationProxyUrl(projectName, creation.creation_id, creation.version)} poster={API.getFreeCreationCoverUrl(projectName, creation.creation_id, creation.version)} preload="metadata" muted playsInline aria-label={creation.prompt ?? creation.creation_id} controls onLoadedMetadata={(event) => restoreVideoPlayback(creation.creation_id, event.currentTarget, 0.1)} onPlay={(event) => rememberVideoPlayback(creation.creation_id, event.currentTarget)} onPause={(event) => rememberVideoPlayback(creation.creation_id, event.currentTarget)} onTimeUpdate={(event) => rememberVideoPlayback(creation.creation_id, event.currentTarget)} />
-                ) : mediaType === "audio" ? (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 px-4"><AudioLines className="h-8 w-8 text-[var(--color-accent-2)]" aria-hidden /><audio className="w-full" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} preload="none" aria-label={creation.prompt ?? creation.creation_id} controls /></div>
-                ) : <img className="h-full w-full object-contain" src={API.getFreeCreationMediaUrl(projectName, creation.creation_id, creation.version)} alt={creation.prompt ?? creation.creation_id} loading="lazy" decoding="async" /> : <div className="flex h-full items-center justify-center px-3 text-center text-xs leading-5 text-[var(--color-text-muted)]"><span className="line-clamp-5">{creation.status === "failed" ? creation.error || t("free_creation_failed") : statusLabel}</span></div>}
-              </div>
-              <div className="h-[66px] px-3 py-2"><p className="line-clamp-2 text-xs leading-5 text-[var(--color-text-2)]">{creation.prompt || t("free_creation_prompt")}</p>{subtitleCountByCreation.get(creation.creation_id) ? <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-[var(--color-accent-2)]"><Captions className="h-3 w-3" aria-hidden />{t("free_creation_subtitle_badge", { count: subtitleCountByCreation.get(creation.creation_id) })}</span> : null}</div>
-              {!readOnly ? <div className="flex h-10 items-center justify-end gap-0.5 border-t border-[var(--color-hairline)] px-2">{renderActions(creation)}</div> : null}
             </div>
           );
         })}
@@ -2025,29 +2215,30 @@ export function FreeCreationInfiniteCanvas({
           const siblingIndex = subtitleTracks.slice(0, index).filter((item) => item.creation_id === track.creation_id).length;
           const position = subtitlePosition(parent, siblingIndex);
           const cuePreview = track.cues.slice(0, 3);
+          const subtitleLabel = t("free_creation_subtitle_badge", { count: track.cues.length });
           return (
-            <button
-              type="button"
+            <div
               key={`subtitle-node-${track.subtitle_id}`}
               data-canvas-node="true"
-              className="absolute overflow-hidden rounded-md border border-dashed border-[var(--color-accent-2)]/70 bg-[var(--color-surface-2)] text-left shadow-[0_16px_30px_-18px_oklch(0_0_0_/_0.95)]"
+              data-canvas-id={`subtitle:${track.subtitle_id}`}
+              className="canvas-node-shell group/node absolute overflow-visible rounded-lg"
               style={{ left: position.x, top: position.y, width: SUBTITLE_NODE_WIDTH, minHeight: SUBTITLE_NODE_HEIGHT }}
-              onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
-              onClick={() => onEditSubtitle?.(track.creation_id)}
-              aria-label={t("free_creation_subtitle_title")}
             >
-              <div className="flex h-10 items-center gap-2 border-b border-[var(--color-hairline)] px-3 text-xs font-semibold text-[var(--color-text)]">
-                <Captions className="h-3.5 w-3.5 text-[var(--color-accent-2)]" aria-hidden />
-                <span className="min-w-0 flex-1 truncate">{t("free_creation_subtitle_title")}</span>
-                <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{t("free_creation_subtitle_badge", { count: track.cues.length })}</span>
-              </div>
-              <div className="space-y-1 px-3 py-2">
-                {cuePreview.length ? cuePreview.map((cue, cueIndex) => (
-                  <p key={`${track.subtitle_id}-${cueIndex}`} className="line-clamp-2 text-[11px] leading-4 text-[var(--color-text-2)]">{cue.text}</p>
-                )) : <p className="text-[11px] text-[var(--color-text-muted)]">{t("free_creation_subtitle_action")}</p>}
-              </div>
-              <div className="border-t border-[var(--color-hairline)] px-3 py-2 text-[10px] text-[var(--color-text-muted)]">{t("free_creation_subtitle_action")}</div>
-            </button>
+              {lod === "detail" ? <CanvasNodeLabel label={subtitleLabel} mediaType="subtitle" scale={scale} title={t("free_creation_subtitle_title")} onSelect={() => onEditSubtitle?.(track.creation_id)} /> : null}
+              <button
+                type="button"
+                className="canvas-node-card h-full min-h-[166px] w-full overflow-hidden rounded-lg bg-[var(--color-surface-2)] px-4 py-3 text-left"
+                onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
+                onClick={() => onEditSubtitle?.(track.creation_id)}
+                aria-label={t("free_creation_subtitle_title")}
+              >
+                <div className="space-y-2">
+                  {cuePreview.length ? cuePreview.map((cue, cueIndex) => (
+                    <p key={`${track.subtitle_id}-${cueIndex}`} className="line-clamp-2 text-[11px] leading-[17px] text-[var(--color-text-2)]">{cue.text}</p>
+                  )) : <p className="text-[11px] text-[var(--color-text-muted)]">{t("free_creation_subtitle_action")}</p>}
+                </div>
+              </button>
+            </div>
           );
         })}
       </div>
@@ -2061,26 +2252,26 @@ export function FreeCreationInfiniteCanvas({
             {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => arrangeNodes("selected")} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><LayoutGrid className="h-3.5 w-3.5" aria-hidden />{t("free_creation_arrange_selected")}</button> : null}
             {canGroupSelection ? <button type="button" role="menuitem" onClick={groupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Group className="h-3.5 w-3.5" aria-hidden />{t("free_creation_group_selected")}</button> : null}
             {activeContextGroup ? <button type="button" role="menuitem" onClick={ungroupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Ungroup className="h-3.5 w-3.5" aria-hidden />{t("free_creation_ungroup")}</button> : null}
-            {showBatchDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes(deletableCreationIds, selectedUploadIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete_selected", { count: contextSelectionIds.length })}</button> : null}
             {selectedReferences.length >= 2 && selectedSet.has(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => { if (onReferences) onReferences(selectedReferences); else selectedReferences.forEach(({ claim, label }) => onReference(claim, label)); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_selected_references", { count: selectedReferences.length })}</button> : null}
             {onMerge && selectedMergeIds.length >= 2 && selectedMergeIds.includes(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => { onMerge(selectedMergeIds); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Clapperboard className="h-3.5 w-3.5" aria-hidden />{t("free_creation_merge_selected")}</button> : null}
             {onCompositeAudio && audioCompositePair ? <button type="button" role="menuitem" onClick={() => { onCompositeAudio(audioCompositePair.videoId, audioCompositePair.audioId); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><AudioLines className="h-3.5 w-3.5" aria-hidden />{t("free_creation_composite_audio")}</button> : null}
-            {showSingleCreationDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes([activeContextCreation.creation_id], [])} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path && creationMediaType(activeContextCreation) === "image" ? <button type="button" role="menuitem" onClick={() => { onEdit(activeContextCreation.creation_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Pencil className="h-3.5 w-3.5" aria-hidden />{t("free_creation_use_as_parent")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onPreview?.({ kind: "creation", creation: activeContextCreation }); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_preview")}</button> : null}
             {contextSelectionIds.length < 2 && activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onReference({ type: "creation", creation_id: activeContextCreation.creation_id, version: activeContextCreation.version, role: creationReferenceRole(activeContextCreation) }, activeContextCreation.prompt || t("free_creation")); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button> : null}
             {contextSelectionIds.length < 2 ? (hiddenSet.has(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => restoreCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore")}</button> : <button type="button" role="menuitem" onClick={() => hideCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide")}</button>) : null}
+            {showBatchDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes(deletableCreationIds, selectedUploadIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete_selected", { count: contextSelectionIds.length })}</button> : null}
+            {showSingleCreationDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes([activeContextCreation.creation_id], [])} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete")}</button> : null}
           </> : null}
           {activeContextUpload ? <>
             {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => contextSelectionIsHidden ? restoreNodes(contextSelectionIds) : hideNodes(contextSelectionIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]">{contextSelectionIsHidden ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}{t(contextSelectionIsHidden ? "free_creation_restore" : "free_creation_hide")}</button> : null}
             {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => arrangeNodes("selected")} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><LayoutGrid className="h-3.5 w-3.5" aria-hidden />{t("free_creation_arrange_selected")}</button> : null}
             {canGroupSelection ? <button type="button" role="menuitem" onClick={groupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Group className="h-3.5 w-3.5" aria-hidden />{t("free_creation_group_selected")}</button> : null}
             {activeContextGroup ? <button type="button" role="menuitem" onClick={ungroupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Ungroup className="h-3.5 w-3.5" aria-hidden />{t("free_creation_ungroup")}</button> : null}
-            {showBatchDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes(deletableCreationIds, selectedUploadIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete_selected", { count: contextSelectionIds.length })}</button> : null}
             {selectedReferences.length >= 2 && selectedSet.has(activeContextUpload.reference_id) ? <button type="button" role="menuitem" onClick={() => { if (onReferences) onReferences(selectedReferences); else selectedReferences.forEach(({ claim, label }) => onReference(claim, label)); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_selected_references", { count: selectedReferences.length })}</button> : null}
             <button type="button" role="menuitem" onClick={() => { onPreview?.({ kind: "upload", upload: activeContextUpload }); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_preview")}</button>
             {contextSelectionIds.length < 2 ? <button type="button" role="menuitem" onClick={() => { onReference({ type: "upload", reference_id: activeContextUpload.reference_id, role: freeCreationUploadRole(activeContextUpload.media_type) }, activeContextUpload.original_filename); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button> : null}
             {contextSelectionIds.length < 2 && (hiddenUploadSet.has(activeContextUpload.reference_id) ? <button type="button" role="menuitem" onClick={() => restoreUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore")}</button> : <button type="button" role="menuitem" onClick={() => hideUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide")}</button>)}
+            {showBatchDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes(deletableCreationIds, selectedUploadIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete_selected", { count: contextSelectionIds.length })}</button> : null}
             {showSingleUploadDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes([], [activeContextUpload.reference_id])} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete")}</button> : null}
           </> : null}
         </div>

@@ -38,7 +38,8 @@ describe("free creation canvas engine", () => {
     expect(selectCanvasLod({ projectedNodeWidth: 150, visibleCount: 80, previous: "detail" })).toBe("detail");
     expect(selectCanvasLod({ projectedNodeWidth: 100, visibleCount: 80, previous: "detail" })).toBe("overview");
     expect(selectCanvasLod({ projectedNodeWidth: 120, visibleCount: 80, previous: "overview" })).toBe("overview");
-    expect(selectCanvasLod({ projectedNodeWidth: 132, visibleCount: 80, previous: "overview" })).toBe("detail");
+    expect(selectCanvasLod({ projectedNodeWidth: 132, visibleCount: 80, previous: "overview" })).toBe("overview");
+    expect(selectCanvasLod({ projectedNodeWidth: 150, visibleCount: 80, previous: "overview" })).toBe("detail");
     expect(selectCanvasLod({ projectedNodeWidth: 150, visibleCount: 161, previous: "detail" })).toBe("overview");
     expect(selectCanvasLod({ projectedNodeWidth: 48, visibleCount: 2_000, previous: "overview" })).toBe("compact");
   });

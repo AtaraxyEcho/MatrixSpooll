@@ -138,6 +138,8 @@ export default {
   'free_creation_reference_role_prompt_context': '提示词上下文',
   'free_creation_reference_shortcut': 'Ctrl/Cmd + 点击引用到创作框，双击预览',
   'free_creation_preview': '预览',
+  'free_creation_video_play': '播放视频',
+  'free_creation_video_pause': '暂停视频',
   'free_creation_preview_close': '关闭预览',
   'free_creation_preview_loading': '正在加载预览…',
   'free_creation_preview_unavailable': '该文件暂不支持在线预览，请下载后查看',
