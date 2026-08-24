@@ -260,6 +260,31 @@ class CanvasStateUpdate(BaseModel):
             raise ValueError("canvas position ids must identify creations or references")
         return value
 
+    @field_validator("hidden_creation_ids")
+    @classmethod
+    def validate_hidden_ids(cls, value: list[str]) -> list[str]:
+        if any(not item.startswith("c_") for item in value):
+            raise ValueError("hidden ids must identify creations")
+        return value
+
+    @field_validator("hidden_reference_ids")
+    @classmethod
+    def validate_hidden_reference_ids(cls, value: list[str]) -> list[str]:
+        if any(not item.startswith("r_") for item in value):
+            raise ValueError("hidden reference ids must identify uploads")
+        return value
+
+    @field_validator("groups")
+    @classmethod
+    def validate_groups(cls, value: list[CanvasGroup]) -> list[CanvasGroup]:
+        group_ids = [group.group_id for group in value]
+        if len(group_ids) != len(set(group_ids)):
+            raise ValueError("canvas group ids must be unique")
+        members = [member for group in value for member in group.member_ids]
+        if len(members) != len(set(members)):
+            raise ValueError("a canvas item can belong to only one group")
+        return value
+
 
 class CanvasPatchUpdate(BaseModel):
     patch_id: UUID
@@ -321,31 +346,6 @@ class CanvasPatchUpdate(BaseModel):
         ):
             raise ValueError("canvas patch requires at least one operation")
         return self
-
-    @field_validator("hidden_creation_ids")
-    @classmethod
-    def validate_hidden_ids(cls, value: list[str]) -> list[str]:
-        if any(not item.startswith("c_") for item in value):
-            raise ValueError("hidden ids must identify creations")
-        return value
-
-    @field_validator("hidden_reference_ids")
-    @classmethod
-    def validate_hidden_reference_ids(cls, value: list[str]) -> list[str]:
-        if any(not item.startswith("r_") for item in value):
-            raise ValueError("hidden reference ids must identify uploads")
-        return value
-
-    @field_validator("groups")
-    @classmethod
-    def validate_groups(cls, value: list[CanvasGroup]) -> list[CanvasGroup]:
-        group_ids = [group.group_id for group in value]
-        if len(group_ids) != len(set(group_ids)):
-            raise ValueError("canvas group ids must be unique")
-        members = [member for group in value for member in group.member_ids]
-        if len(members) != len(set(members)):
-            raise ValueError("a canvas item can belong to only one group")
-        return value
 
 
 class FreeCreationExportRequest(BaseModel):
