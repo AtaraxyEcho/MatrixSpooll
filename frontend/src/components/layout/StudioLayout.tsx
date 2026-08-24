@@ -34,6 +34,7 @@ export function StudioLayout({ children }: StudioLayoutProps) {
   const { t } = useTranslation("dashboard");
   const [, setLocation] = useLocation();
   const currentProjectName = useProjectsStore((s) => s.currentProjectName);
+  const currentProjectId = useProjectsStore((s) => s.currentProjectId);
   // 演示项目在后端不存在：任务 / 项目事件流和助手都是真实写路径，演示态下整条都不接
   const demoMode = useDemoWorkbench();
   const assistantPanelOpen = useAppStore((s) => s.assistantPanelOpen);
@@ -69,8 +70,9 @@ export function StudioLayout({ children }: StudioLayoutProps) {
   // 同步这一判定，否则该帧会退化成对全局任务的轮询而非真正停用。
   const isEffectivelyDemo = demoMode || isDemoProject(currentProjectName);
   const sseProjectName = isEffectivelyDemo ? null : currentProjectName;
+  const sseProjectId = isEffectivelyDemo ? null : currentProjectId;
   useTaskRefresh(sseProjectName, !isEffectivelyDemo);
-  useProjectEventsSSE(sseProjectName);
+  useProjectEventsSSE(sseProjectId);
 
   const restoreBodyStyle = useCallback(() => {
     const saved = restoreBodyStyleRef.current;

@@ -379,9 +379,7 @@ export interface ShotUploadResult {
 }
 
 export interface ProjectEventStreamOptions {
-  project?: ProjectRef;
-  /** @deprecated use project; kept for old callers during the migration. */
-  projectName?: string;
+  projectId: string;
   onSnapshot?: (payload: ProjectEventSnapshotPayload, event: MessageEvent) => void;
   onChanges?: (payload: ProjectChangeBatchPayload, event: MessageEvent) => void;
   /** 项目目录被删除后收到一次，随后流正常结束（浏览器会紧接着触发一次 onError）。 */
@@ -2755,10 +2753,8 @@ class API {
   }
 
   static openProjectEventStream(options: ProjectEventStreamOptions): EventSource {
-    const project = options.project ?? options.projectName;
-    if (!project) throw new Error("Project identity is required for event stream");
     const url = withAuthQuery(
-      `${API_BASE}/projects/${projectPathSegment(project)}/events/stream`
+      `${API_BASE}/projects/${encodeURIComponent(options.projectId)}/events/stream`
     );
     const source = new EventSource(url);
 

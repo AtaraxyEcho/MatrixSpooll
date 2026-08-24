@@ -6,8 +6,6 @@ import {
   buildCanvasDependencyEdges,
   createCanvasGroupId,
   createCanvasPatchId,
-  dependencyLane,
-  dependencyPath,
   FreeCreationInfiniteCanvas,
 } from "@/components/canvas/FreeCreationInfiniteCanvas";
 import i18n from "@/i18n";
@@ -121,6 +119,9 @@ describe("FreeCreationInfiniteCanvas", () => {
     expect(video?.getAttribute("poster")).toContain(
       "/projects/demo/creations/c_0123456789abcdef0123/cover?v=3",
     );
+    Object.defineProperty(video, "duration", { configurable: true, value: 12 });
+    fireEvent.loadedMetadata(video!);
+    expect(video?.currentTime).toBe(0.1);
   });
 
   it("keeps the default cursor, reserves blank left drag for selection, and pans with the middle button", async () => {
@@ -558,26 +559,6 @@ describe("FreeCreationInfiniteCanvas", () => {
     expect(arranged[target.creation_id].y).toBe(88);
   });
 
-  it("routes relations with straight segments instead of curved paths", () => {
-    const source = { x: 0, y: 0, width: 100, height: 80 };
-    const target = { x: 240, y: 120, width: 100, height: 80 };
-    const path = dependencyPath(source, target, 0);
-
-    expect(path).toBe("M 100 40 L 170 40 L 170 160 L 240 160");
-    expect(path).not.toMatch(/[CSQ]/);
-  });
-
-  it("assigns relation lanes per target instead of using the global edge order", () => {
-    const edges = [
-      { sourceId: "c_source_b", targetId: "c_target" },
-      { sourceId: "c_other", targetId: "c_other_target" },
-      { sourceId: "c_source_a", targetId: "c_target" },
-    ];
-
-    expect(dependencyLane(edges[2], edges)).toBe(0);
-    expect(dependencyLane(edges[0], edges)).toBe(-1);
-  });
-
   it("arranges the canvas from the toolbar and keeps the change undoable", async () => {
     const source: FreeCreation = { ...creation, creation_id: "c_source0123456789abcd", prompt: "source" };
     const target: FreeCreation = {
@@ -830,6 +811,7 @@ describe("FreeCreationInfiniteCanvas", () => {
         label: second.prompt,
       },
     ]);
+    expect(screen.queryByRole("menuitem", { name: t("free_creation_add_reference") })).not.toBeInTheDocument();
   });
 
   it("hides every item in a multi-selection from one context action", async () => {
@@ -1035,6 +1017,9 @@ describe("FreeCreationInfiniteCanvas", () => {
     fireEvent.wheel(surface, { deltaY: -100, altKey: true });
     await waitFor(() => expect(screen.getByText("120%")).toBeInTheDocument());
 
+    fireEvent.wheel(surface, { deltaY: 10_000, altKey: true });
+    await waitFor(() => expect(screen.getByText("40%")).toBeInTheDocument());
+
     const browserZoom = new WheelEvent("wheel", {
       bubbles: true,
       cancelable: true,
@@ -1043,7 +1028,23 @@ describe("FreeCreationInfiniteCanvas", () => {
     });
     surface.dispatchEvent(browserZoom);
     expect(browserZoom.defaultPrevented).toBe(true);
-    expect(screen.getByText("120%")).toBeInTheDocument();
+    expect(screen.getByText("40%")).toBeInTheDocument();
+  });
+
+  it("clamps a legacy saved viewport to the 40% minimum zoom", async () => {
+    vi.mocked(API.getFreeCreationCanvas).mockResolvedValue({
+      canvas: {
+        revision: 1,
+        viewport: { x: 0, y: 0, scale: 0.05 },
+        positions: {},
+        hidden_creation_ids: [],
+        updated_at: null,
+      },
+    });
+
+    renderCanvas();
+
+    expect(await screen.findByText("40%")).toBeInTheDocument();
   });
 
   it("uses Ctrl/Cmd-click for references and double-click for previews", async () => {

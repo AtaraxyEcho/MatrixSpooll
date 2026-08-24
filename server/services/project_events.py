@@ -80,6 +80,7 @@ def _change_identity(change: dict[str, Any]) -> tuple[Any, Any, Any]:
 @dataclass
 class _ProjectChannel:
     sse: SseChannel
+    storage_key: str = ""
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     scan_now: asyncio.Event = field(default_factory=asyncio.Event)
     # 串行化「读盘 → 结算基线 → 广播」这段读-改-写：轮询扫描与显式重建并发时，读盘耗时
@@ -112,6 +113,7 @@ class ProjectEventService:
         self.pm = ProjectManager(projects_dir)
         self.poll_interval = max(0.1, float(poll_interval))
         self._channels: dict[str, _ProjectChannel] = {}
+        self._project_storage_keys: dict[str, str] = {}
         self._listener_unregister = None
         self._batch_listener_unregister = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -142,22 +144,23 @@ class ProjectEventService:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._pending_batch_tasks.clear()
         self._channels.clear()
+        self._project_storage_keys.clear()
         self._loop = None
 
-    def _create_channel(self, project_name: str) -> _ProjectChannel:
+    def _create_channel(self, project_id: str, storage_key: str) -> _ProjectChannel:
         """构造项目通道：溢出策略「移除订阅者」，首/末订阅者钩子启停后台扫描。"""
         sse = SseChannel(
             overflow=DropSubscriber(
                 on_removed=lambda count: logger.warning(
                     "项目事件订阅队列溢出，移除 %s 个订阅者 project=%s",
                     count,
-                    project_name,
+                    project_id,
                 ),
             ),
-            on_first_subscriber=lambda: self._start_watch(project_name),
-            on_last_subscriber=lambda: self._stop_watch(project_name),
+            on_first_subscriber=lambda: self._start_watch(project_id),
+            on_last_subscriber=lambda: self._stop_watch(project_id),
         )
-        return _ProjectChannel(sse=sse)
+        return _ProjectChannel(sse=sse, storage_key=storage_key)
 
     def _start_watch(self, project_name: str) -> None:
         """首订阅者钩子：启动（或重启已自行退出的）后台扫描任务。
@@ -188,22 +191,40 @@ class ProjectEventService:
         channel = self._channels.pop(project_name, None)
         if channel is None:
             return
+        self._project_storage_keys.pop(project_name, None)
         task = channel.task
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
-    async def _subscribe(self, project_name: str) -> tuple[SseChannel, asyncio.Queue, dict[str, Any]]:
-        """Register a queue for *project_name* and return it with the initial snapshot.
+    async def prepare_project(self, project_id: str, storage_key: str) -> None:
+        """Bind an immutable project UUID to its physical directory and validate it."""
+
+        existing_storage_key = self._project_storage_keys.get(project_id)
+        if existing_storage_key is not None and existing_storage_key != storage_key:
+            raise RuntimeError(f"project storage identity changed while subscribed: {project_id}")
+        self.pm.register_project_id_alias(project_id, storage_key, storage_key)
+        await asyncio.to_thread(self.pm.get_project_path, project_id)
+        self._project_storage_keys[project_id] = storage_key
+
+    async def _subscribe(
+        self,
+        project_id: str,
+        storage_key: str | None = None,
+    ) -> tuple[SseChannel, asyncio.Queue, dict[str, Any]]:
+        """Register a queue for *project_id* and return it with the initial snapshot.
 
         Private: the only consumer is :meth:`stream_events`, which owns the
         deterministic unsubscribe via its context-manager ``__aexit__``.
         """
-        await asyncio.to_thread(self.pm.get_project_path, project_name)
-        channel = self._channels.get(project_name)
+        resolved_storage_key = storage_key or project_id
+        await self.prepare_project(project_id, resolved_storage_key)
+        channel = self._channels.get(project_id)
         if channel is None:
-            channel = self._create_channel(project_name)
-            self._channels[project_name] = channel
+            channel = self._create_channel(project_id, resolved_storage_key)
+            self._channels[project_id] = channel
+        elif channel.storage_key != resolved_storage_key:
+            raise RuntimeError(f"project storage identity changed while subscribed: {project_id}")
 
         # 队列在首次扫描启动前注册(首订阅者钩子在注册后触发)，否则会漏掉
         # 扫描完成到注册之间广播的事件。
@@ -218,9 +239,10 @@ class ProjectEventService:
             # 收尾自理。
             if channel.sse.unsubscribe_nowait(queue) and channel.task is not None:
                 channel.task.cancel()
-                self._channels.pop(project_name, None)
+                self._channels.pop(project_id, None)
+                self._project_storage_keys.pop(project_id, None)
             raise
-        return channel.sse, queue, self._build_snapshot_payload(project_name, channel)
+        return channel.sse, queue, self._build_snapshot_payload(project_id, channel)
 
     async def _unsubscribe(self, project_name: str, queue: asyncio.Queue) -> None:
         """Remove a queue; the last-subscriber hook stops the watch task."""
@@ -231,7 +253,11 @@ class ProjectEventService:
 
     @contextlib.asynccontextmanager
     async def stream_events(
-        self, project_name: str, *, idle_timeout: float = 1.0
+        self,
+        project_id: str,
+        *,
+        storage_key: str | None = None,
+        idle_timeout: float = 1.0,
     ) -> AsyncIterator[AsyncIterator[tuple[str, Any] | dict[str, Any]]]:
         """Subscribe to a project's events as a self-cleaning async iterator.
 
@@ -248,7 +274,7 @@ class ProjectEventService:
         carried by ``__aexit__`` (see ADR-0005). Consume as
         ``async with stream_events(...) as stream: async for item in stream``.
         """
-        sse, queue, snapshot = await self._subscribe(project_name)
+        sse, queue, snapshot = await self._subscribe(project_id, storage_key or project_id)
 
         async def _iter() -> AsyncIterator[tuple[str, Any] | dict[str, Any]]:
             # NOTE: intentionally NO ``finally: _unsubscribe`` here — cleanup is owned
@@ -263,11 +289,11 @@ class ProjectEventService:
         try:
             yield _iter()
         finally:
-            await self._unsubscribe(project_name, queue)
+            await self._unsubscribe(project_id, queue)
 
     def _on_hint(
         self,
-        project_name: str,
+        project_reference: str,
         source: ProjectChangeSource,
         changed_paths: tuple[str, ...],
     ) -> None:
@@ -275,15 +301,15 @@ class ProjectEventService:
         if loop is None or loop.is_closed():
             return
         loop.call_soon_threadsafe(
-            self._apply_hint,
-            project_name,
+            self._dispatch_hint,
+            project_reference,
             source,
             changed_paths,
         )
 
     def _on_batch_hint(
         self,
-        project_name: str,
+        project_reference: str,
         source: ProjectChangeSource,
         changes: tuple[ProjectChangeBatch, ...],
     ) -> None:
@@ -291,11 +317,39 @@ class ProjectEventService:
         if loop is None or loop.is_closed():
             return
         loop.call_soon_threadsafe(
-            self._apply_emitted_batch,
-            project_name,
+            self._dispatch_batch_hint,
+            project_reference,
             source,
             changes,
         )
+
+    def _dispatch_hint(
+        self,
+        project_reference: str,
+        source: ProjectChangeSource,
+        changed_paths: tuple[str, ...],
+    ) -> None:
+        for project_id in self._project_ids_for_hint(project_reference):
+            self._apply_hint(project_id, source, changed_paths)
+
+    def _dispatch_batch_hint(
+        self,
+        project_reference: str,
+        source: ProjectChangeSource,
+        changes: tuple[ProjectChangeBatch, ...],
+    ) -> None:
+        for project_id in self._project_ids_for_hint(project_reference):
+            self._apply_emitted_batch(project_id, source, changes)
+
+    def _project_ids_for_hint(self, project_reference: str) -> tuple[str, ...]:
+        """Map a project UUID or physical storage key to subscribed UUIDs."""
+
+        matches = [
+            project_id
+            for project_id, storage_key in self._project_storage_keys.items()
+            if project_reference == project_id or project_reference == storage_key
+        ]
+        return tuple(dict.fromkeys(matches))
 
     def _apply_hint(
         self,
@@ -357,7 +411,7 @@ class ProjectEventService:
                 channel.pending_sources = set()
                 try:
                     snapshot, fingerprint = await asyncio.to_thread(self._rebuild_snapshot, project_name)
-                except FileNotFoundError:
+                except (FileNotFoundError, ValueError):
                     channel.pending_sources |= covered_sources
                     await self._handle_scan_file_not_found(
                         project_name, channel, log_message="构建显式项目事件快照失败 project=%s"
@@ -458,6 +512,9 @@ class ProjectEventService:
             self.pm.get_project_path(project_name)
         except FileNotFoundError:
             return True
+        except ValueError:
+            storage_key = self._project_storage_keys.get(project_name, project_name)
+            return not (self.pm.projects_root / storage_key).is_dir()
         return False
 
     def _handle_project_deleted(self, project_name: str, channel: _ProjectChannel) -> None:
@@ -470,6 +527,7 @@ class ProjectEventService:
         if self._channels.get(project_name) is not channel:
             return
         self._channels.pop(project_name, None)
+        self._project_storage_keys.pop(project_name, None)
         channel.sse.broadcast((PROJECT_DELETED_EVENT, {"project_name": project_name}))
         logger.info("项目已被删除，终止事件流 project=%s", project_name)
         task = channel.task
@@ -502,7 +560,7 @@ class ProjectEventService:
                         self._apply_scan_result(project_name, channel, snapshot, fingerprint)
                 except asyncio.CancelledError:
                     raise
-                except FileNotFoundError:
+                except (FileNotFoundError, ValueError):
                     if await self._handle_scan_file_not_found(
                         project_name, channel, log_message="项目事件扫描失败 project=%s"
                     ):

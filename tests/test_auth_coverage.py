@@ -35,7 +35,7 @@ SELF_AUTH_OPERATIONS = frozenset(
     {
         "GET /api/v1/projects/{project_name}/assistant/sessions/{session_id}/entries/stream",
         "GET /api/v1/projects/{project_name}/assistant/sessions/{session_id}/stream",
-        "GET /api/v1/projects/{project_name}/events/stream",
+        "GET /api/v1/projects/{project_id}/events/stream",
         "GET /api/v1/projects/{name}/export",
         "GET /api/v1/projects/{name}/export/jianying-draft",
     }

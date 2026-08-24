@@ -4,7 +4,6 @@ import {
   clampCameraToBounds,
   computeContentBounds,
   fitCameraToBounds,
-  orthogonalEdgePoints,
   selectCanvasLod,
 } from "@/components/canvas/free-creation/canvas-engine";
 
@@ -67,17 +66,4 @@ describe("free creation canvas engine", () => {
     )).toEqual({ x: 275, y: 165, scale: 0.45 });
   });
 
-  it("connects horizontally aligned nodes at their facing edges in both directions", () => {
-    const left = { minX: 10, minY: 20, maxX: 110, maxY: 120 };
-    const right = { minX: 300, minY: 20, maxX: 400, maxY: 120 };
-
-    expect(orthogonalEdgePoints(left, right, 0)).toEqual([
-      { x: 110, y: 70 },
-      { x: 300, y: 70 },
-    ]);
-    expect(orthogonalEdgePoints(right, left, 0)).toEqual([
-      { x: 300, y: 70 },
-      { x: 110, y: 70 },
-    ]);
-  });
 });
