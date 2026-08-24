@@ -10,6 +10,7 @@ from typing import Any
 from lib.formal_write import formal_write_transaction, project_metadata_lock
 from lib.json_io import atomic_write_json, load_json_or_none
 from lib.path_safety import safe_join
+from server.services.free_creation_index import invalidate_free_creation_index
 from server.services.free_creation_tasks import creation_metadata_path
 
 
@@ -62,6 +63,7 @@ def delete_free_creation_items(
                 atomic_write_json(path, {**record, "deleted_at": record.get("deleted_at") or deleted_at})
             for path, record in reference_records:
                 atomic_write_json(path, {**record, "deleted_at": record.get("deleted_at") or deleted_at})
+        invalidate_free_creation_index(project_path)
 
     return {
         "creation_ids": unique_creation_ids,

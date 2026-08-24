@@ -442,6 +442,7 @@ def save_canvas_state(
         if all(current.get(key) == value for key, value in shared_values.items()):
             return current
         payload = {
+            **current,
             "revision": revision + 1,
             **shared_values,
             "updated_at": _now(),

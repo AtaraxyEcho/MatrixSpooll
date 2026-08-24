@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from server.services.free_creation_deletion import delete_free_creation_items
+from server.services.free_creation_index import load_free_creation_index
 from server.services.free_creation_tasks import list_creation_metadata, load_creation_metadata, write_creation_metadata
 from server.services.free_creation_workspace import list_reference_uploads, save_reference_upload
 
@@ -48,3 +49,18 @@ def test_delete_free_creation_items_rejects_the_whole_selection_before_writing(t
     assert terminal is not None and terminal.get("deleted_at") is None
     assert active is not None and active.get("deleted_at") is None
     assert [item["reference_id"] for item in list_reference_uploads(tmp_path)] == [reference["reference_id"]]
+
+
+def test_delete_free_creation_items_invalidates_the_cached_index(tmp_path: Path) -> None:
+    creation_id = "c_0123456789abcdef0123"
+    write_creation_metadata(tmp_path, creation_id, {"creation_id": creation_id, "status": "succeeded"})
+    reference = save_reference_upload(tmp_path, original_filename="opening.png", content=b"png")
+    assert load_free_creation_index(tmp_path)["total"] == 2
+
+    delete_free_creation_items(
+        tmp_path,
+        creation_ids=[creation_id],
+        reference_ids=[reference["reference_id"]],
+    )
+
+    assert load_free_creation_index(tmp_path)["total"] == 0
