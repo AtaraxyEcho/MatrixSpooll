@@ -123,7 +123,7 @@ export function CanvasSceneLayer({
         const nodeHeight = node.maxY - node.minY;
         context.fillStyle = "rgba(24, 29, 36, 0.96)";
         context.fillRect(node.minX, node.minY, nodeWidth, nodeHeight);
-        if (lod === "overview" && node.thumbnailUrl) {
+        if (node.thumbnailUrl) {
           let image = imageCache.get(node.thumbnailUrl);
           if (!image) {
             image = new Image();
@@ -157,7 +157,7 @@ export function CanvasSceneLayer({
       disposed = true;
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [camera, edges, groups, lod, nodes, selectedIds, showRelations, viewport]);
+  }, [camera.scale, camera.x, camera.y, edges, groups, lod, nodes, selectedIds, showRelations, viewport]);
 
   return <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden />;
 }

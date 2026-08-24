@@ -14,6 +14,7 @@ import {
   Link2,
   Loader2,
   LocateFixed,
+  Magnet,
   Maximize2,
   MoreHorizontal,
   Pencil,
@@ -40,8 +41,10 @@ import {
   clampCameraToBounds,
   computeContentBounds,
   fitCameraToBounds,
+  snapCanvasPositions,
   selectCanvasLod,
   viewportWorldRect,
+  type CanvasSnapGuide,
   type CanvasLod,
 } from "@/components/canvas/free-creation/canvas-engine";
 import {
@@ -523,7 +526,7 @@ export function FreeCreationInfiniteCanvas({
   const nativeNodeDragRef = useRef(false);
   const mediaPlaybackRef = useRef(new Map<string, { currentTime: number; playing: boolean }>());
   const pointerFrameRef = useRef<number | null>(null);
-  const pendingPointerRef = useRef<{ pointerId: number; clientX: number; clientY: number } | null>(null);
+  const pendingPointerRef = useRef<{ pointerId: number; clientX: number; clientY: number; altKey: boolean } | null>(null);
   const historyRef = useRef(new CanvasCommandHistory<CanvasHistoryState>({
     maxCommands: 50,
     maxBytes: 16 * 1024 * 1024,
@@ -549,11 +552,14 @@ export function FreeCreationInfiniteCanvas({
   const [hydratedProject, setHydratedProject] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [snapGuides, setSnapGuides] = useState<CanvasSnapGuide[]>([]);
   const [groups, setGroups] = useState<CanvasGroup[]>([]);
   const [showRelations, setShowRelations] = useState(true);
   const [viewportAnimating, setViewportAnimating] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 1280, height: 720 });
   const [lod, setLod] = useState<CanvasLod>("detail");
+  const camera = useMemo(() => ({ x: pan.x, y: pan.y, scale }), [pan.x, pan.y, scale]);
   const canvasEvents = useFreeCreationStore((state) => state.canvasEvents);
   const canvasReady = hydratedProject === projectName;
 
@@ -1445,10 +1451,11 @@ export function FreeCreationInfiniteCanvas({
     return spatialIndex.search({ minX: worldX - 1, minY: worldY - 1, maxX: worldX + 1, maxY: worldY + 1 })[0] ?? null;
   }, [pan.x, pan.y, scale, spatialIndex]);
 
-  const applyPointerUpdate = (pointerId: number, clientX: number, clientY: number) => {
+  const applyPointerUpdate = (pointerId: number, clientX: number, clientY: number, snapDisabled = false) => {
     const operation = pointerRef.current;
     if (!operation || operation.pointerId !== pointerId) return;
     if (operation.kind === "pan") {
+      setSnapGuides([]);
       setPan({
         x: operation.origin.x + clientX - operation.start.x,
         y: operation.origin.y + clientY - operation.start.y,
@@ -1461,10 +1468,16 @@ export function FreeCreationInfiniteCanvas({
       const updates = Object.fromEntries(
         Object.entries(operation.origins).map(([id, origin]) => [id, { x: origin.x + dx, y: origin.y + dy }]),
       );
-      positionsRef.current = { ...positionsRef.current, ...updates };
+      const snapped = snapCanvasPositions(operation.origins, updates, canvasNodes, {
+        scale,
+        enabled: snapEnabled && !snapDisabled,
+      });
+      positionsRef.current = { ...positionsRef.current, ...snapped.positions };
+      setSnapGuides(snapped.guides);
       setPositions(positionsRef.current);
       return;
     }
+    setSnapGuides([]);
     const current = { x: clientX, y: clientY };
     pointerRef.current = { ...operation, current };
     setMarquee({ start: operation.start, current });
@@ -1473,13 +1486,13 @@ export function FreeCreationInfiniteCanvas({
   const updatePointer = (event: React.PointerEvent<HTMLDivElement>) => {
     const operation = pointerRef.current;
     if (!operation || operation.pointerId !== event.pointerId) return;
-    pendingPointerRef.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY };
+    pendingPointerRef.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, altKey: event.altKey };
     if (pointerFrameRef.current !== null) return;
     pointerFrameRef.current = window.requestAnimationFrame(() => {
       pointerFrameRef.current = null;
       const pending = pendingPointerRef.current;
       pendingPointerRef.current = null;
-      if (pending) applyPointerUpdate(pending.pointerId, pending.clientX, pending.clientY);
+      if (pending) applyPointerUpdate(pending.pointerId, pending.clientX, pending.clientY, pending.altKey);
     });
   };
 
@@ -1489,7 +1502,7 @@ export function FreeCreationInfiniteCanvas({
       pointerFrameRef.current = null;
     }
     pendingPointerRef.current = null;
-    applyPointerUpdate(event.pointerId, event.clientX, event.clientY);
+    applyPointerUpdate(event.pointerId, event.clientX, event.clientY, event.altKey);
     const operation = pointerRef.current;
     if (!operation || operation.pointerId !== event.pointerId) return;
     if (operation.kind === "marquee") {
@@ -1508,6 +1521,7 @@ export function FreeCreationInfiniteCanvas({
       }).map((node) => node.id);
       publishSelection(operation.additive ? [...new Set([...selectedIds, ...hitIds])] : hitIds);
     } else if (operation.kind === "nodes") {
+      setSnapGuides([]);
       const moved = Object.entries(operation.origins).some(([id, origin]) => {
         const current = positionsRef.current[id];
         return current && (current.x !== origin.x || current.y !== origin.y);
@@ -1532,6 +1546,7 @@ export function FreeCreationInfiniteCanvas({
       setPan({ x: next.x, y: next.y });
     }
     pointerRef.current = null;
+    setSnapGuides([]);
     setMarquee(null);
   };
 
@@ -1889,6 +1904,7 @@ export function FreeCreationInfiniteCanvas({
         <button type="button" onClick={() => fitView("all")} disabled={!canvasNodes.length} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40" title={t("free_creation_fit_all")} aria-label={t("free_creation_fit_all")}><Maximize2 className="h-4 w-4" aria-hidden /></button>
         <button type="button" onClick={() => fitView("selected")} disabled={!selectedBounds} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40" title={t("free_creation_fit_selected")} aria-label={t("free_creation_fit_selected")}><ScanSearch className="h-4 w-4" aria-hidden /></button>
         <button type="button" onClick={() => arrangeNodes("all")} disabled={readOnly || allNodes.length < 1} className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40" title={t("free_creation_arrange_all")} aria-label={t("free_creation_arrange_all")}><LayoutGrid className="h-4 w-4" aria-hidden /></button>
+        <button type="button" onClick={() => setSnapEnabled((value) => !value)} className={`focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${snapEnabled ? "bg-[var(--color-accent-dim)] text-[var(--color-accent-2)]" : ""}`} title={t(snapEnabled ? "free_creation_snap_disable" : "free_creation_snap_enable")} aria-label={t(snapEnabled ? "free_creation_snap_disable" : "free_creation_snap_enable")} aria-pressed={snapEnabled}><Magnet className="h-4 w-4" aria-hidden /></button>
         <button type="button" onClick={toggleRelations} className={`focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${showRelations ? "bg-[var(--color-accent-dim)] text-[var(--color-accent-2)]" : ""}`} title={t(showRelations ? "free_creation_hide_relations" : "free_creation_show_relations")} aria-label={t(showRelations ? "free_creation_hide_relations" : "free_creation_show_relations")}><Link2 className="h-4 w-4" aria-hidden /></button>
         <div className="relative">
           <button
@@ -1915,6 +1931,7 @@ export function FreeCreationInfiniteCanvas({
                   [t("free_creation_shortcut_move"), t("free_creation_shortcut_combo_move")],
                   [t("free_creation_shortcut_pan"), t("free_creation_shortcut_combo_pan")],
                   [t("free_creation_shortcut_zoom"), t("free_creation_shortcut_combo_zoom")],
+                  [t("free_creation_shortcut_snap"), t("free_creation_shortcut_combo_snap")],
                 ].map(([label, shortcut]) => (
                   <div key={label} className="flex items-center justify-between gap-3 text-[11px] text-[var(--color-text-2)]">
                     <span>{label}</span>
@@ -1930,7 +1947,7 @@ export function FreeCreationInfiniteCanvas({
       </div>
 
       <CanvasSceneLayer
-        camera={{ x: pan.x, y: pan.y, scale }}
+        camera={camera}
         viewport={viewportSize}
         nodes={viewportRenderNodes}
         edges={sceneEdges}
@@ -1939,6 +1956,21 @@ export function FreeCreationInfiniteCanvas({
         lod={lod}
         showRelations={showRelations}
       />
+      {snapGuides.map((guide, index) => guide.axis === "x" ? (
+        <div
+          key={`snap-x-${index}`}
+          className="pointer-events-none absolute inset-y-0 z-[15] w-px border-l border-dashed border-[var(--color-accent-2)]/90"
+          style={{ left: pan.x + guide.value * scale }}
+          aria-hidden
+        />
+      ) : (
+        <div
+          key={`snap-y-${index}`}
+          className="pointer-events-none absolute inset-x-0 z-[15] h-px border-t border-dashed border-[var(--color-accent-2)]/90"
+          style={{ top: pan.y + guide.value * scale }}
+          aria-hidden
+        />
+      ))}
       <div className="sr-only" aria-hidden>
         {sceneGroups.map((group) => <span key={group.id} data-canvas-group={group.id} />)}
       </div>
@@ -1946,13 +1978,19 @@ export function FreeCreationInfiniteCanvas({
         label={t("free_creation_minimap")}
         nodes={canvasNodes}
         bounds={contentBounds}
-        camera={{ x: pan.x, y: pan.y, scale }}
+        camera={camera}
         viewport={viewportSize}
         onNavigate={(worldX, worldY) => {
-          setPan({
-            x: viewportSize.width / 2 - worldX * scale,
-            y: viewportSize.height / 2 - worldY * scale,
-          });
+          const next = clampCameraToBounds(
+            {
+              x: viewportSize.width / 2 - worldX * scale,
+              y: viewportSize.height / 2 - worldY * scale,
+              scale,
+            },
+            contentBounds,
+            viewportSize,
+          );
+          setPan({ x: next.x, y: next.y });
         }}
       />
 
