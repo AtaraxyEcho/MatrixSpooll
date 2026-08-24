@@ -91,7 +91,7 @@ describe("useProjectEventsSSE", () => {
 
     renderHarness("/");
     expect(capturedOptions).toBeDefined();
-    expect(capturedOptions?.projectName).toBe("demo");
+    expect(capturedOptions?.projectId).toBe("demo");
 
     act(() => {
       capturedOptions?.onChanges?.(

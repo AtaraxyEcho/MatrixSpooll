@@ -313,6 +313,39 @@ class TestProjectEventService:
         await service.shutdown()
 
     @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_uuid_subscription_resolves_storage_key_and_receives_storage_hints(self, tmp_path):
+        project_id = "44e4eba64c47461b9a7c2ef798526820"
+        storage_key = "demo-storage"
+        pm = ProjectManager(tmp_path / "projects")
+        pm.create_project(storage_key)
+        pm.create_project_metadata(storage_key, "Demo", "Anime", "narration")
+
+        service = ProjectEventService(tmp_path, poll_interval=30.0)
+        await service.start()
+
+        async with service.stream_events(
+            project_id,
+            storage_key=storage_key,
+            idle_timeout=0.1,
+        ) as stream:
+            event_name, snapshot = await _next_event(stream, timeout=1.0)
+            assert event_name == "snapshot"
+            assert snapshot["project_name"] == project_id
+
+            project = pm.load_project(storage_key)
+            project["title"] = "Updated"
+            with project_change_source("webui"):
+                pm.save_project(storage_key, project)
+
+            event_name, payload = await _next_event(stream, timeout=1.5)
+            assert event_name == "changes"
+            assert payload["project_name"] == project_id
+            assert payload["source"] == "webui"
+
+        await service.shutdown()
+
+    @pytest.mark.unit
     def test_script_index_sync_reconciles_only_the_authoritative_duplicate(self, tmp_path):
         pm = ProjectManager(tmp_path / "projects")
         project_dir = pm.create_project("demo")

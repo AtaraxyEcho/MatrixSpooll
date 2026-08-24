@@ -21,16 +21,18 @@ interface FreeCreationLayoutProps {
 export function FreeCreationLayout({ children }: FreeCreationLayoutProps) {
   const [, setLocation] = useLocation();
   const projectName = useProjectsStore((state) => state.currentProjectName);
+  const projectId = useProjectsStore((state) => state.currentProjectId);
   const demoMode = useDemoWorkbench();
 
   const isEffectivelyDemo = demoMode || isDemoProject(projectName);
-  const sseProjectName = isEffectivelyDemo ? null : projectName;
-  useTaskRefresh(sseProjectName, !isEffectivelyDemo);
-  useProjectEventsSSE(sseProjectName);
+  const activeProjectName = isEffectivelyDemo ? null : projectName;
+  const sseProjectId = isEffectivelyDemo ? null : projectId;
+  useTaskRefresh(activeProjectName, !isEffectivelyDemo);
+  useProjectEventsSSE(sseProjectId);
 
   return (
     <div className="flex h-screen flex-col" style={{ color: "var(--color-text)" }}>
-      <TaskFailureListener projectName={sseProjectName} />
+      <TaskFailureListener projectName={activeProjectName} />
       <ScriptGenerationNoticeListener />
       <GlobalHeader variant="free" onNavigateBack={() => setLocation("~/app")} />
       {demoMode ? <DemoReadOnlyBanner /> : null}

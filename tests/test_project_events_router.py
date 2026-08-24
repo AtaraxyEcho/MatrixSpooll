@@ -1,10 +1,12 @@
 import contextlib
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from lib.api_errors import BadRequestError, NotFoundError
 from server.routers import project_events as project_events_router
+from server.services.project_access import ProjectAccess
 
 pytestmark = pytest.mark.unit
 
@@ -37,8 +39,17 @@ class _FakeService:
         self.unsubscribed = False
         self.pm = _FakePM()
 
+    async def prepare_project(self, project_id: str, storage_key: str):
+        self.pm.get_project_path(storage_key)
+
     @contextlib.asynccontextmanager
-    async def stream_events(self, project_name: str, *, idle_timeout: float = 1.0):
+    async def stream_events(
+        self,
+        project_name: str,
+        *,
+        storage_key: str | None = None,
+        idle_timeout: float = 1.0,
+    ):
         async def _iter():
             yield (
                 "snapshot",
@@ -69,36 +80,49 @@ class _FakeService:
             self.unsubscribed = True
 
 
+def _project_access(project_id: str = "project-uuid", storage_key: str = "demo") -> ProjectAccess:
+    return ProjectAccess(
+        project_id=project_id,
+        project_name="Demo",
+        project_path=Path("/projects") / storage_key,
+        content_mode="drama",
+        generation_mode="storyboard",
+        owner_id="owner-uuid",
+        role="owner",
+        storage_key=storage_key,
+    )
+
+
 @pytest.mark.asyncio
 async def test_project_events_service_raises_not_found_when_project_missing():
     """项目不存在(FileNotFoundError)-> NotFoundError,须在流开始前抛出。"""
 
-    class _MissingPM:
-        def get_project_path(self, project_name: str):
-            raise FileNotFoundError(project_name)
+    class _MissingService:
+        async def prepare_project(self, project_id: str, storage_key: str):
+            raise FileNotFoundError(storage_key)
 
-    service = SimpleNamespace(pm=_MissingPM())
+    service = _MissingService()
     app = SimpleNamespace(state=SimpleNamespace(project_event_service=service))
     request = _FakeRequest(app)
 
     with pytest.raises(NotFoundError):
-        await project_events_router._project_events_service("missing", request)
+        await project_events_router._project_events_service(request, access=_project_access())
 
 
 @pytest.mark.asyncio
 async def test_project_events_service_raises_bad_request_for_invalid_project_name():
     """非法项目名(路径穿越等,ValueError)-> BadRequestError,而非「不存在」。"""
 
-    class _InvalidNamePM:
-        def get_project_path(self, project_name: str):
-            raise ValueError(project_name)
+    class _InvalidIdentityService:
+        async def prepare_project(self, project_id: str, storage_key: str):
+            raise ValueError(project_id)
 
-    service = SimpleNamespace(pm=_InvalidNamePM())
+    service = _InvalidIdentityService()
     app = SimpleNamespace(state=SimpleNamespace(project_event_service=service))
     request = _FakeRequest(app)
 
     with pytest.raises(BadRequestError):
-        await project_events_router._project_events_service("../etc", request)
+        await project_events_router._project_events_service(request, access=_project_access())
 
 
 @pytest.mark.asyncio
@@ -107,10 +131,17 @@ async def test_stream_project_events_emits_snapshot_and_changes():
     app = SimpleNamespace(state=SimpleNamespace(project_event_service=service))
     request = _FakeRequest(app)
 
-    resolved = await project_events_router._project_events_service("demo", request)
-    assert resolved is service
+    resolved = await project_events_router._project_events_service(request, access=_project_access())
+    assert resolved.service is service
+    assert resolved.project_id == "project-uuid"
+    assert resolved.storage_key == "demo"
 
-    stream = project_events_router.stream_project_events("demo", request, _user={"sub": "testuser"}, service=service)
+    stream = project_events_router.stream_project_events(
+        "project-uuid",
+        request,
+        _user={"sub": "testuser"},
+        context=resolved,
+    )
 
     snapshot_event = await anext(stream)
     changes_event = await anext(stream)
@@ -133,7 +164,10 @@ async def test_stream_project_events_breaks_on_disconnect_in_idle():
     # 之后第 3 次起(进入 _idle 阶段)返回 True。
     request = _FakeRequest(app, disconnect_after=2)
 
-    stream = project_events_router.stream_project_events("demo", request, _user={"sub": "testuser"}, service=service)
+    context = project_events_router._ProjectEventContext(service, "project-uuid", "demo")
+    stream = project_events_router.stream_project_events(
+        "project-uuid", request, _user={"sub": "testuser"}, context=context
+    )
 
     assert (await anext(stream)).event == "snapshot"
     assert (await anext(stream)).event == "changes"
@@ -156,7 +190,13 @@ async def test_stream_project_events_breaks_on_disconnect_during_continuous_even
             self.pm = _FakePM()
 
         @contextlib.asynccontextmanager
-        async def stream_events(self, project_name: str, *, idle_timeout: float = 1.0):
+        async def stream_events(
+            self,
+            project_name: str,
+            *,
+            storage_key: str | None = None,
+            idle_timeout: float = 1.0,
+        ):
             async def _iter():
                 yield ("snapshot", {"project_name": project_name, "fingerprint": "fp-0"})
                 # 持续吐真事件,不吐 _idle。
@@ -175,7 +215,10 @@ async def test_stream_project_events_breaks_on_disconnect_during_continuous_even
     # 第 1 次(snapshot 顶部)False,第 2 次(第一条 changes 顶部)起 True。
     request = _FakeRequest(app, disconnect_after=1)
 
-    stream = project_events_router.stream_project_events("demo", request, _user={"sub": "testuser"}, service=service)
+    context = project_events_router._ProjectEventContext(service, "project-uuid", "demo")
+    stream = project_events_router.stream_project_events(
+        "project-uuid", request, _user={"sub": "testuser"}, context=context
+    )
 
     # snapshot 通过(第 1 次 is_disconnected 返回 False)
     assert (await anext(stream)).event == "snapshot"
@@ -199,7 +242,13 @@ async def test_stream_project_events_ends_naturally_after_project_deleted_event(
             self.pm = _FakePM()
 
         @contextlib.asynccontextmanager
-        async def stream_events(self, project_name: str, *, idle_timeout: float = 1.0):
+        async def stream_events(
+            self,
+            project_name: str,
+            *,
+            storage_key: str | None = None,
+            idle_timeout: float = 1.0,
+        ):
             async def _iter():
                 yield ("snapshot", {"project_name": project_name, "fingerprint": "fp-0"})
                 yield ("project_deleted", {"project_name": project_name})
@@ -213,12 +262,15 @@ async def test_stream_project_events_ends_naturally_after_project_deleted_event(
     app = SimpleNamespace(state=SimpleNamespace(project_event_service=service))
     request = _FakeRequest(app)
 
-    stream = project_events_router.stream_project_events("demo", request, _user={"sub": "testuser"}, service=service)
+    context = project_events_router._ProjectEventContext(service, "project-uuid", "demo")
+    stream = project_events_router.stream_project_events(
+        "project-uuid", request, _user={"sub": "testuser"}, context=context
+    )
 
     assert (await anext(stream)).event == "snapshot"
     deleted_event = await anext(stream)
     assert deleted_event.event == "project_deleted"
-    assert deleted_event.data == {"project_name": "demo"}
+    assert deleted_event.data == {"project_name": "project-uuid"}
 
     with pytest.raises(StopAsyncIteration):
         await anext(stream)

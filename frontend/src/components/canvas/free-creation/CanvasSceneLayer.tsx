@@ -1,18 +1,16 @@
 import { useEffect, useRef } from "react";
-import { orthogonalEdgePoints } from "./canvas-engine";
-import type { CanvasCamera, CanvasLod, CanvasSpatialNode, CanvasViewportSize } from "./canvas-engine";
+import type {
+  CanvasCamera,
+  CanvasLod,
+  CanvasSpatialNode,
+  CanvasViewportSize,
+} from "./canvas-engine";
 
 export interface CanvasRenderNode extends CanvasSpatialNode {
   label: string;
   mediaType: "image" | "video" | "audio" | "text";
   status?: string;
   thumbnailUrl?: string;
-}
-
-interface CanvasRenderEdge {
-  sourceId: string;
-  targetId: string;
-  lane: number;
 }
 
 interface CanvasRenderGroup {
@@ -27,11 +25,9 @@ interface CanvasSceneLayerProps {
   camera: CanvasCamera;
   viewport: CanvasViewportSize;
   nodes: CanvasRenderNode[];
-  edges: CanvasRenderEdge[];
   groups: CanvasRenderGroup[];
   selectedIds: ReadonlySet<string>;
   lod: CanvasLod;
-  showRelations: boolean;
 }
 
 const imageCache = new Map<string, HTMLImageElement>();
@@ -52,15 +48,28 @@ function statusColor(status?: string): string {
   return "#4fa785";
 }
 
+function drawImageContain(
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): void {
+  const sourceRatio = image.naturalWidth / image.naturalHeight;
+  const targetRatio = width / height;
+  const drawWidth = sourceRatio > targetRatio ? width : height * sourceRatio;
+  const drawHeight = sourceRatio > targetRatio ? width / sourceRatio : height;
+  context.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
+}
+
 export function CanvasSceneLayer({
   camera,
   viewport,
   nodes,
-  edges,
   groups,
   selectedIds,
   lod,
-  showRelations,
 }: CanvasSceneLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -90,32 +99,17 @@ export function CanvasSceneLayer({
         dpr * camera.y,
       );
 
-      const byId = new Map(nodes.map((node) => [node.id, node]));
-      if (showRelations) {
-        context.lineCap = "round";
-        context.lineJoin = "round";
-        for (const group of groups) {
-          context.fillStyle = "rgba(61, 155, 196, 0.06)";
-          context.strokeStyle = "rgba(89, 181, 219, 0.42)";
-          context.lineWidth = 1.5 / camera.scale;
-          context.setLineDash([8 / camera.scale, 6 / camera.scale]);
-          context.fillRect(group.minX, group.minY, group.maxX - group.minX, group.maxY - group.minY);
-          context.strokeRect(group.minX, group.minY, group.maxX - group.minX, group.maxY - group.minY);
-        }
-        context.setLineDash([]);
-        for (const edge of edges) {
-          const source = byId.get(edge.sourceId);
-          const target = byId.get(edge.targetId);
-          if (!source || !target) continue;
-          const points = orthogonalEdgePoints(source, target, edge.lane);
-          context.beginPath();
-          context.moveTo(points[0].x, points[0].y);
-          for (const point of points.slice(1)) context.lineTo(point.x, point.y);
-          context.strokeStyle = "rgba(80, 174, 210, 0.58)";
-          context.lineWidth = 2 / camera.scale;
-          context.stroke();
-        }
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      for (const group of groups) {
+        context.fillStyle = "rgba(61, 155, 196, 0.06)";
+        context.strokeStyle = "rgba(89, 181, 219, 0.42)";
+        context.lineWidth = 1.5 / camera.scale;
+        context.setLineDash([8 / camera.scale, 6 / camera.scale]);
+        context.fillRect(group.minX, group.minY, group.maxX - group.minX, group.maxY - group.minY);
+        context.strokeRect(group.minX, group.minY, group.maxX - group.minX, group.maxY - group.minY);
       }
+      context.setLineDash([]);
 
       if (lod === "detail") return;
       for (const node of nodes) {
@@ -135,8 +129,8 @@ export function CanvasSceneLayer({
             }, { once: true });
           }
           if (image.complete && image.naturalWidth > 0) {
-            const mediaHeight = Math.min(nodeHeight - 28, nodeWidth * 0.5625);
-            context.drawImage(image, node.minX, node.minY, nodeWidth, mediaHeight);
+            const mediaHeight = Math.max(1, nodeHeight - 28);
+            drawImageContain(context, image, node.minX, node.minY, nodeWidth, mediaHeight);
           }
         }
         context.fillStyle = statusColor(node.status);
@@ -157,7 +151,7 @@ export function CanvasSceneLayer({
       disposed = true;
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [camera.scale, camera.x, camera.y, edges, groups, lod, nodes, selectedIds, showRelations, viewport]);
+  }, [camera.scale, camera.x, camera.y, groups, lod, nodes, selectedIds, viewport]);
 
   return <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden />;
 }

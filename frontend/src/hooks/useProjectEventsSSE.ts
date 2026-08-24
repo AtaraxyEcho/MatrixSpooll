@@ -131,7 +131,7 @@ function isWorkspaceEditing(): boolean {
   return Boolean(document.querySelector("[data-workspace-editing='true']"));
 }
 
-export function useProjectEventsSSE(projectName?: string | null): void {
+export function useProjectEventsSSE(projectId?: string | null): void {
   const { t } = useTranslation("dashboard");
   // 把 t 通过 ref 暴露给 callback，避免 i18n 切语言时 refreshProject
   // 重建 → EventSource effect 跟着重连 → 通知/focus 提示丢失。
@@ -184,7 +184,7 @@ export function useProjectEventsSSE(projectName?: string | null): void {
   }, [executeFocus]);
 
   const refreshProject = useCallback(async () => {
-    if (!projectName) return;
+    if (!projectId) return;
     // 在途合并逻辑（单飞 + 排队再跑一轮 + 失败留旧）已下沉到 projects-store.refreshProject；
     // 此处只保留 SSE 专属包装：失败时告警、刷新落定后消费排队的聚焦目标。
     //
@@ -199,7 +199,7 @@ export function useProjectEventsSSE(projectName?: string | null): void {
     // 等待期间没有别的调用改写过它，可以放心视为「跟自己这一轮对应」；ref 已变则跳过，
     // 交由改写它的那次调用在自己对应轮次落定后消费。
     const focusSnapshot = queuedFocusRef.current;
-    await useProjectsStore.getState().refreshProject(projectName, {
+    await useProjectsStore.getState().refreshProject(projectId, {
       onError: (err) =>
         pushNotification(tRef.current("project_sync_failed", { message: errMsg(err) }), "warning"),
     });
@@ -207,7 +207,7 @@ export function useProjectEventsSSE(projectName?: string | null): void {
       return;
     }
     flushQueuedFocus();
-  }, [flushQueuedFocus, projectName, pushNotification]);
+  }, [flushQueuedFocus, projectId, pushNotification]);
 
   useEffect(() => {
     lastFingerprintRef.current = null;
@@ -220,10 +220,10 @@ export function useProjectEventsSSE(projectName?: string | null): void {
       clearScrollTarget();
       clearWorkspaceNotifications();
     };
-  }, [clearScrollTarget, clearWorkspaceNotifications, projectName]);
+  }, [clearScrollTarget, clearWorkspaceNotifications, projectId]);
 
   useEffect(() => {
-    if (!projectName) return;
+    if (!projectId) return;
     let disposed = false;
 
     const connect = () => {
@@ -233,7 +233,7 @@ export function useProjectEventsSSE(projectName?: string | null): void {
       }
 
       const source = API.openProjectEventStream({
-        projectName,
+        projectId,
         onSnapshot(payload) {
           if (disposed) return;
           const previousFingerprint = lastFingerprintRef.current;
@@ -264,7 +264,7 @@ export function useProjectEventsSSE(projectName?: string | null): void {
               : []
           ));
           if (canvasPatches.length) {
-            useFreeCreationStore.getState().publishCanvasPatches(projectName, canvasPatches);
+            useFreeCreationStore.getState().publishCanvasPatches(projectId, canvasPatches);
           }
 
           // 提取并更新 asset fingerprints（零延迟，立即写入 store）
@@ -376,8 +376,8 @@ export function useProjectEventsSSE(projectName?: string | null): void {
           // 一直显示切分前的分配；grid_split_done 不进 GENERATION_ACTIONS（那是完成通知
           // 类别，切分不是一次生成），故在这里单列。
           const hasGridSplit = entityChanges.some((c) => c.action === "grid_split_done");
-          if ((hasGenerationEvent || hasBilledVoiceSampleTerminal || hasGridSplit) && projectName) {
-            useCostStore.getState().debouncedFetch(projectName);
+          if ((hasGenerationEvent || hasBilledVoiceSampleTerminal || hasGridSplit) && projectId) {
+            useCostStore.getState().debouncedFetch(projectId);
           }
 
           // Refresh grid list when a grid completes or gets split into cells
@@ -431,7 +431,7 @@ export function useProjectEventsSSE(projectName?: string | null): void {
   }, [
     clearWorkspaceNotifications,
     invalidateEntities,
-    projectName,
+    projectId,
     pushNotification,
     pushWorkspaceNotification,
     refreshProject,
