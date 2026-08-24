@@ -69,13 +69,19 @@ export function FreeCreationPreviewDialog({ projectName, target, onClose }: Free
       ? target.creation.media_type ?? (target.creation.output_type === "video" ? "video" : target.creation.output_type === "audio" ? "audio" : "image")
       : null;
   const previewLoading = textLoading || (mediaType === "text" && text === null && textSupported);
+  const visualMedia = mediaType === "image" || mediaType === "video";
+  const widthClassName = visualMedia
+    ? "w-fit min-w-[min(360px,92vw)] max-w-[min(92vw,1200px)]"
+    : mediaType === "audio"
+      ? "w-[min(92vw,520px)]"
+      : "w-[min(92vw,896px)]";
 
   return (
     <GlassModal
       open={target !== null}
       onClose={onClose}
       labelledBy="free-creation-preview-title"
-      widthClassName="w-full max-w-4xl"
+      widthClassName={widthClassName}
       panelClassName="max-h-[90vh]"
     >
       <div className="flex items-center gap-3 border-b border-[var(--color-hairline)] px-4 py-3">
@@ -104,7 +110,7 @@ export function FreeCreationPreviewDialog({ projectName, target, onClose }: Free
         </button>
       </div>
 
-      <div className="max-h-[calc(90vh-4.5rem)] overflow-auto bg-[var(--color-background)] p-4">
+      <div className={`max-h-[calc(90vh-4.5rem)] overflow-auto bg-[var(--color-background)] ${visualMedia ? "w-fit max-w-full p-3" : "p-4"}`}>
         {target?.kind === "upload" && mediaType === "text" ? (
           previewLoading ? (
             <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-[var(--color-text-muted)]">
@@ -123,17 +129,17 @@ export function FreeCreationPreviewDialog({ projectName, target, onClose }: Free
             </div>
           )
         ) : target?.kind === "upload" && mediaType === "image" ? (
-          <img src={target.upload.url ?? API.getFileUrl(projectName, target.upload.path)} alt={target.upload.original_filename} className="mx-auto max-h-[72vh] max-w-full object-contain" />
+          <img src={target.upload.url ?? API.getFileUrl(projectName, target.upload.path)} alt={target.upload.original_filename} className="mx-auto block h-auto w-auto max-h-[calc(90vh-5.5rem)] max-w-[calc(92vw-1.5rem)] object-contain" />
         ) : target?.kind === "upload" && mediaType === "video" ? (
-          <video src={target.upload.url ?? API.getFileUrl(projectName, target.upload.path)} className="mx-auto max-h-[72vh] max-w-full" controls autoPlay={false} />
+          <video src={target.upload.url ?? API.getFileUrl(projectName, target.upload.path)} className="mx-auto block h-auto w-auto max-h-[calc(90vh-5.5rem)] max-w-[calc(92vw-1.5rem)]" controls autoPlay={false} />
         ) : target?.kind === "upload" && mediaType === "audio" ? (
           <div className="flex min-h-64 items-center justify-center"><audio src={target.upload.url ?? API.getFileUrl(projectName, target.upload.path)} controls /></div>
         ) : target?.kind === "creation" && mediaType === "video" && downloadHref ? (
-          <video src={downloadHref} className="mx-auto max-h-[72vh] max-w-full" controls autoPlay={false} />
+          <video src={downloadHref} className="mx-auto block h-auto w-auto max-h-[calc(90vh-5.5rem)] max-w-[calc(92vw-1.5rem)]" controls autoPlay={false} />
         ) : target?.kind === "creation" && mediaType === "audio" && downloadHref ? (
           <div className="flex min-h-64 items-center justify-center"><audio src={downloadHref} controls /></div>
         ) : target?.kind === "creation" && downloadHref ? (
-          <img src={downloadHref} alt={title} className="mx-auto max-h-[72vh] max-w-full object-contain" />
+          <img src={downloadHref} alt={title} className="mx-auto block h-auto w-auto max-h-[calc(90vh-5.5rem)] max-w-[calc(92vw-1.5rem)] object-contain" />
         ) : null}
       </div>
     </GlassModal>

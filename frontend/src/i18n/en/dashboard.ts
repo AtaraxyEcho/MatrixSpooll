@@ -137,6 +137,8 @@ export default {
   'free_creation_reference_role_prompt_context': 'Prompt context',
   'free_creation_reference_shortcut': 'Ctrl/Cmd + click to reference; double-click to preview',
   'free_creation_preview': 'Preview',
+  'free_creation_video_play': 'Play video',
+  'free_creation_video_pause': 'Pause video',
   'free_creation_preview_close': 'Close preview',
   'free_creation_preview_loading': 'Loading preview…',
   'free_creation_preview_unavailable': 'This file cannot be previewed online. Download it to view.',

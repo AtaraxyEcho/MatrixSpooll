@@ -37,9 +37,9 @@ export interface CanvasSnapGuide {
 export type CanvasLod = "detail" | "overview" | "compact";
 
 export const MAX_DOM_NODES = 160;
-const DETAIL_ENTER_WIDTH = 130;
-const DETAIL_EXIT_WIDTH = 110;
-const COMPACT_ENTER_WIDTH = 64;
+const DETAIL_ENTER_WIDTH = 150;
+const DETAIL_EXIT_WIDTH = 142;
+const COMPACT_ENTER_WIDTH = 68;
 const COMPACT_EXIT_WIDTH = 78;
 const COMPACT_ENTER_NODE_COUNT = 1_000;
 const COMPACT_EXIT_NODE_COUNT = 850;

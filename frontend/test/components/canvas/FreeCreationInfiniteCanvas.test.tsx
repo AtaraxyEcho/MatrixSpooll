@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { API } from "@/api";
 import {
@@ -38,6 +38,12 @@ function renderCanvas(creations: FreeCreation[] = [creation]) {
       onReference={vi.fn()}
     />,
   );
+}
+
+function selectCanvasNode(node: HTMLElement, pointerId: number, shiftKey = false) {
+  const point = { clientX: 100, clientY: 100 };
+  fireEvent.pointerDown(node, { button: 0, pointerId, shiftKey, ...point });
+  fireEvent.pointerUp(screen.getByTestId("free-creation-canvas"), { pointerId, shiftKey, ...point });
 }
 
 const textUpload: FreeCreationUpload = {
@@ -102,6 +108,80 @@ describe("FreeCreationInfiniteCanvas", () => {
     expect(await screen.findByText(reason)).toBeInTheDocument();
   });
 
+  it("uses media-only card chrome with floating labels and exceptional status dots", async () => {
+    const failed = {
+      ...creation,
+      creation_id: "c_failed0123456789abcde",
+      status: "failed" as const,
+      media_path: undefined,
+      prompt: "failed frame",
+      error: "provider rejected the frame",
+    };
+    const running = {
+      ...creation,
+      creation_id: "c_running123456789abcde",
+      status: "running" as const,
+      media_path: undefined,
+      prompt: "running frame",
+    };
+    const { container } = renderCanvas([creation, failed, running]);
+    const successCard = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(`[data-canvas-id='${creation.creation_id}']`);
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+    const failedCard = container.querySelector<HTMLElement>(`[data-canvas-id='${failed.creation_id}']`)!;
+    const runningCard = container.querySelector<HTMLElement>(`[data-canvas-id='${running.creation_id}']`)!;
+    const mediaCard = successCard.querySelector<HTMLElement>("[data-canvas-drag-surface='true']");
+    const floatingLabel = successCard.querySelector<HTMLElement>(".canvas-node-label");
+
+    expect(mediaCard).toHaveClass("rounded-lg", "overflow-hidden");
+    expect(mediaCard?.className).not.toContain("border");
+    expect(floatingLabel).toHaveStyle({ "--canvas-label-inverse-scale": "1" });
+    expect(successCard.querySelector("[data-canvas-status]")).not.toBeInTheDocument();
+    expect(failedCard.querySelector("[data-canvas-status='failed']")).toBeInTheDocument();
+    expect(runningCard.querySelector("[data-canvas-status='running']")).toBeInTheDocument();
+  });
+
+  it("shows loading, ready, and decode-error states without leaving a blank media card", async () => {
+    const { container } = renderCanvas();
+    const card = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(`[data-canvas-id='${creation.creation_id}']`);
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+    const media = card.querySelector<HTMLElement>("[data-canvas-media-state]")!;
+    const image = card.querySelector<HTMLImageElement>("img")!;
+
+    expect(media).toHaveAttribute("data-canvas-media-state", "loading");
+    fireEvent.load(image);
+    expect(media).toHaveAttribute("data-canvas-media-state", "ready");
+    fireEvent.error(image);
+    expect(media).toHaveAttribute("data-canvas-media-state", "error");
+    expect(screen.getAllByText("paper boat").length).toBeGreaterThan(0);
+  });
+
+  it("sizes visual cards from their declared and intrinsic media aspect ratios", async () => {
+    const { container } = renderCanvas([{ ...creation, aspect_ratio: "16:9" }]);
+    const card = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(`[data-canvas-id='${creation.creation_id}']`);
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+    const media = card.querySelector<HTMLElement>("[data-canvas-media-state]")!;
+    const image = card.querySelector<HTMLImageElement>("img")!;
+
+    expect(card).toHaveStyle({ height: "153px" });
+    expect(media.className).not.toContain("bg-black");
+
+    Object.defineProperties(image, {
+      naturalWidth: { configurable: true, value: 600 },
+      naturalHeight: { configurable: true, value: 1800 },
+    });
+    fireEvent.load(image);
+    await waitFor(() => expect(card).toHaveStyle({ height: "816px" }));
+  });
+
   it("shows a generated video cover before playback", async () => {
     const videoCreation: FreeCreation = {
       ...creation,
@@ -122,6 +202,27 @@ describe("FreeCreationInfiniteCanvas", () => {
     Object.defineProperty(video, "duration", { configurable: true, value: 12 });
     fireEvent.loadedMetadata(video!);
     expect(video?.currentTime).toBe(0.1);
+  });
+
+  it("plays a generated video from the card without turning the video frame into a drag blocker", async () => {
+    const videoCreation: FreeCreation = {
+      ...creation,
+      output_type: "video",
+      media_type: "video",
+      media_path: "creations/c_0123456789abcdef0123.mp4",
+    };
+    const { container } = renderCanvas([videoCreation]);
+    const video = await waitFor(() => {
+      const element = container.querySelector<HTMLVideoElement>("video");
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+    const play = vi.spyOn(video, "play").mockResolvedValue();
+
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_video_play") }));
+
+    await waitFor(() => expect(play).toHaveBeenCalledOnce());
+    expect(video).toHaveClass("pointer-events-none");
   });
 
   it("keeps the default cursor, reserves blank left drag for selection, and pans with the middle button", async () => {
@@ -146,23 +247,72 @@ describe("FreeCreationInfiniteCanvas", () => {
     expect(container.querySelector("[data-canvas-id='c_0123456789abcdef0123']")).toBeInTheDocument();
   });
 
-  it("moves a card only from its header and publishes completed selections for export", async () => {
+  it("moves a card from its media surface only after the desktop drag threshold", async () => {
     const { container } = renderCanvas();
     const card = await waitFor(() => {
       const element = container.querySelector<HTMLElement>("[data-canvas-id='c_0123456789abcdef0123']");
       expect(element).toHaveStyle({ left: "96px" });
       return element!;
     });
-    const header = card.firstElementChild as HTMLElement;
+    const dragSurface = card.querySelector<HTMLElement>("[data-canvas-drag-surface='true']");
+    expect(dragSurface).toBeInTheDocument();
     const surface = screen.getByTestId("free-creation-canvas");
 
-    fireEvent.pointerDown(header, { button: 0, pointerId: 3, clientX: 100, clientY: 100 });
+    fireEvent.pointerDown(dragSurface!, { button: 0, pointerId: 3, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(surface, { pointerId: 3, clientX: 103, clientY: 100 });
+    expect(card).toHaveStyle({ left: "96px", top: "88px" });
+    expect(card).toHaveAttribute("data-dragging", "false");
     fireEvent.pointerMove(surface, { pointerId: 3, clientX: 148, clientY: 132 });
+    await waitFor(() => expect(card).toHaveAttribute("data-dragging", "true"));
     fireEvent.pointerUp(surface, { pointerId: 3, clientX: 148, clientY: 132 });
 
     await waitFor(() => expect(card).toHaveStyle({ left: "144px", top: "120px" }));
     expect(useFreeCreationStore.getState().selectedIds).toEqual([creation.creation_id]);
     expect(useFreeCreationStore.getState().selectedRequestId).toBe(creation.request_id);
+  });
+
+  it("moves a video card when dragging directly from the video frame", async () => {
+    const videoCreation: FreeCreation = {
+      ...creation,
+      output_type: "video",
+      media_type: "video",
+      media_path: "creations/c_0123456789abcdef0123.mp4",
+    };
+    const { container } = renderCanvas([videoCreation]);
+    const card = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(`[data-canvas-id='${creation.creation_id}']`);
+      expect(element).toHaveStyle({ left: "96px", top: "88px" });
+      return element!;
+    });
+    const video = card.querySelector<HTMLVideoElement>("video")!;
+    const surface = screen.getByTestId("free-creation-canvas");
+
+    fireEvent.pointerDown(video, { button: 0, pointerId: 31, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(surface, { pointerId: 31, clientX: 148, clientY: 132 });
+    fireEvent.pointerUp(surface, { pointerId: 31, clientX: 148, clientY: 132 });
+
+    await waitFor(() => expect(card).toHaveStyle({ left: "144px", top: "120px" }));
+  });
+
+  it("requires a short hold and the wider threshold before dragging with touch", async () => {
+    const { container } = renderCanvas();
+    const card = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(`[data-canvas-id='${creation.creation_id}']`);
+      expect(element).toHaveStyle({ left: "96px", top: "88px" });
+      return element!;
+    });
+    const dragSurface = card.querySelector<HTMLElement>("[data-canvas-drag-surface='true']")!;
+    const surface = screen.getByTestId("free-creation-canvas");
+
+    fireEvent.pointerDown(dragSurface, { button: 0, pointerId: 4, pointerType: "touch", clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(surface, { pointerId: 4, pointerType: "touch", clientX: 120, clientY: 100 });
+    await new Promise((resolve) => window.setTimeout(resolve, 30));
+    expect(card).toHaveStyle({ left: "96px", top: "88px" });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 230));
+    fireEvent.pointerMove(surface, { pointerId: 4, pointerType: "touch", clientX: 124, clientY: 100 });
+    await waitFor(() => expect(card).toHaveStyle({ left: "120px", top: "88px" }));
+    fireEvent.pointerUp(surface, { pointerId: 4, pointerType: "touch", clientX: 124, clientY: 100 });
   });
 
   it("places a newly uploaded file in the visible canvas without overlapping saved work", async () => {
@@ -310,6 +460,42 @@ describe("FreeCreationInfiniteCanvas", () => {
     expect(card).toBeTruthy();
   });
 
+  it("keeps destructive actions last in both image and video context menus", async () => {
+    for (const mediaType of ["image", "video"] as const) {
+      const item: FreeCreation = {
+        ...creation,
+        output_type: mediaType,
+        media_type: mediaType,
+        media_path: `creations/c_0123456789abcdef0123.${mediaType === "video" ? "mp4" : "png"}`,
+      };
+      const { container, unmount } = render(
+        <FreeCreationInfiniteCanvas
+          projectName="demo"
+          creations={[item]}
+          uploads={[]}
+          readOnly={false}
+          actingId={null}
+          onCancel={vi.fn()}
+          onRetry={vi.fn()}
+          onEdit={vi.fn()}
+          onReference={vi.fn()}
+          onDeleteCreations={vi.fn()}
+        />,
+      );
+      const card = await waitFor(() => {
+        const element = container.querySelector<HTMLElement>(`[data-canvas-id='${item.creation_id}']`);
+        expect(element).toBeInTheDocument();
+        return element!;
+      });
+
+      fireEvent.contextMenu(card, { clientX: 120, clientY: 120 });
+      const menuItems = within(screen.getByRole("menu")).getAllByRole("menuitem");
+      expect(menuItems.at(-1)).toHaveTextContent(t("free_creation_delete"));
+      expect(menuItems.filter((menuItem) => menuItem.textContent === t("free_creation_delete"))).toHaveLength(1);
+      unmount();
+    }
+  });
+
   it("deletes a marquee selection containing generated images and videos", async () => {
     const videoCreation: FreeCreation = {
       ...creation,
@@ -414,8 +600,8 @@ describe("FreeCreationInfiniteCanvas", () => {
       expect(element).toBeInTheDocument();
       return element!;
     });
-    fireEvent.pointerDown(firstCard!, { button: 0, pointerId: 20, clientX: 100, clientY: 100 });
-    fireEvent.pointerDown(secondCard!, { button: 0, pointerId: 21, shiftKey: true, clientX: 100, clientY: 100 });
+    selectCanvasNode(firstCard!, 20);
+    selectCanvasNode(secondCard!, 21, true);
     fireEvent.contextMenu(secondCard!, { clientX: 120, clientY: 120 });
 
     const mergeAction = await screen.findByRole("menuitem", { name: t("free_creation_merge_selected") });
@@ -466,8 +652,8 @@ describe("FreeCreationInfiniteCanvas", () => {
       return element!;
     });
 
-    fireEvent.pointerDown(videoCard!, { button: 0, pointerId: 60 });
-    fireEvent.pointerDown(audioCard!, { button: 0, pointerId: 61, shiftKey: true });
+    selectCanvasNode(videoCard!, 60);
+    selectCanvasNode(audioCard!, 61, true);
     fireEvent.contextMenu(audioCard!, { clientX: 120, clientY: 120 });
     fireEvent.click(await screen.findByRole("menuitem", { name: t("free_creation_composite_audio") }));
 
@@ -492,16 +678,17 @@ describe("FreeCreationInfiniteCanvas", () => {
       return element!;
     });
 
-    fireEvent.pointerDown(firstCard!, { button: 0, pointerId: 70 });
-    fireEvent.pointerDown(secondCard!, { button: 0, pointerId: 71, shiftKey: true });
+    selectCanvasNode(firstCard!, 70);
+    selectCanvasNode(secondCard!, 71, true);
     fireEvent.contextMenu(secondCard!, { clientX: 120, clientY: 120 });
     fireEvent.click(await screen.findByRole("menuitem", { name: t("free_creation_group_selected") }));
     expect(document.querySelector("[data-canvas-group]")).toBeInTheDocument();
     expect(screen.getByTestId("free-creation-canvas")).toBeInTheDocument();
 
-    const firstHeader = firstCard!.firstElementChild as HTMLElement;
+    const firstDragSurface = firstCard!.querySelector<HTMLElement>("[data-canvas-drag-surface='true']");
+    expect(firstDragSurface).toBeInTheDocument();
     const surface = screen.getByTestId("free-creation-canvas");
-    fireEvent.pointerDown(firstHeader, { button: 0, pointerId: 72, clientX: 100, clientY: 100 });
+    fireEvent.pointerDown(firstDragSurface!, { button: 0, pointerId: 72, clientX: 100, clientY: 100 });
     fireEvent.pointerMove(surface, { pointerId: 72, clientX: 140, clientY: 130 });
     fireEvent.pointerUp(surface, { pointerId: 72, clientX: 140, clientY: 130 });
 
@@ -654,13 +841,14 @@ describe("FreeCreationInfiniteCanvas", () => {
       expect(element).toBeInTheDocument();
       return element!;
     });
-    const header = card.firstElementChild as HTMLElement;
+    const dragSurface = card.querySelector<HTMLElement>("[data-canvas-drag-surface='true']");
+    expect(dragSurface).toBeInTheDocument();
     const surface = screen.getByTestId("free-creation-canvas");
     const transformLayer = Array.from(surface.querySelectorAll<HTMLDivElement>("div"))
       .find((element) => element.style.transform.includes("translate3d"));
 
     fireEvent.keyDown(window, { code: "Space", key: " " });
-    fireEvent.pointerDown(header, { button: 0, pointerId: 52, clientX: 100, clientY: 100 });
+    fireEvent.pointerDown(dragSurface!, { button: 0, pointerId: 52, clientX: 100, clientY: 100 });
     fireEvent.pointerMove(surface, { pointerId: 52, clientX: 148, clientY: 132 });
     fireEvent.pointerUp(surface, { pointerId: 52, clientX: 148, clientY: 132 });
     fireEvent.keyUp(window, { code: "Space", key: " " });
@@ -691,7 +879,7 @@ describe("FreeCreationInfiniteCanvas", () => {
       expect(node).toBeInTheDocument();
       return node;
     });
-    fireEvent.pointerDown(card!, { button: 0, pointerId: 53 });
+    selectCanvasNode(card!, 53);
     const editor = screen.getByRole("textbox", { name: "editor" });
     editor.focus();
     fireEvent.keyDown(editor, { key: "Escape" });
@@ -706,7 +894,7 @@ describe("FreeCreationInfiniteCanvas", () => {
       expect(node).toBeInTheDocument();
       return node;
     });
-    fireEvent.pointerDown(card!, { button: 0, pointerId: 54 });
+    selectCanvasNode(card!, 54);
     expect(useFreeCreationStore.getState().selectedIds).toEqual([creation.creation_id]);
 
     view.rerender(
@@ -794,8 +982,8 @@ describe("FreeCreationInfiniteCanvas", () => {
       return element!;
     });
 
-    fireEvent.pointerDown(firstCard, { button: 0, pointerId: 30 });
-    fireEvent.pointerDown(secondCard, { button: 0, pointerId: 31, shiftKey: true });
+    selectCanvasNode(firstCard, 30);
+    selectCanvasNode(secondCard, 31, true);
     fireEvent.contextMenu(secondCard, { clientX: 120, clientY: 120 });
     fireEvent.click(await screen.findByRole("menuitem", {
       name: t("free_creation_add_selected_references", { count: 2 }),
@@ -832,8 +1020,8 @@ describe("FreeCreationInfiniteCanvas", () => {
       return element!;
     });
 
-    fireEvent.pointerDown(firstCard, { button: 0, pointerId: 32 });
-    fireEvent.pointerDown(secondCard, { button: 0, pointerId: 33, shiftKey: true });
+    selectCanvasNode(firstCard, 32);
+    selectCanvasNode(secondCard, 33, true);
     fireEvent.contextMenu(secondCard, { clientX: 120, clientY: 120 });
     fireEvent.click(await screen.findByRole("menuitem", {
       name: t("free_creation_hide"),
@@ -871,8 +1059,8 @@ describe("FreeCreationInfiniteCanvas", () => {
       expect(element).toBeInTheDocument();
       return element!;
     });
-    fireEvent.pointerDown(firstCard!, { button: 0, pointerId: 41 });
-    fireEvent.pointerDown(secondCard!, { button: 0, pointerId: 42, shiftKey: true });
+    selectCanvasNode(firstCard!, 41);
+    selectCanvasNode(secondCard!, 42, true);
     fireEvent.contextMenu(secondCard!, { clientX: 120, clientY: 120 });
     fireEvent.click(screen.getByRole("menuitem", {
       name: t("free_creation_delete_selected", { count: 2 }),
@@ -945,16 +1133,16 @@ describe("FreeCreationInfiniteCanvas", () => {
 
     fireEvent.keyDown(window, { key: "a", ctrlKey: true });
     await waitFor(() => {
-      expect(creationCard).toHaveClass("border-[var(--color-accent)]");
-      expect(uploadCard).toHaveClass("border-[var(--color-accent)]");
+      expect(creationCard).toHaveAttribute("data-selected", "true");
+      expect(uploadCard).toHaveAttribute("data-selected", "true");
     });
 
     fireEvent.keyDown(window, { key: "Escape" });
     const editor = screen.getByRole("textbox", { name: "editor" });
     editor.focus();
     fireEvent.keyDown(editor, { key: "a", ctrlKey: true });
-    expect(creationCard).not.toHaveClass("border-[var(--color-accent)]");
-    expect(uploadCard).not.toHaveClass("border-[var(--color-accent)]");
+    expect(creationCard).toHaveAttribute("data-selected", "false");
+    expect(uploadCard).toHaveAttribute("data-selected", "false");
   });
 
   it("undoes the latest canvas content change with Ctrl/Cmd+Z", async () => {
@@ -1070,11 +1258,9 @@ describe("FreeCreationInfiniteCanvas", () => {
       expect(element).toBeInTheDocument();
       return element!;
     });
-    const media = card?.querySelector<HTMLElement>('[role="button"]');
-    expect(media).toBeTruthy();
-    fireEvent.click(media!);
+    fireEvent.click(card!);
     expect(onReference).not.toHaveBeenCalled();
-    fireEvent.click(media!, { ctrlKey: true });
+    fireEvent.click(card!, { ctrlKey: true });
     expect(onReference).toHaveBeenCalledWith(
       { type: "upload", reference_id: textUpload.reference_id, role: "prompt_context" },
       textUpload.original_filename,
@@ -1117,7 +1303,7 @@ describe("FreeCreationInfiniteCanvas", () => {
     expect(onUploadFiles).not.toHaveBeenCalled();
   });
 
-  it("renders voiceover uploads with native playback and an explicit reference action", async () => {
+  it("renders voiceover uploads with native playback and the shared reference shortcut", async () => {
     const onReference = vi.fn();
     render(
       <FreeCreationInfiniteCanvas
@@ -1141,7 +1327,7 @@ describe("FreeCreationInfiniteCanvas", () => {
     const audio = card?.querySelector("audio");
     expect(audio).toBeInTheDocument();
     expect(audio).toHaveAttribute("src", expect.stringContaining(audioUpload.path));
-    fireEvent.click(screen.getByRole("button", { name: t("free_creation_add_reference") }));
+    fireEvent.click(card!, { ctrlKey: true });
     expect(onReference).toHaveBeenCalledWith(
       { type: "upload", reference_id: audioUpload.reference_id, role: "reference_audio" },
       audioUpload.original_filename,

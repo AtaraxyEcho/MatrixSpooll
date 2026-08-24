@@ -138,6 +138,8 @@ export default {
   'free_creation_reference_role_prompt_context': 'Ngữ cảnh lời nhắc',
   'free_creation_reference_shortcut': 'Ctrl/Cmd + nhấp để thêm tham chiếu; nhấp đúp để xem trước',
   'free_creation_preview': 'Xem trước',
+  'free_creation_video_play': 'Phát video',
+  'free_creation_video_pause': 'Tạm dừng video',
   'free_creation_preview_close': 'Đóng xem trước',
   'free_creation_preview_loading': 'Đang tải bản xem trước…',
   'free_creation_preview_unavailable': 'Không thể xem trước tệp này trực tuyến. Hãy tải xuống để xem.',
