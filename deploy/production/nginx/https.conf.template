@@ -1,0 +1,95 @@
+upstream matrixspooll_backend {
+    server matrixspooll:1241;
+    keepalive 32;
+}
+
+server {
+    listen 8080 default_server;
+    server_name ${PUBLIC_HOST};
+    server_tokens off;
+
+    if ($host != "${PUBLIC_HOST}") {
+        return 444;
+    }
+
+    location = /nginx-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 308 https://${PUBLIC_HOST}$request_uri;
+    }
+}
+
+server {
+    listen 8443 ssl default_server;
+    http2 on;
+    server_name ${PUBLIC_HOST};
+    server_tokens off;
+
+    if ($host != "${PUBLIC_HOST}") {
+        return 444;
+    }
+
+    ssl_certificate /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:TLS:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    client_max_body_size 10g;
+    client_body_timeout 3600s;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), geolocation=(), microphone=()" always;
+    add_header Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data:; connect-src 'self' https: wss:; worker-src 'self' blob:; frame-src 'self' blob: https:" always;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host "${PUBLIC_HOST}";
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Host "${PUBLIC_HOST}";
+    proxy_set_header X-Forwarded-Port 443;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header Connection "";
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+
+    proxy_cookie_flags matrixspooll_auth_token secure httponly samesite=lax;
+    proxy_cookie_flags matrixspooll_csrf_token secure samesite=lax;
+
+    location = /nginx-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location ^~ /assets/ {
+        proxy_pass http://matrixspooll_backend;
+        proxy_hide_header Cache-Control;
+        expires 1y;
+    }
+
+    location ^~ /api/ {
+        proxy_pass http://matrixspooll_backend;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    location / {
+        proxy_pass http://matrixspooll_backend;
+    }
+}
