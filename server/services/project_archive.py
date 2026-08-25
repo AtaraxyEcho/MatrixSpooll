@@ -43,6 +43,7 @@ from lib.reference_video.duration_migration import migrate_unit_durations
 from lib.resource_paths import resource_extension, resource_relative_path
 from lib.script_skeleton import SKELETONS, resolve_declared_kind, resolve_kind_items
 from lib.source_loader.migration import migrate_project_source_encoding
+from lib.storage_capacity import ensure_storage_capacity
 from lib.validation_messages import MessageRef, ValidationMessage, ValidationResult
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,31 @@ ARCHIVE_SCRIPT_SCHEMA_VERSION = 2
 DEFAULT_IMPORT_FILENAME = "imported-project.zip"
 _ARTIFACT_ACTIVATION_ERRORS = (ArtifactManifestError, OSError, UnicodeError, ValueError)
 _EXPORT_SNAPSHOT_ATTEMPTS = 3
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid %s=%r; expected a positive integer", name, raw)
+        return default
+    if value <= 0:
+        logger.warning("Ignoring invalid %s=%r; expected a positive integer", name, raw)
+        return default
+    return value
+
+
+# Video archives can be large, so deployments may raise these defaults. Every
+# stage remains bounded to prevent a small compressed upload from exhausting disk.
+MAX_IMPORT_UPLOAD_BYTES = _positive_env_int("MATRIXSPOOLL_IMPORT_MAX_UPLOAD_BYTES", 8 * 1024**3)
+MAX_IMPORT_MEMBERS = _positive_env_int("MATRIXSPOOLL_IMPORT_MAX_MEMBERS", 10_000)
+MAX_IMPORT_MEMBER_BYTES = _positive_env_int("MATRIXSPOOLL_IMPORT_MAX_MEMBER_BYTES", 8 * 1024**3)
+MAX_IMPORT_TOTAL_BYTES = _positive_env_int("MATRIXSPOOLL_IMPORT_MAX_TOTAL_BYTES", 32 * 1024**3)
+MAX_IMPORT_COMPRESSION_RATIO = _positive_env_int("MATRIXSPOOLL_IMPORT_MAX_COMPRESSION_RATIO", 200)
+MAX_IMPORT_JSON_BYTES = _positive_env_int("MATRIXSPOOLL_IMPORT_MAX_JSON_BYTES", 16 * 1024**2)
 
 
 def _resolve_existing_asset(name: str, candidates: set[str]) -> str:
@@ -332,6 +358,10 @@ class ProjectArchiveService:
                 with tempfile.TemporaryDirectory(prefix="matrixspooll-import-") as temp_dir:
                     staging_dir = Path(temp_dir) / "project"
                     staging_dir.mkdir(parents=True, exist_ok=True)
+
+                    expanded_bytes = sum(member.info.file_size for member in members if not member.is_dir)
+                    ensure_storage_capacity(staging_dir, required_bytes=expanded_bytes)
+                    ensure_storage_capacity(self.project_manager.projects_root, required_bytes=expanded_bytes)
 
                     self._extract_archive_root(
                         archive,
@@ -1707,7 +1737,16 @@ class ProjectArchiveService:
 
     def _scan_archive_members(self, archive: zipfile.ZipFile) -> list[ArchiveMember]:
         members: list[ArchiveMember] = []
-        for info in archive.infolist():
+        infos = archive.infolist()
+        if len(infos) > MAX_IMPORT_MEMBERS:
+            raise ProjectArchiveValidationError(
+                ValidationMessage("arch_import_validation_failed"),
+                status_code=413,
+                errors=[ValidationMessage("arch_zip_too_many_entries", {"max_count": MAX_IMPORT_MEMBERS})],
+            )
+
+        total_size = 0
+        for info in infos:
             if info.flag_bits & 0x1:
                 raise ProjectArchiveValidationError(
                     ValidationMessage("arch_import_validation_failed"),
@@ -1744,6 +1783,44 @@ class ProjectArchiveService:
                     errors=[ValidationMessage("arch_zip_symlink_entry", {"name": info.filename})],
                 )
 
+            if not info.is_dir():
+                if info.file_size > MAX_IMPORT_MEMBER_BYTES:
+                    raise ProjectArchiveValidationError(
+                        ValidationMessage("arch_import_validation_failed"),
+                        status_code=413,
+                        errors=[
+                            ValidationMessage(
+                                "arch_zip_entry_too_large",
+                                {"name": info.filename, "max_mb": MAX_IMPORT_MEMBER_BYTES // 1024**2},
+                            )
+                        ],
+                    )
+                total_size += info.file_size
+                if total_size > MAX_IMPORT_TOTAL_BYTES:
+                    raise ProjectArchiveValidationError(
+                        ValidationMessage("arch_import_validation_failed"),
+                        status_code=413,
+                        errors=[
+                            ValidationMessage(
+                                "arch_zip_expanded_too_large",
+                                {"max_mb": MAX_IMPORT_TOTAL_BYTES // 1024**2},
+                            )
+                        ],
+                    )
+                if info.file_size > 1024 * 1024 and (
+                    info.compress_size == 0 or info.file_size / info.compress_size > MAX_IMPORT_COMPRESSION_RATIO
+                ):
+                    raise ProjectArchiveValidationError(
+                        ValidationMessage("arch_import_validation_failed"),
+                        status_code=413,
+                        errors=[
+                            ValidationMessage(
+                                "arch_zip_compression_ratio_too_high",
+                                {"name": info.filename, "max_ratio": MAX_IMPORT_COMPRESSION_RATIO},
+                            )
+                        ],
+                    )
+
             members.append(
                 ArchiveMember(
                     info=info,
@@ -1766,7 +1843,10 @@ class ProjectArchiveService:
     ) -> dict[str, Any]:
         try:
             with archive.open(member.info) as handle:
-                return json.loads(handle.read().decode("utf-8"))
+                payload = handle.read(MAX_IMPORT_JSON_BYTES + 1)
+                if len(payload) > MAX_IMPORT_JSON_BYTES:
+                    raise ValueError("JSON member exceeds the configured size limit")
+                return json.loads(payload.decode("utf-8"))
         except Exception as exc:
             raise ProjectArchiveValidationError(
                 ValidationMessage("arch_import_validation_failed"),

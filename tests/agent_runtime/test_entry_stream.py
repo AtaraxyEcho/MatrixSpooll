@@ -11,7 +11,8 @@ from fastapi.sse import ServerSentEvent
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from lib.db.base import Base
+from lib.db.base import DEFAULT_USER_ID, Base
+from lib.db.repositories.session_repo import SessionRepository
 from lib.i18n import DEFAULT_LOCALE, get_translator
 from server.agent_runtime.event_log import EventLogService, EventLogStore
 from server.agent_runtime.models import LiveMessage, SubscriptionReady
@@ -85,6 +86,8 @@ async def entry_service(tmp_path):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        await SessionRepository(session).create("demo", SESSION_ID)
     store = EventLogStore(session_factory=factory)
 
     service = AssistantService(project_root=tmp_path)
@@ -269,7 +272,7 @@ class TestListSessionEntries:
         assert result["entries"] == []
 
 
-_FAKE_USER = CurrentUserInfo(id="default", sub="testuser", role="admin")
+_FAKE_USER = CurrentUserInfo(id=DEFAULT_USER_ID, sub="testuser", role="admin")
 PROJECT = "demo"
 PREFIX = f"/api/v1/projects/{PROJECT}/assistant"
 

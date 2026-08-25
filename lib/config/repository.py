@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from lib.db.encrypted_type import decrypt_secret, encrypt_secret
 from lib.db.models.config import ProviderConfig, SystemSetting
 
 
@@ -33,11 +34,18 @@ class ProviderConfigRepository:
         result = await self.session.execute(stmt)
         row = result.scalar_one_or_none()
         if row:
-            row.value = value
+            row.value = (encrypt_secret(value) or "") if is_secret else value
             row.is_secret = is_secret
             row.updated_at = datetime.now(UTC)
         else:
-            self.session.add(ProviderConfig(provider=provider, key=key, value=value, is_secret=is_secret))
+            self.session.add(
+                ProviderConfig(
+                    provider=provider,
+                    key=key,
+                    value=(encrypt_secret(value) or "") if is_secret else value,
+                    is_secret=is_secret,
+                )
+            )
         if flush:
             await self.session.flush()
 
@@ -50,7 +58,7 @@ class ProviderConfigRepository:
     async def get_all(self, provider: str) -> dict[str, str]:
         stmt = select(ProviderConfig).where(ProviderConfig.provider == provider)
         result = await self.session.execute(stmt)
-        return {row.key: row.value for row in result.scalars()}
+        return {row.key: (decrypt_secret(row.value) or "" if row.is_secret else row.value) for row in result.scalars()}
 
     async def get_all_masked(self, provider: str) -> dict[str, dict]:
         stmt = select(ProviderConfig).where(ProviderConfig.provider == provider)
@@ -58,7 +66,7 @@ class ProviderConfigRepository:
         out: dict[str, dict] = {}
         for row in result.scalars():
             if row.is_secret:
-                out[row.key] = {"is_set": True, "masked": mask_secret(row.value)}
+                out[row.key] = {"is_set": True, "masked": mask_secret(decrypt_secret(row.value) or "")}
             else:
                 out[row.key] = {"is_set": True, "value": row.value}
         return out
@@ -83,7 +91,8 @@ class ProviderConfigRepository:
         result = await self.session.execute(stmt)
         out: dict[str, dict[str, str]] = {}
         for row in result.scalars():
-            out.setdefault(row.provider, {})[row.key] = row.value
+            value = decrypt_secret(row.value) if row.is_secret else row.value
+            out.setdefault(row.provider, {})[row.key] = value or ""
         return out
 
 

@@ -21,6 +21,7 @@ from server.error_handlers import register_error_handlers
 from server.routers import assistant
 from tests.auth_deps import AUTH_DEPENDENCIES
 from tests.conftest import make_translator
+from tests.factories import make_session_meta
 
 pytestmark = pytest.mark.unit
 
@@ -29,7 +30,7 @@ PREFIX = f"/api/v1/projects/{PROJECT}/assistant"
 ORIGIN = "origin-session"
 REWRITE_URL = f"{PREFIX}/sessions/{ORIGIN}/rewrite"
 
-_FAKE_USER = CurrentUserInfo(id="default", sub="testuser", role="admin")
+_FAKE_USER = CurrentUserInfo(id="00000000-0000-4000-8000-000000000001", sub="testuser", role="admin")
 _T = make_translator()
 
 
@@ -59,7 +60,11 @@ def _post(rewrite_result, body: dict | None = None):
         fake.side_effect = rewrite_result
     else:
         fake.return_value = rewrite_result
-    with patch.object(assistant.assistant_service, "rewrite_message", new=fake):
+    session = make_session_meta(id=ORIGIN, project_name=PROJECT, actor_user_id=_FAKE_USER.id)
+    with (
+        patch.object(assistant.assistant_service, "get_session", new=AsyncMock(return_value=session)),
+        patch.object(assistant.assistant_service, "rewrite_message", new=fake),
+    ):
         with _build_client() as client:
             return client.post(REWRITE_URL, json=payload), fake
 

@@ -20,6 +20,7 @@ from lib.db.project_identity import resolve_project_id
 from lib.db.repositories.task_repo import TaskRepository
 from lib.generation_admission import generation_admission_lock
 from lib.project_migration_guard import assert_project_migration_ok
+from lib.storage_capacity import ensure_storage_capacity
 from lib.task_terminal_events import emit_task_terminal_events
 
 if TYPE_CHECKING:
@@ -374,6 +375,7 @@ class GenerationQueue:
         # method, so a project whose migration failed is refused here once instead of
         # at each caller. Nothing is created and nothing is billed.
         await asyncio.to_thread(assert_project_migration_ok, project_name)
+        await asyncio.to_thread(ensure_storage_capacity)
 
         if task_type == "reference_video":
             payload = reference_video_enqueue_payload(payload, script_file=script_file)

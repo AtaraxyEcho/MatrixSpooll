@@ -1,5 +1,9 @@
 
 export default {
+  request_failed: "Request failed",
+  upload_failed: "Upload failed",
+  project_content_mode_immutable: "The content mode cannot be changed after project creation",
+  upload_conflict_invalid: "Could not upload “{{filename}}” because the server returned incomplete conflict information",
   'language': 'Language',
   'chinese': 'Chinese',
   'english': 'English',

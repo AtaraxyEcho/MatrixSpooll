@@ -106,6 +106,12 @@ class _FakeTextBackend:
         )
 
 
+@pytest.fixture
+async def overview_ledger_db(db_factory, monkeypatch):
+    """Route overview-generation accounting into the isolated test database."""
+    monkeypatch.setattr("lib.ledger.safe_session_factory", db_factory)
+
+
 class TestProjectManagerMore:
     @pytest.mark.unit
     def test_filesystem_script_rebinding_forgets_unbound_resource_claims(self, tmp_path):
@@ -768,7 +774,7 @@ class TestProjectManagerMore:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_reference_read_source_and_generate_overview(self, tmp_path, monkeypatch):
+    async def test_reference_read_source_and_generate_overview(self, tmp_path, monkeypatch, overview_ledger_db):
         pm = ProjectManager(tmp_path / "projects")
         pm.create_project("demo")
         pm.create_project_metadata("demo", "Demo")
@@ -823,7 +829,7 @@ class TestProjectManagerMore:
     @pytest.mark.unit
     @pytest.mark.parametrize("lang", ["zh", "en", "vi"])
     @pytest.mark.asyncio
-    async def test_generate_overview_source_language_synced(self, tmp_path, monkeypatch, lang):
+    async def test_generate_overview_source_language_synced(self, tmp_path, monkeypatch, overview_ledger_db, lang):
         pm = ProjectManager(tmp_path / "projects")
         pm.create_project("demo")
         pm.create_project_metadata("demo", "Demo")
@@ -839,7 +845,7 @@ class TestProjectManagerMore:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_generate_overview_invalid_language_raises(self, tmp_path, monkeypatch):
+    async def test_generate_overview_invalid_language_raises(self, tmp_path, monkeypatch, overview_ledger_db):
         """schema 违反 → ValidationError 干净抛出,source_language 不被写入."""
         from pydantic import ValidationError
 
@@ -859,7 +865,9 @@ class TestProjectManagerMore:
     @pytest.mark.unit
     @pytest.mark.parametrize("source_kind", [None, "novel", "screenplay"])
     @pytest.mark.asyncio
-    async def test_generate_overview_routes_prompt_by_source_kind(self, tmp_path, monkeypatch, source_kind):
+    async def test_generate_overview_routes_prompt_by_source_kind(
+        self, tmp_path, monkeypatch, overview_ledger_db, source_kind
+    ):
         """overview prompt 按项目 source_kind 路由：screenplay 走「提取优先」分支，
         novel / 缺省维持原 prompt（回归）。只断言 source_kind 被透传，不测 LLM 提取质量。"""
         from lib.prompt_builders_script import build_overview_prompt
@@ -886,7 +894,7 @@ class TestProjectManagerMore:
     @pytest.mark.parametrize("dirty_source_language", [123, ["zh"], {}, "", "   "])
     @pytest.mark.asyncio
     async def test_generate_overview_dirty_source_language_falls_back_to_default(
-        self, tmp_path, monkeypatch, dirty_source_language
+        self, tmp_path, monkeypatch, overview_ledger_db, dirty_source_language
     ):
         """project.json 的 source_language 是非字符串或空白脏数据时，target_language 回退默认值，
         不把脏对象直接传入 prompt 文本。"""
@@ -915,7 +923,7 @@ class TestProjectManagerMore:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_generate_overview_legacy_project_without_source_kind_falls_back_to_novel(
-        self, tmp_path, monkeypatch
+        self, tmp_path, monkeypatch, overview_ledger_db
     ):
         """遗留 project.json 缺 source_kind 字段时退回 novel 分支（覆盖 `.get(...) or DEFAULT_SOURCE_KIND` 兜底）。"""
         from lib.prompt_builders_script import build_overview_prompt

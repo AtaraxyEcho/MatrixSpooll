@@ -6,7 +6,7 @@ import { Link, useLocation, useSearch } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth-store";
 import { safeReturnPath } from "@/utils/safe-url";
-import { getDeviceId } from "@/utils/auth";
+import { discardLegacyToken, getDeviceId } from "@/utils/auth";
 import { BRAND } from "@/branding";
 import { ROUTE_ADMIN_LOGIN, ROUTE_ADMIN_MANAGER, ROUTE_APP } from "@/app-routes";
 import type { LoginResponse, ErrorResponse } from "@/api";
@@ -47,7 +47,7 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
         grant_type: "password",
         device_id: getDeviceId(),
       });
-      const resp = await fetch("/api/v1/auth/token", {
+      const resp = await fetch("/api/v1/auth/session", {
         method: "POST",
         headers: {
           "Accept-Language": i18n.language || "zh",
@@ -62,14 +62,14 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
       }
 
       const data = await resp.json() as LoginResponse;
+      discardLegacyToken();
       const role = data.role ?? null;
       if (adminOnly && role !== "admin") {
         logout();
         throw new Error(t("admin:admin_required"));
       }
       login(
-        data.access_token,
-        data.username ?? username,
+        data.username,
         role,
         data.nickname ?? null,
         data.avatar_path ?? null,
@@ -206,7 +206,7 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
         <Link
           href={ROUTE_ADMIN_LOGIN}
           title={t("admin:admin_entry_hint")}
-          className="absolute right-5 top-5 inline-flex items-center gap-1.5 rounded-md border border-accent/45 bg-accent/10 px-2.5 py-1.5 text-[11px] text-accent-2 shadow-[0_0_22px_-14px_var(--color-accent-glow)] transition-all duration-200 ease-out hover:border-accent/75 hover:bg-accent/15 hover:text-text hover:shadow-[0_0_24px_-8px_var(--color-accent-glow)] motion-safe:hover:scale-105 focus-visible:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg motion-reduce:transition-none"
+          className="absolute right-5 top-5 inline-flex items-center gap-1.5 rounded-md border border-accent/45 bg-accent/10 px-2.5 py-1.5 text-[11px] text-accent-2 shadow-[0_0_22px_-14px_var(--color-accent-glow)] transition-[border-color,background-color,color,box-shadow,transform] duration-200 ease-out hover:border-accent/75 hover:bg-accent/15 hover:text-text hover:shadow-[0_0_24px_-8px_var(--color-accent-glow)] motion-safe:hover:scale-105 focus-visible:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg motion-reduce:transition-none"
         >
           <ShieldCheck className="h-3.5 w-3.5 text-accent-2" aria-hidden />
           <span>{t("admin:admin_entry")}</span>

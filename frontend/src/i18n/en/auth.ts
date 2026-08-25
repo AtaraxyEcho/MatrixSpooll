@@ -3,6 +3,7 @@ export default {
   'login': 'Login',
   'logging_in': 'Logging in...',
   'login_failed': 'Login failed',
+  'login_required': 'Your session has expired. Please sign in again',
   'username': 'Username',
   'password': 'Password',
   'workspace_kicker': 'Workspace / access',

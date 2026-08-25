@@ -1432,6 +1432,54 @@ class TestProjectArchiveService:
             service.import_project_archive(archive_path, uploaded_filename="unsafe.zip")
 
     @pytest.mark.unit
+    def test_import_rejects_archive_with_too_many_members(self, tmp_path, monkeypatch):
+        pm = ProjectManager(tmp_path / "projects")
+        service = ProjectArchiveService(pm)
+        archive_path = tmp_path / "many.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("demo/project.json", json.dumps({"title": "Demo"}))
+            archive.writestr("demo/source/chapter.txt", "source")
+
+        monkeypatch.setattr(project_archive_module, "MAX_IMPORT_MEMBERS", 1)
+        with pytest.raises(ProjectArchiveValidationError) as exc_info:
+            service.import_project_archive(archive_path, uploaded_filename="many.zip")
+
+        assert exc_info.value.status_code == 413
+        assert exc_info.value.errors[0].key == "arch_zip_too_many_entries"
+
+    @pytest.mark.unit
+    def test_import_rejects_excessive_expanded_size(self, tmp_path, monkeypatch):
+        pm = ProjectManager(tmp_path / "projects")
+        service = ProjectArchiveService(pm)
+        archive_path = tmp_path / "large.zip"
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr("demo/project.json", json.dumps({"title": "Demo"}))
+            archive.writestr("demo/source/chapter.txt", "source")
+
+        monkeypatch.setattr(project_archive_module, "MAX_IMPORT_TOTAL_BYTES", 16)
+        with pytest.raises(ProjectArchiveValidationError) as exc_info:
+            service.import_project_archive(archive_path, uploaded_filename="large.zip")
+
+        assert exc_info.value.status_code == 413
+        assert exc_info.value.errors[0].key == "arch_zip_expanded_too_large"
+
+    @pytest.mark.unit
+    def test_import_rejects_suspicious_compression_ratio(self, tmp_path, monkeypatch):
+        pm = ProjectManager(tmp_path / "projects")
+        service = ProjectArchiveService(pm)
+        archive_path = tmp_path / "bomb.zip"
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("demo/project.json", json.dumps({"title": "Demo"}))
+            archive.writestr("demo/source/repeated.txt", b"0" * (2 * 1024 * 1024))
+
+        monkeypatch.setattr(project_archive_module, "MAX_IMPORT_COMPRESSION_RATIO", 10)
+        with pytest.raises(ProjectArchiveValidationError) as exc_info:
+            service.import_project_archive(archive_path, uploaded_filename="bomb.zip")
+
+        assert exc_info.value.status_code == 413
+        assert exc_info.value.errors[0].key == "arch_zip_compression_ratio_too_high"
+
+    @pytest.mark.unit
     def test_import_rename_conflict_generates_new_project_id(self, tmp_path):
         pm = ProjectManager(tmp_path / "projects")
         _create_project(pm)

@@ -5,7 +5,7 @@
 同时支持 API Key 认证（`msp-` 前缀的 Bearer token）。
 
 浏览器发起请求的认证模式：
-- SSE 端点同时接受 Authorization header 和 ``?token=`` query param，两处凭证范围一致：JWT 或 ``msp-`` 前缀 API Key
+- SSE 和浏览器原生媒体请求通过 Authorization header 或 HttpOnly Cookie 认证
 - 导出端点使用短时效下载 token（``purpose=download``）作为 query param 唯一认证方式
 - 静态媒体文件不要求认证
 新端点须按用途选用对应模式。
@@ -22,10 +22,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import jwt
-from fastapi import Cookie, Depends, HTTPException, Query
+from fastapi import Cookie, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel, ConfigDict
@@ -772,6 +772,13 @@ async def _payload_to_user(
     # during the migration window instead of mapping them to a magic id.
     subject = payload.get("sub")
     if isinstance(subject, str) and subject:
+        if not database_auth_initialized():
+            return CurrentUserInfo(
+                id=uuid5(NAMESPACE_URL, f"matrixspooll:bootstrap-user:{subject}").hex,
+                sub=subject,
+                role="admin",
+                is_superadmin=True,
+            )
         async with async_session_factory() as db_session:
             user = await db_session.scalar(select(User).where(User.username == subject, User.is_active.is_(True)))
         if user is not None:
@@ -786,38 +793,42 @@ async def _payload_to_user(
 async def get_current_user(
     _t: Translator,
     token: Annotated[str | None, Depends(oauth2_scheme_optional)] = None,
+    cookie_token: Annotated[str | None, Cookie(alias="matrixspooll_auth_token")] = None,
 ) -> CurrentUserInfo:
-    """标准认证依赖 — 支持 JWT 和 API Key Bearer token。
+    """标准认证依赖 — 支持 Bearer token 和浏览器 HttpOnly Cookie。
 
     ``AUTH_ENABLED=false`` 时无视 token，直接返回匿名 admin。
     启用时缺 token 抛 401（与旧 oauth2_scheme auto_error 行为等价）。
     """
     if not is_auth_enabled():
         return _anonymous_user()
-    if not token:
+    raw = next(
+        (candidate for candidate in (token, cookie_token) if isinstance(candidate, str) and candidate),
+        None,
+    )
+    if not raw:
         raise HTTPException(
             status_code=401,
             detail=_t("auth_required"),
             headers={"WWW-Authenticate": "Bearer"},
         )
-    payload = await _verify_and_get_payload_async(token, _t)
+    payload = await _verify_and_get_payload_async(raw, _t)
     return await _payload_to_user(payload, _t)
 
 
 async def get_current_user_flexible(
     _t: Translator,
     token: Annotated[str | None, Depends(oauth2_scheme_optional)] = None,
-    query_token: str | None = Query(None, alias="token"),
-    cookie_token: str | None = Cookie(None, alias="matrixspooll_auth_token"),
+    cookie_token: Annotated[str | None, Cookie(alias="matrixspooll_auth_token")] = None,
 ) -> CurrentUserInfo:
-    """SSE 认证依赖 — 同时支持 Authorization header 和 ?token= query param。
+    """SSE 认证依赖 — 同时支持 Authorization header 和 HttpOnly Cookie。
 
     ``AUTH_ENABLED=false`` 时无视 token，直接返回匿名 admin。
     """
     if not is_auth_enabled():
         return _anonymous_user()
     raw = next(
-        (candidate for candidate in (token, query_token, cookie_token) if isinstance(candidate, str) and candidate),
+        (candidate for candidate in (token, cookie_token) if isinstance(candidate, str) and candidate),
         None,
     )
     if not raw:

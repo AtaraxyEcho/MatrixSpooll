@@ -18,8 +18,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 @pytest.fixture
 def alembic_cfg(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
-    # env.py 通过 DATABASE_URL 环境变量获取 URL，必须用 aiosqlite 协议
-    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    # 测试模式通过专用环境变量获取 URL，必须用 aiosqlite 协议。
+    monkeypatch.setenv("MATRIXSPOOLL_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     # alembic env.py 调用 logging.config.fileConfig(...)，默认 disable_existing_loggers=True，
     # 会禁掉测试进程已注册的 logger，导致后续 caplog 测试抓不到日志。
     # patch 为 disable_existing_loggers=False 防止跨测试污染。

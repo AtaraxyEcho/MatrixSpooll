@@ -25,6 +25,8 @@ PUBLIC_OPERATIONS = frozenset(
         "GET /health",
         "GET /api/v1/auth/status",
         "POST /api/v1/auth/token",
+        "POST /api/v1/auth/session",
+        "GET /api/v1/avatars/{filename}",
         "GET /api/v1/files/{project_name}/{path}",
         "GET /api/v1/global-assets/{asset_type}/{filename}",
     }
@@ -137,6 +139,8 @@ def test_public_endpoints_stay_reachable(client):
     # 静态媒体：项目不存在时是 404，不该是 401。
     assert client.get("/api/v1/files/demo/x.png").status_code != 401
     assert client.get("/api/v1/global-assets/characters/x.png").status_code != 401
+    assert client.get("/api/v1/avatars/missing.png").status_code != 401
+    assert client.post("/api/v1/auth/session", json={}).status_code != 401
 
 
 @pytest.mark.parametrize(

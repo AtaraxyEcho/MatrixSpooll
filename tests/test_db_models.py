@@ -109,6 +109,9 @@ class TestUserModel:
             "is_superadmin",
             "nickname",
             "avatar_path",
+            "email",
+            "last_login_at",
+            "last_login_ip",
             "created_at",
             "updated_at",
         }

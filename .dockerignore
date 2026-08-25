@@ -13,7 +13,24 @@ vertex_keys/
 docs/
 tests/
 .pytest_cache
+.pytest-tmp
 .coverage
 htmlcov
 *.egg-info
 .claude/worktrees
+
+# Local runtime data created beside deployment manifests must never enter the
+# build context. Production images contain dependencies and application code,
+# while databases, media, logs, credentials, and Agent transcripts are mounted.
+deploy/.env
+deploy/pgdata
+deploy/projects
+deploy/logs
+deploy/vertex_keys
+deploy/claude_data
+deploy/**/.env
+deploy/**/pgdata
+deploy/**/projects
+deploy/**/logs
+deploy/**/vertex_keys
+deploy/**/claude_data

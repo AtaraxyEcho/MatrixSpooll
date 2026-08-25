@@ -274,11 +274,12 @@ class DiscoverResponse(BaseModel):
 class DiscoverAnthropicRequest(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
+    source_custom_provider_id: int | None = None
 
 
 class CredentialsResponse(BaseModel):
     base_url: str
-    api_key: str
+    api_key_masked: str
 
 
 class EndpointDescriptor(BaseModel):
@@ -647,24 +648,22 @@ async def get_provider(
     return _provider_to_response(provider, models, await _global_bucket_refs_for_provider(session, provider_id))
 
 
-@router.get("/{provider_id}/credentials", response_model=CredentialsResponse, dependencies=[Depends(require_admin)])
+@router.get(
+    "/{provider_id}/credential-summary", response_model=CredentialsResponse, dependencies=[Depends(require_admin)]
+)
 async def get_provider_credentials(
     provider_id: int,
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
 ):
-    """返回明文 base_url + api_key，供智能体配置导入复用。
-
-    仅 CurrentUser 鉴权,与现有 PATCH 接口对齐;日志不打印 body。
-    多用户场景需重新评估细粒度授权。
-    """
+    """返回非敏感连接信息和脱敏密钥摘要，供界面确认配置状态。"""
     repo = CustomProviderRepository(session)
     provider = await repo.get_provider(provider_id)
     if provider is None:
         raise HTTPException(status_code=404, detail=_t("provider_not_found"))
     return CredentialsResponse(
         base_url=provider.base_url or "",
-        api_key=provider.api_key or "",
+        api_key_masked=mask_secret(provider.api_key or ""),
     )
 
 
@@ -835,7 +834,13 @@ async def discover_anthropic_models_endpoint(
 
     凭据缺失时 fallback 到 active credential（AgentCredentialRepository）。
     """
-    body_key = (body.api_key or "").strip()
+    source_provider = None
+    if body.source_custom_provider_id is not None:
+        source_provider = await CustomProviderRepository(session).get_provider(body.source_custom_provider_id)
+        if source_provider is None:
+            raise HTTPException(status_code=404, detail=_t("provider_not_found"))
+
+    body_key = (source_provider.api_key if source_provider is not None else body.api_key or "").strip()
     needs_key = not body_key
     needs_url = body.base_url is None
 
@@ -849,7 +854,11 @@ async def discover_anthropic_models_endpoint(
     if not api_key:
         raise HTTPException(status_code=400, detail=_t("anthropic_discovery_no_key"))
 
-    base_url = body.base_url if not needs_url else (cred.base_url if cred else None)
+    base_url = body.base_url
+    if base_url is None and source_provider is not None:
+        base_url = source_provider.base_url
+    if base_url is None:
+        base_url = cred.base_url if cred else None
 
     return await _run_discover("anthropic", base_url, api_key, _t)
 

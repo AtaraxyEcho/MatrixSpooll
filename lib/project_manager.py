@@ -1343,8 +1343,7 @@ class ProjectManager:
         if not real.exists():
             raise FileNotFoundError(f"剧本文件不存在: {real}")
 
-        with open(real, encoding="utf-8") as f:  # noqa: PTH123
-            script = json.load(f)
+        script = load_json(real)
 
         migrated, warnings = migrate_script_unit_durations(script)
         for message in warnings:
@@ -1955,7 +1954,7 @@ class ProjectManager:
         path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = path.parent / f".{path.name}.lock"
         lock_path.touch(exist_ok=True)
-        with portalocker.Lock(lock_path, flags=portalocker.LOCK_EX):
+        with portalocker.Lock(lock_path, timeout=60, check_interval=0.01):
             yield
 
     @contextmanager

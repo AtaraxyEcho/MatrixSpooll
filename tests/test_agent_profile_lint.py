@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from lib.profile_frontmatter import parse_profile_metadata
+from lib.profile_manifest import VALID_CONTENT_MODES
 from scripts.lint_agent_runtime_profile import lint_profile
 
 pytestmark = pytest.mark.unit
@@ -17,7 +18,7 @@ def _valid_profile(root: Path) -> Path:
     (profile / ".claude" / "agents").mkdir(parents=True)
     (profile / ".claude" / "references").mkdir(parents=True)
     (profile / "evals").mkdir()
-    for mode in ("narration", "drama", "ad"):
+    for mode in sorted(VALID_CONTENT_MODES):
         (profile / f"CLAUDE.{mode}.md").write_text(
             f"See `.claude/references/mode.md`.\n<!-- {mode} -->\n",
             encoding="utf-8",

@@ -1,21 +1,13 @@
 // router.tsx — Route definitions for the studio layout
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Route, Switch, Redirect, useLocation, useParams } from "wouter";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, ArrowLeft, Loader2, RefreshCw } from "lucide-react";
 import { FreeCreationLayout, StudioLayout } from "@/components/layout";
-import { FreeCreationWorkspace } from "@/components/canvas/FreeCreationWorkspace";
-import { StudioCanvasRouter } from "@/components/canvas/StudioCanvasRouter";
-import { ProjectsPage } from "@/components/pages/ProjectsPage";
-import { SystemConfigPage } from "@/components/pages/SystemConfigPage";
-import { ProjectSettingsPage } from "@/components/pages/ProjectSettingsPage";
-import { AssetLibraryPage } from "@/components/pages/AssetLibraryPage";
 import { LoginPage } from "@/pages/LoginPage";
-import { AdminManagerPage } from "@/pages/AdminManagerPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 import { ToastOverlay } from "@/components/layout/ToastOverlay";
-import { OnboardingTour } from "@/onboarding/OnboardingTour";
 import {
   buildDemoProjectData,
   buildDemoScripts,
@@ -43,6 +35,55 @@ import {
   ROUTE_APP_SETTINGS,
   WORKSPACE_ROUTE_SETTINGS,
 } from "@/app-routes";
+
+const FreeCreationWorkspace = lazy(() =>
+  import("@/components/canvas/FreeCreationWorkspace").then((module) => ({
+    default: module.FreeCreationWorkspace,
+  })),
+);
+const StudioCanvasRouter = lazy(() =>
+  import("@/components/canvas/StudioCanvasRouter").then((module) => ({
+    default: module.StudioCanvasRouter,
+  })),
+);
+const ProjectsPage = lazy(() =>
+  import("@/components/pages/ProjectsPage").then((module) => ({ default: module.ProjectsPage })),
+);
+const SystemConfigPage = lazy(() =>
+  import("@/components/pages/SystemConfigPage").then((module) => ({
+    default: module.SystemConfigPage,
+  })),
+);
+const ProjectSettingsPage = lazy(() =>
+  import("@/components/pages/ProjectSettingsPage").then((module) => ({
+    default: module.ProjectSettingsPage,
+  })),
+);
+const AssetLibraryPage = lazy(() =>
+  import("@/components/pages/AssetLibraryPage").then((module) => ({
+    default: module.AssetLibraryPage,
+  })),
+);
+const AdminManagerPage = lazy(() =>
+  import("@/pages/AdminManagerPage").then((module) => ({ default: module.AdminManagerPage })),
+);
+const OnboardingTour = lazy(() =>
+  import("@/onboarding/OnboardingTour").then((module) => ({ default: module.OnboardingTour })),
+);
+
+function RouteLoading() {
+  const { t } = useTranslation("common");
+  return (
+    <main
+      role="status"
+      aria-live="polite"
+      className="flex h-screen items-center justify-center gap-2 bg-bg text-[13px] text-text-4"
+    >
+      <Loader2 aria-hidden className="h-4 w-4 motion-safe:animate-spin" />
+      <span>{t("loading")}</span>
+    </main>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // ConfigStatusLoader — 登录后集中拉取一次配置完整性状态
@@ -110,6 +151,12 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     return <Redirect to={`~/login?from=${encodeURIComponent(from)}`} />;
   }
 
+  return <>{children}</>;
+}
+
+function SystemSettingsGuard({ children }: { children: React.ReactNode }) {
+  const role = useAuthStore((state) => state.role);
+  if (role === "member") return <Redirect to={`~${ROUTE_APP}`} />;
   return <>{children}</>;
 }
 
@@ -362,8 +409,9 @@ export function AppRoutes() {
   return (
     <>
       <ConfigStatusLoader />
-      <OnboardingTour />
-      <Switch>
+      <Suspense fallback={<RouteLoading />}>
+        <OnboardingTour />
+        <Switch>
         {/* Login page */}
         <Route path="/login">
           <LoginPage />
@@ -411,7 +459,9 @@ export function AppRoutes() {
         {/* System settings */}
         <Route path={ROUTE_APP_SETTINGS}>
           <AuthGuard>
-            <SystemConfigPage />
+            <SystemSettingsGuard>
+              <SystemConfigPage />
+            </SystemSettingsGuard>
           </AuthGuard>
         </Route>
 
@@ -447,7 +497,8 @@ export function AppRoutes() {
         <Route>
           <NotFoundPage />
         </Route>
-      </Switch>
+        </Switch>
+      </Suspense>
       <ToastOverlay />
     </>
   );

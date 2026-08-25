@@ -25,7 +25,8 @@ def _project(tmp_path: Path, *, novel: str | None = NOVEL) -> Path:
     d = tmp_path / "demo"
     (d / "source").mkdir(parents=True)
     if novel is not None:
-        (d / "source" / "novel.txt").write_text(novel, encoding="utf-8")
+        with (d / "source" / "novel.txt").open("w", encoding="utf-8", newline="") as source_file:
+            source_file.write(novel)
     return d
 
 

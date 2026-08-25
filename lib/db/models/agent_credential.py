@@ -10,6 +10,7 @@ from sqlalchemy import Boolean, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lib.db.base import Base, TimestampMixin
+from lib.db.encrypted_type import EncryptedText
 
 
 class AgentAnthropicCredential(TimestampMixin, Base):
@@ -37,7 +38,7 @@ class AgentAnthropicCredential(TimestampMixin, Base):
     preset_id: Mapped[str] = mapped_column(String(64), nullable=False)  # "deepseek" | "__custom__" | ...
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
     base_url: Mapped[str] = mapped_column(Text, nullable=False)
-    api_key: Mapped[str] = mapped_column(Text, nullable=False)  # 明文，读出 API mask_secret 脱敏
+    api_key: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     haiku_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     sonnet_model: Mapped[str | None] = mapped_column(String(128), nullable=True)

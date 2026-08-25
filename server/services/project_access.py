@@ -13,7 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Depends, Request
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -101,7 +101,7 @@ async def resolve_project_access(
         registry_unavailable_in_testing = True
 
     resolved_by_name = False
-    if registry is None:
+    if registry is None and not registry_unavailable_in_testing:
         registry = await session.scalar(
             select(ProjectRegistry).where(ProjectRegistry.storage_key == project_identifier)
         )
@@ -401,6 +401,9 @@ async def list_accessible_projects(
     session: AsyncSession,
     *,
     include_all: bool = False,
+    name_query: str | None = None,
+    offset: int | None = None,
+    limit: int | None = None,
 ) -> list[ProjectRegistry]:
     """Return only projects visible to one user, ordered by update time."""
 
@@ -411,5 +414,30 @@ async def list_accessible_projects(
             .where(or_(ProjectRegistry.owner_id == user_id, ProjectMember.user_id == user_id))
             .distinct()
         )
+    if name_query:
+        stmt = stmt.where(ProjectRegistry.name.ilike(f"%{name_query}%"))
     stmt = stmt.order_by(ProjectRegistry.updated_at.desc(), ProjectRegistry.name.asc())
+    if offset is not None:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return list((await session.scalars(stmt)).all())
+
+
+async def count_accessible_projects(
+    user_id: str,
+    session: AsyncSession,
+    *,
+    include_all: bool = False,
+    name_query: str | None = None,
+) -> int:
+    """Count visible registry rows without touching file-backed projects."""
+
+    stmt = select(func.count(func.distinct(ProjectRegistry.id)))
+    if not include_all:
+        stmt = stmt.outerjoin(ProjectMember, ProjectMember.project_id == ProjectRegistry.id).where(
+            or_(ProjectRegistry.owner_id == user_id, ProjectMember.user_id == user_id)
+        )
+    if name_query:
+        stmt = stmt.where(ProjectRegistry.name.ilike(f"%{name_query}%"))
+    return int((await session.scalar(stmt)) or 0)

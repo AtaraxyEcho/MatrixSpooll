@@ -77,9 +77,13 @@ class TestSessionManagerSdkSessionId:
 
     async def test_finalize_turn_records_assistant_usage(self, session_manager, meta_store):
         meta = await meta_store.create("demo", "sdk-usage-789")
-        managed = _make_managed(session_id=meta.id, project_name="demo", assistant_model="claude-sonnet-4")
+        managed = _make_managed(
+            session_id=meta.id,
+            project_name="demo",
+            assistant_model="claude-sonnet-4",
+            actor_user_id="assistant-user",
+        )
         managed.last_user_prompt = "hello assistant"
-        session_manager._user_id = "assistant-user"  # type: ignore[attr-defined]
 
         await session_manager._finalize_turn(
             managed,

@@ -45,6 +45,7 @@ export interface CreateAgentCredentialRequest {
   display_name?: string | null;
   base_url?: string | null;
   api_key: string;
+  source_custom_provider_id?: number | null;
   model?: string | null;
   haiku_model?: string | null;
   sonnet_model?: string | null;
@@ -92,5 +93,6 @@ export interface TestConnectionRequest {
   preset_id?: string | null;
   base_url?: string | null;
   api_key: string;
+  source_custom_provider_id?: number | null;
   model?: string | null;
 }

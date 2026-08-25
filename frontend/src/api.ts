@@ -7,7 +7,7 @@
 
 import type {
   ProjectData,
-  ProjectSummary,
+  ProjectListResponse,
   ImportConflictPolicy,
   ImportProjectResponse,
   ExportDiagnostics,
@@ -44,7 +44,6 @@ import type {
   CustomProviderModelInput,
   DiscoveredModel,
   EndpointDescriptor,
-  CustomProviderCredentials,
   AnthropicDiscoverRequest,
   AnthropicDiscoverResponse,
   CostEstimateResponse,
@@ -108,7 +107,7 @@ import type {
   TestConnectionResponse,
   UpdateAgentCredentialRequest,
 } from "@/types/agent-credential";
-import { getToken, clearToken } from "@/utils/auth";
+import { withSession } from "@/utils/auth";
 import { isDemoProject } from "@/onboarding/demo-project";
 import i18n from "./i18n";
 
@@ -181,12 +180,10 @@ export interface AssetRenameResult {
   files: number;
 }
 
-/** Login response from POST /auth/token (mirrors backend TokenResponse). */
+/** Browser session response from POST /auth/session. */
 export interface LoginResponse {
-  access_token: string;
-  token_type: string;
-  username?: string | null;
-  role?: "admin" | "member" | null;
+  username: string;
+  role: "admin" | "member";
   nickname?: string | null;
   avatar_path?: string | null;
   email?: string | null;
@@ -563,14 +560,13 @@ async function throwIfNotOk(response: Response, fallbackMsg: string): Promise<vo
 function handleUnauthorized(response: Response): void {
   if (response.status !== 401) return;
 
-  clearToken();
   // 携带当前所在的站内地址，登录成功后回跳；仅对 /app/ 下的页面附加 from，
   // 避免把登录页自身等非应用路径写进回跳参数。
   const current = `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`;
   globalThis.location.href = current.startsWith("/app/")
     ? `/login?from=${encodeURIComponent(current)}`
     : "/login";
-  throw new Error("认证已过期，请重新登录");
+  throw new Error(i18n.t("auth:login_required"));
 }
 
 function isAgentFailureDetail(value: unknown): value is AgentFailureDetail {
@@ -753,7 +749,7 @@ function formatScriptEditResult(result: ScriptEditResult): string {
   return i18n.t(`dashboard:${key}`);
 }
 
-/** 为 fetch options 注入 Authorization header */
+/** 为 fetch options 注入会话 Cookie、CSRF 与语言信息。 */
 let apiReadOnly = false;
 
 /**
@@ -811,22 +807,15 @@ function withAuth(endpoint: string, options: RequestInit = {}): RequestInit {
   if (method !== "GET" && method !== "HEAD" && isReadOnlyGateBlocking(endpoint)) {
     throw new ReadOnlyModeError(method);
   }
-  const token = getToken();
   const headers = new Headers(options.headers);
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
   // Add Accept-Language header based on current i18n language
   headers.set("Accept-Language", i18n.language || "zh");
-  return { ...options, headers };
+  return withSession({ ...options, headers });
 }
 
-/** 为 URL 追加 token query param（用于 EventSource） */
+// Media elements and EventSource send same-origin cookies automatically.
 function withAuthQuery(url: string): string {
-  const token = getToken();
-  if (!token) return url;
-  const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}token=${encodeURIComponent(token)}`;
+  return url;
 }
 
 class API {
@@ -870,7 +859,7 @@ class API {
       if (isSpeechAdmission(error.detail)) {
         throw new SpeechAdmissionError(error.detail);
       }
-      throw new Error(messageFromDetail(error.detail, "请求失败"));
+      throw new Error(messageFromDetail(error.detail, i18n.t("common:request_failed")));
     }
 
     if (response.status === 204) {
@@ -1006,8 +995,21 @@ class API {
 
   // ==================== 项目管理 ====================
 
-  static async listProjects(): Promise<{ projects: ProjectSummary[] }> {
-    return this.request("/projects");
+  static async listProjects(filters: {
+    page?: number;
+    pageSize?: number;
+    query?: string;
+    contentMode?: string;
+    phase?: string;
+  } = {}): Promise<ProjectListResponse> {
+    const params = new URLSearchParams();
+    if (filters.page != null) params.set("page", String(filters.page));
+    if (filters.pageSize != null) params.set("page_size", String(filters.pageSize));
+    if (filters.query?.trim()) params.set("q", filters.query.trim());
+    if (filters.contentMode && filters.contentMode !== "all") params.set("content_mode", filters.contentMode);
+    if (filters.phase && filters.phase !== "all") params.set("phase", filters.phase);
+    const suffix = params.toString();
+    return this.request(`/projects${suffix ? `?${suffix}` : ""}`);
   }
 
   static async createProject(
@@ -1084,7 +1086,7 @@ class API {
     updates: Partial<ProjectData> & { clear_style_image?: boolean }
   ): Promise<{ success: boolean; project: ProjectData }> {
     if ("content_mode" in updates) {
-      throw new Error("项目创建后不支持修改 content_mode");
+      throw new Error(i18n.t("common:project_content_mode_immutable"));
     }
     return this.request(`/projects/${encodeURIComponent(name)}`, {
       method: "PATCH",
@@ -2051,7 +2053,7 @@ class API {
       // 若 detail 缺字段则视为协议异常，抛通用错误（带文件名标识）而非手搓 fallback —
       // 避免前端"猜"一个可能与后端命名规则不一致的 suggested_name 误导用户
       if (!detail?.existing || !detail?.suggested_name) {
-        throw new Error(`上传 "${file.name}" 失败：服务端返回 409 但 detail 字段不完整`);
+        throw new Error(i18n.t("common:upload_conflict_invalid", { filename: file.name }));
       }
       throw new ConflictError(
         detail.existing,
@@ -2060,7 +2062,7 @@ class API {
       );
     }
 
-    await throwIfNotOk(response, "上传失败");
+    await throwIfNotOk(response, i18n.t("common:upload_failed"));
     return (await response.json()) as {
       success: boolean;
       path: string;
@@ -2753,9 +2755,7 @@ class API {
   }
 
   static openProjectEventStream(options: ProjectEventStreamOptions): EventSource {
-    const url = withAuthQuery(
-      `${API_BASE}/projects/${encodeURIComponent(options.projectId)}/events/stream`
-    );
+    const url = `${API_BASE}/projects/${encodeURIComponent(options.projectId)}/events/stream`;
     const source = new EventSource(url);
 
     const parsePayload = (event: MessageEvent): unknown => {
@@ -2999,8 +2999,7 @@ class API {
     after: number = -1
   ): string {
     const base = `${API_BASE}${this.assistantBase(projectName)}/sessions/${encodeURIComponent(sessionId)}/entries/stream`;
-    const url = after >= 0 ? `${base}?after=${after}` : base;
-    return withAuthQuery(url);
+    return after >= 0 ? `${base}?after=${after}` : base;
   }
 
   static async listAssistantSkills(
@@ -3278,10 +3277,6 @@ class API {
     return this.request(`/custom-providers/${id}/test`, { method: "POST" });
   }
 
-  static async getCustomProviderCredentials(id: number): Promise<CustomProviderCredentials> {
-    return this.request(`/custom-providers/${id}/credentials`);
-  }
-
   static async discoverAnthropicModels(
     data: AnthropicDiscoverRequest,
     options: { signal?: AbortSignal } = {},
@@ -3469,7 +3464,7 @@ class API {
       const error = (await response.json().catch(() => ({ detail: response.statusText }))) as {
         detail?: string;
       };
-      throw new Error(typeof error.detail === "string" ? error.detail : "请求失败");
+      throw new Error(typeof error.detail === "string" ? error.detail : i18n.t("common:request_failed"));
     }
     return response.json() as Promise<{ asset: Asset }>;
   }
@@ -3492,7 +3487,7 @@ class API {
       const error = (await response.json().catch(() => ({ detail: response.statusText }))) as {
         detail?: string;
       };
-      throw new Error(typeof error.detail === "string" ? error.detail : "请求失败");
+      throw new Error(typeof error.detail === "string" ? error.detail : i18n.t("common:request_failed"));
     }
     return response.json() as Promise<{ asset: Asset }>;
   }

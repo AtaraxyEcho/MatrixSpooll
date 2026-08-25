@@ -4,6 +4,7 @@ export default {
   'login': '登录',
   'logging_in': '登录中...',
   'login_failed': '登录失败',
+  'login_required': '登录已失效，请重新登录',
   'username': '用户名',
   'password': '密码',
   'workspace_kicker': '工作区 / 入口',

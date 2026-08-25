@@ -20,13 +20,14 @@ pytestmark = pytest.mark.integration
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 _PREV_REVISION = "d10f1df40f96"
+_REVISION = "b7f2c41d9a30"
 _KEYS = ("default_image_backend", "default_image_backend_t2i", "default_image_backend_i2i")
 
 
 @pytest.fixture
 def alembic_cfg(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
-    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("MATRIXSPOOLL_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     import logging.config
 
     real_file_config = logging.config.fileConfig
@@ -171,7 +172,7 @@ def test_upgrade_exhausts_legacy_key_combinations(alembic_cfg, name, before, aft
     engine = _sync_engine(db_path)
     _seed(engine, before)
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, _REVISION)
 
     assert _read_image_settings(engine) == after
 
@@ -222,7 +223,7 @@ async def test_resolution_after_upgrade(name, before, after):
 def test_downgrade_restores_buckets_from_default(alembic_cfg):
     """降级把默认层复制回两桶，还原「桶即权威」形态。"""
     cfg, db_path = alembic_cfg
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, _REVISION)
     engine = _sync_engine(db_path)
     _seed(engine, {"default_image_backend": "grok/grok-2-image"})
 
@@ -241,7 +242,7 @@ def test_downgrade_restores_default_over_emptied_bucket(alembic_cfg):
     否则旧语义会把这个空桶当权威、跳过默认层，该能力静默落到自动推断。
     """
     cfg, db_path = alembic_cfg
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, _REVISION)
     engine = _sync_engine(db_path)
     _seed(
         engine,
@@ -263,7 +264,7 @@ def test_downgrade_restores_default_over_emptied_bucket(alembic_cfg):
 def test_downgrade_keeps_existing_buckets(alembic_cfg):
     """已有桶配置时降级不覆盖。"""
     cfg, db_path = alembic_cfg
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, _REVISION)
     engine = _sync_engine(db_path)
     _seed(
         engine,

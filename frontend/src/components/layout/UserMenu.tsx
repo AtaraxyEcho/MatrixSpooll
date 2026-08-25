@@ -26,14 +26,13 @@ export function UserMenu() {
   const avatarPath = useAuthStore((s) => s.avatarPath);
   const role = useAuthStore((s) => s.role);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const token = useAuthStore((s) => s.token);
   const [open, setOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
 
   // 无真实会话时不渲染控件：AUTH_ENABLED=false 时没有可退出的会话，显示无效入口
-  if (!isAuthenticated || !token) return null;
+  if (!isAuthenticated || !username) return null;
 
   // 优先展示昵称，未设置昵称时回退账号
   const displayName = nickname ?? username;

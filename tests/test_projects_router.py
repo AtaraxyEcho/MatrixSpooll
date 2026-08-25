@@ -646,6 +646,27 @@ class TestProjectsRouter:
             assert delete_ok.status_code == 200
 
     @pytest.mark.unit
+    def test_list_supports_bounded_pages_and_derived_filters(self, tmp_path, monkeypatch):
+        client = _client(monkeypatch, _FakePM(tmp_path))
+        with client:
+            first_page = client.get("/api/v1/projects?page=1&page_size=2")
+            assert first_page.status_code == 200
+            assert [item["name"] for item in first_page.json()["projects"]] == ["ready", "empty"]
+            assert first_page.json()["pagination"] == {
+                "page": 1,
+                "page_size": 2,
+                "total": 3,
+                "total_pages": 2,
+            }
+
+            searched = client.get("/api/v1/projects?page=1&page_size=20&q=read")
+            assert [item["name"] for item in searched.json()["projects"]] == ["ready"]
+            assert searched.json()["pagination"]["total"] == 1
+
+            production = client.get("/api/v1/projects?page=1&page_size=20&phase=production")
+            assert [item["name"] for item in production.json()["projects"]] == ["ready"]
+
+    @pytest.mark.unit
     def test_create_persists_source_kind_and_defaults_novel(self, tmp_path, monkeypatch):
         client = _client(monkeypatch, _FakePM(tmp_path))
         with client:

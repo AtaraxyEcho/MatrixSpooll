@@ -17,6 +17,7 @@ from lib.profile_manifest import (
     LOCK_FILENAME,
     MANIFEST_FILENAME,
     MANIFEST_SCHEMA_VERSION,
+    VALID_CONTENT_MODES,
     Manifest,
     _normalize_profile_rel_path,
     enumerate_dest_files,
@@ -397,8 +398,6 @@ def test_profile_misconfigured_error_is_runtime_error() -> None:
 
 
 def test_valid_content_modes_constant() -> None:
-    from lib.profile_manifest import VALID_CONTENT_MODES
-
     assert VALID_CONTENT_MODES == frozenset({"narration", "drama", "ad", "free"})
 
 
@@ -742,7 +741,7 @@ def test_variants_to_common_upgrade_preserves_modified_legacy_files_and_reports_
     (profile / ".claude" / "agents" / "generate-assets.md").unlink()
     references = profile / ".claude" / "references"
     references.mkdir()
-    for variant in ("narration", "drama", "ad"):
+    for variant in sorted(VALID_CONTENT_MODES):
         (references / f"workflow-mode.{variant}.md").write_text(variant, encoding="utf-8")
 
     sync_profile_to_project(profile, project, content_mode=mode)  # type: ignore[arg-type]

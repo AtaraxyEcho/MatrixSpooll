@@ -34,7 +34,6 @@ function submitLogin(container: HTMLElement) {
 describe("LoginPage returnTo consumption", () => {
   beforeEach(() => {
     useAuthStore.setState({
-      token: null,
       username: null,
       isAuthenticated: false,
       isLoading: false,
@@ -43,7 +42,7 @@ describe("LoginPage returnTo consumption", () => {
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        json: vi.fn().mockResolvedValue({ access_token: "tok-123" }),
+        json: vi.fn().mockResolvedValue({ username: "alice", role: "member" }),
       } as unknown as Response),
     );
   });

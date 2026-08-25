@@ -49,7 +49,9 @@ from lib.project_change_hints import project_change_source
 from lib.project_manager import EmptySourceError, EpisodeScriptReboundError, SourceKind, get_project_manager
 from lib.script_batch_edit import ScriptBatchEditCommand, ScriptBatchEditor, script_revision
 from lib.speech_rate import MAX_SPEECH_RATE_UPS, MIN_SPEECH_RATE_UPS, SPEECH_RATE_FIELD, is_valid_speech_rate
+from lib.storage_capacity import ensure_storage_capacity
 from lib.style_templates import is_known_template, resolve_template_prompt
+from lib.validation_messages import ValidationMessage
 from lib.workflow_plan import WorkflowPlan, WorkflowPlanRequest
 from lib.workflow_state import ProjectSummary, WorkflowRequestError, WorkflowStateService, WorkflowStatus
 from server.auth import (
@@ -70,6 +72,7 @@ from server.routers._validators import validate_backend_value
 from server.services import workflow_planner as workflow_plan_service
 from server.services.audit import AuditAction, AuditResourceType, record_audit_event
 from server.services.project_access import (
+    count_accessible_projects,
     find_project_registration,
     list_accessible_projects,
     register_project,
@@ -77,6 +80,7 @@ from server.services.project_access import (
     resolve_project_access,
 )
 from server.services.project_archive import (
+    MAX_IMPORT_UPLOAD_BYTES,
     ProjectArchiveService,
     ProjectArchiveValidationError,
 )
@@ -342,6 +346,7 @@ async def import_project_archive(
     """从 ZIP 导入项目。"""
     upload_path: str | None = None
     try:
+        ensure_storage_capacity(Path(tempfile.gettempdir()), required_bytes=file.size or 0)
         fd, upload_path = tempfile.mkstemp(prefix="matrixspooll-upload-", suffix=".zip")
         os.close(fd)
 
@@ -350,11 +355,24 @@ async def import_project_archive(
         raw_file = file.file
 
         def _write_upload():
+            total = 0
             with open(upload_path, "wb") as target:
                 while True:
                     chunk = raw_file.read(1024 * 1024)
                     if not chunk:
                         break
+                    total += len(chunk)
+                    if total > MAX_IMPORT_UPLOAD_BYTES:
+                        raise ProjectArchiveValidationError(
+                            ValidationMessage("arch_import_validation_failed"),
+                            status_code=413,
+                            errors=[
+                                ValidationMessage(
+                                    "arch_upload_too_large",
+                                    {"max_mb": MAX_IMPORT_UPLOAD_BYTES // 1024**2},
+                                )
+                            ],
+                        )
                     target.write(chunk)
 
         await asyncio.to_thread(_write_upload)
@@ -636,17 +654,45 @@ async def export_jianying_draft(
 async def list_projects(
     user: CurrentUser,
     session: AsyncSession = Depends(get_async_session),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    q: str = Query(default="", max_length=100),
+    content_mode: Literal["free", "narration", "drama", "ad"] | None = Query(default=None),
+    phase: Literal["creative", "preparation", "script", "production", "completed"] | None = Query(default=None),
 ):
     """列出所有项目"""
 
+    requested_page = page is not None
+    page_number = page or 1
+    name_query = q.strip()
+    # Content/phase live in project.json and title is not part of the registry,
+    # so these filters must be applied after loading the accessible project
+    # summaries and before slicing the requested page.
+    needs_full_scan = bool(name_query) or content_mode is not None or phase is not None
     if is_auth_enabled() and database_auth_initialized():
         if user.role == "admin":
-            accessible = await list_accessible_projects(user.id, session, include_all=True)
+            include_all = True
             # 超管对任意项目保留 owner 保底；普通管理员仅只读（viewer），
             # 使前端据此隐藏设置 / 成员 / 删除等操作入口。
+        else:
+            include_all = False
+        total_count = await count_accessible_projects(
+            user.id,
+            session,
+            include_all=include_all,
+            name_query=None if needs_full_scan else (name_query or None),
+        )
+        accessible = await list_accessible_projects(
+            user.id,
+            session,
+            include_all=include_all,
+            name_query=None if needs_full_scan else (name_query or None),
+            offset=None if needs_full_scan or not requested_page else (page - 1) * page_size,
+            limit=None if needs_full_scan or not requested_page else page_size,
+        )
+        if user.role == "admin":
             role_by_project_id = {row.id: ("owner" if user.is_superadmin else "viewer") for row in accessible}
         else:
-            accessible = await list_accessible_projects(user.id, session)
             member_rows = await session.execute(
                 select(ProjectMember.project_id, ProjectMember.role).where(ProjectMember.user_id == user.id)
             )
@@ -664,6 +710,10 @@ async def list_projects(
             owner_by_id = {owner.id: owner for owner in owner_rows.all()}
     else:
         project_names = get_project_manager().list_projects()
+        total_count = len(project_names)
+        if requested_page and not needs_full_scan:
+            start = (page_number - 1) * page_size
+            project_names = project_names[start : start + page_size]
         registry_by_name = {}
         role_by_project_id = {}
         owner_by_id = {}
@@ -673,6 +723,11 @@ async def list_projects(
         summaries = get_workflow_state_service()
         projects = []
         for name in project_names:
+            owner_fields = {
+                "owner_username": None,
+                "owner_nickname": None,
+                "owner_avatar_path": None,
+            }
             try:
                 display_name = registry_by_name[name].name if name in registry_by_name else name
                 owner = owner_by_id.get(registry_by_name[name].owner_id) if name in registry_by_name else None
@@ -775,7 +830,35 @@ async def list_projects(
                     }
                 )
 
-        return {"projects": projects}
+        if needs_full_scan:
+            lowered_query = name_query.casefold() if name_query else None
+            projects = [
+                project
+                for project in projects
+                if (
+                    lowered_query is None
+                    or lowered_query in str(project.get("name", "")).casefold()
+                    or lowered_query in str(project.get("title", "")).casefold()
+                )
+                and (content_mode is None or project.get("content_mode") == content_mode)
+                and (phase is None or project.get("status", {}).get("phase") == phase)
+            ]
+            filtered_total_count = len(projects)
+            if requested_page:
+                start = (page_number - 1) * page_size
+                projects = projects[start : start + page_size]
+        else:
+            filtered_total_count = total_count
+
+        response: dict[str, object] = {"projects": projects}
+        if requested_page:
+            response["pagination"] = {
+                "page": page_number,
+                "page_size": page_size,
+                "total": filtered_total_count,
+                "total_pages": max(1, math.ceil(filtered_total_count / page_size)),
+            }
+        return response
 
     return await asyncio.to_thread(_sync)
 

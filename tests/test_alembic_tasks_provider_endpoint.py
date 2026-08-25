@@ -20,7 +20,7 @@ DOWN_REVISION = "b7f2c41d9a30"
 @pytest.fixture
 def alembic_cfg(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
-    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("MATRIXSPOOLL_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     # alembic env.py 的 fileConfig 默认 disable_existing_loggers=True，会禁掉测试进程已注册的
     # logger，污染后续 caplog 测试。
     import logging.config

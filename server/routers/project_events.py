@@ -21,7 +21,8 @@ from server.services.project_events import ProjectEventService
 logger = logging.getLogger(__name__)
 
 # 自带认证端点：本 router 只有项目事件 SSE，EventSource 是浏览器直发请求，
-# 带不了 Authorization header，端点内声明 CurrentUserFlexible 收 ?token=。
+# 浏览器原生 EventSource 带不了 Authorization header，端点内声明 CurrentUserFlexible
+# 读取同源 HttpOnly Cookie。
 self_auth_router = APIRouter()
 
 PROJECT_EVENTS_SSE_POLL_SECONDS = 1.0

@@ -148,7 +148,7 @@ class TestGetCurrentUserKillSwitch:
             user = await auth_module.get_current_user_flexible(
                 lambda key, **_kwargs: key,
                 token=None,
-                query_token=None,
+                cookie_token=None,
             )
         assert user.sub == "local"
 
@@ -162,7 +162,7 @@ class TestGetCurrentUserKillSwitch:
                 await auth_module.get_current_user_flexible(
                     lambda key, **_kwargs: key,
                     token=None,
-                    query_token=None,
+                    cookie_token=None,
                 )
             assert exc_info.value.status_code == 401
 

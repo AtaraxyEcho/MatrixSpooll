@@ -33,7 +33,7 @@ from server.auth import CurrentUser, CurrentUserFlexible
 router = APIRouter()
 
 # 自带认证端点：EventSource 是浏览器直发请求，带不了 Authorization header，
-# 端点内声明 CurrentUserFlexible 收 ?token=，注册时不挂 Bearer 依赖。
+# 端点内声明 CurrentUserFlexible 读取同源 HttpOnly Cookie，注册时不挂 Bearer 依赖。
 self_auth_router = APIRouter()
 
 assistant_service = AssistantService(project_root=PROJECT_ROOT)
@@ -168,6 +168,8 @@ async def send_message(
             actor_user_id=user.id,
         )
         return result
+    except HTTPException:
+        raise
     except SessionCapacityError as exc:
         raise ServiceUnavailableError("session_capacity_exceeded") from exc
     except FileNotFoundError as exc:
@@ -223,6 +225,8 @@ async def rewrite_message(
             client_key=req.client_key,
             actor_user_id=user.id,
         )
+    except HTTPException:
+        raise
     except RewriteAnchorError as exc:
         raise BadRequestError("rewrite_anchor_invalid") from exc
     except PendingQuestionError as exc:

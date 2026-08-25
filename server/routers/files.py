@@ -73,14 +73,12 @@ async def _get_project_file_user(request: Request) -> CurrentUserInfo:
 
     authorization = request.headers.get("authorization", "")
     bearer = authorization[7:].strip() if authorization.lower().startswith("bearer ") else None
-    query_token = request.query_params.get("token")
     cookie_token = request.cookies.get("matrixspooll_auth_token")
-    if not bearer and not query_token and not cookie_token and not database_auth_initialized() and is_testing():
+    if not bearer and not cookie_token and not database_auth_initialized() and is_testing():
         return CurrentUserInfo(id="default", sub="testuser", role="admin", is_superadmin=True)
     return await get_current_user_flexible(
         get_translator(request),
         token=bearer,
-        query_token=query_token,
         cookie_token=cookie_token,
     )
 

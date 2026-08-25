@@ -43,9 +43,12 @@ def _write_fake_local_transcript(project_cwd: Path, session_id: str, sdk_root: P
 
 
 @pytest.fixture
-def fake_sdk_home(tmp_path: Path, monkeypatch):
+def fake_sdk_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch):
     """Redirect SDK to a tmp config dir for the duration of one test."""
-    sdk_home = tmp_path / "claude_home"
+    # The SDK embeds the absolute project path in its own directory name.
+    # Keep its root short enough that this doubled path stays below MAX_PATH
+    # on Windows while remaining inside pytest's configured temp directory.
+    sdk_home = tmp_path_factory.mktemp("sdk")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(sdk_home))
     return sdk_home
 

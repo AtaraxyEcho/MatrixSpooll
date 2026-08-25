@@ -27,6 +27,8 @@ MESSAGES = {
     "api_key_user_invalid": "API Key 绑定的用户不存在或已停用",
     "token_invalid": "登录凭证无效或已过期",
     "auth_required": "请先登录",
+    "csrf_invalid": "安全验证已失效，请刷新页面后重试",
+    "login_rate_limited": "登录尝试过于频繁，请稍后再试",
     "auth_token_required": "缺少登录凭证",
     "password_change_unavailable": "当前登录会话不支持修改密码",
     "current_password_invalid": "当前密码不正确",
@@ -472,4 +474,5 @@ MESSAGES = {
     "video_resolution_unsupported": "模型 {model} 不支持 {resolution} 分辨率",
     "video_duration_unsupported": "模型 {model} 不支持 {duration} 秒时长",
     "video_prompt_required": "模型 {model} 需要提示词或受支持的参考素材",
+    "storage_capacity_low": "存储空间不足（可用 {free_mb} MB，至少需要保留 {required_mb} MB），请清理空间后重试",
 }

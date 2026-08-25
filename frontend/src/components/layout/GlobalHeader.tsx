@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { ChevronLeft, Activity, Settings, Bell, Download, Loader2, Package } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/stores/app-store";
+import { useAuthStore } from "@/stores/auth-store";
 import { useConfigStatusStore } from "@/stores/config-status-store";
 import { useProjectsStore } from "@/stores/projects-store";
 import { useDemoWorkbench } from "@/onboarding/use-demo-workbench";
@@ -50,7 +51,7 @@ interface GlobalHeaderProps {
 export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHeaderProps) {
   const { t } = useTranslation();
   const [, setLocation] = useLocation();
-  const { currentProjectData, currentProjectName } = useProjectsStore();
+  const { currentProjectData, currentProjectName, currentProjectRole } = useProjectsStore();
   const { stats } = useTasksStore();
   const { taskHudOpen, setTaskHudOpen, triggerScrollTo, markWorkspaceNotificationRead } =
     useAppStore();
@@ -66,6 +67,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
   const taskHudAnchorRef = useRef<HTMLDivElement>(null);
   const exportAnchorRef = useRef<HTMLDivElement>(null);
   const isConfigComplete = useConfigStatusStore((s) => s.isComplete);
+  const authRole = useAuthStore((s) => s.role);
   const fetchConfigStatus = useConfigStatusStore((s) => s.fetch);
   const workspaceNotifications = useAppStore((s) => s.workspaceNotifications);
 
@@ -448,7 +450,9 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
           </button> : null}
 
           {/* Settings */}
-          <button
+          {currentProjectName
+            ? currentProjectRole !== "viewer"
+            : authRole !== "member" ? <button
             type="button"
             onClick={() =>
               setLocation(
@@ -479,7 +483,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
                 aria-label={t("dashboard:config_incomplete")}
               />
             )}
-          </button>
+          </button> : null}
           <UserMenu />
         </div>
       </header>

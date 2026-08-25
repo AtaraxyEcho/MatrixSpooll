@@ -39,7 +39,16 @@ class TestResourceRelativePath:
 
     def test_only_shot_keyed_types_get_scene_prefix(self) -> None:
         # 反向断言：非按镜头 id 命名的类型不得带 scene_ 前缀（audio 用 segment_ 前缀，单独验证）
-        for rt in ("characters", "scenes", "props", "grids", "reference_videos"):
+        for rt in (
+            "characters",
+            "scenes",
+            "props",
+            "products",
+            "grids",
+            "reference_videos",
+            "free_images",
+            "free_videos",
+        ):
             assert "scene_" not in resource_relative_path(rt, "X")
         assert resource_relative_path("audio", "X").startswith("audio/segment_")
 
@@ -63,8 +72,11 @@ class TestResourceExtension:
             ("characters", ".png"),
             ("scenes", ".png"),
             ("props", ".png"),
+            ("products", ".png"),
             ("grids", ".png"),
             ("reference_videos", ".mp4"),
+            ("free_images", ".png"),
+            ("free_videos", ".mp4"),
             ("audio", ".wav"),
         ],
     )
@@ -90,4 +102,6 @@ class TestResourceTypes:
             "products",
             "grids",
             "reference_videos",
+            "free_images",
+            "free_videos",
         }

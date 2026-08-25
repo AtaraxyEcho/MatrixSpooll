@@ -2,13 +2,37 @@
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 from collections.abc import Callable
+from pathlib import Path
 
 # Database tests may opt into isolated SQLite fixtures. Runtime processes
 # must provide DATABASE_URL explicitly; this flag is deliberately test-only
 # and must be set before importing any module that creates the engine.
 os.environ.setdefault("TESTING", "true")
+os.environ.setdefault("MATRIXSPOOLL_CREDENTIAL_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+_TEST_RUN_ID = f"run-{os.getpid()}"
+os.environ["MATRIXSPOOLL_PYTEST_RUN_ID"] = _TEST_RUN_ID
+_TEST_RUN_TEMP_PATH = Path(__file__).resolve().parent.parent / ".pytest-tmp" / _TEST_RUN_ID
+os.environ["MATRIXSPOOLL_DATA_DIR"] = str(_TEST_RUN_TEMP_PATH / "app-data")
+_TEST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "main")
+_TEST_DATABASE_PATH = (
+    Path(__file__).resolve().parent.parent / ".pytest-tmp" / "d" / f"runtime-{_TEST_WORKER}-{os.getpid()}.db"
+)
+if "MATRIXSPOOLL_TEST_DATABASE_URL" not in os.environ:
+    _TEST_DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    os.environ["MATRIXSPOOLL_TEST_DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DATABASE_PATH.as_posix()}"
+
+    def _remove_test_database() -> None:
+        try:
+            _TEST_DATABASE_PATH.unlink(missing_ok=True)
+        except PermissionError:
+            # Windows can keep the SQLite handle alive until interpreter teardown.
+            pass
+
+    atexit.register(_remove_test_database)
 
 
 def make_translator(locale: str = "zh") -> Callable[..., str]:
@@ -24,7 +48,6 @@ def make_translator(locale: str = "zh") -> Callable[..., str]:
 import subprocess
 import wave
 from io import BytesIO
-from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -33,6 +56,76 @@ import lib.generation_queue as generation_queue_module
 from lib.db.base import Base
 from server.agent_runtime.session_manager import SessionManager
 from server.agent_runtime.session_store import SessionMetaStore
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config: pytest.Config) -> None:
+    config.option.basetemp = str(_TEST_RUN_TEMP_PATH)
+    if os.name != "nt":
+        return
+    # Python 3.13+ gives ``mkdir(mode=0o700)`` a private Windows ACL. Pytest uses
+    # that mode for both basetemp and tmp_path directories, but our command
+    # sandbox uses a fresh Windows identity for each invocation. Inherit the
+    # repository ACL instead so later test runs can inspect and remove artifacts.
+    from _pytest import pathlib as pytest_pathlib
+    from _pytest import tmpdir as pytest_tmpdir
+
+    original_getbasetemp = pytest_tmpdir.TempPathFactory.getbasetemp
+    original_mktemp = pytest_tmpdir.TempPathFactory.mktemp
+    original_force_symlink = pytest_pathlib._force_symlink
+
+    def getbasetemp_with_inherited_acl(self: pytest_tmpdir.TempPathFactory) -> Path:
+        if self._basetemp is not None:
+            return self._basetemp
+        if self._given_basetemp is None:
+            return original_getbasetemp(self)
+
+        basetemp = self._given_basetemp
+        if basetemp.exists():
+            pytest_pathlib.rm_rf(basetemp)
+        basetemp.mkdir(parents=True)
+        self._basetemp = basetemp.resolve()
+        self._trace("new basetemp", self._basetemp)
+        return self._basetemp
+
+    def mktemp_with_inherited_acl(
+        self: pytest_tmpdir.TempPathFactory,
+        basename: str,
+        numbered: bool = True,
+    ) -> Path:
+        basename = self._ensure_relative_to_basetemp(basename)
+        if numbered:
+            path = pytest_pathlib.make_numbered_dir(
+                root=self.getbasetemp(),
+                prefix=basename,
+                mode=0o777,
+            )
+            self._trace("mktemp", path)
+            return path
+
+        path = self.getbasetemp() / basename
+        path.mkdir()
+        return path
+
+    pytest_tmpdir.TempPathFactory.getbasetemp = getbasetemp_with_inherited_acl
+    pytest_tmpdir.TempPathFactory.mktemp = mktemp_with_inherited_acl
+    # Per-test ``*current`` symlinks are convenience aliases and are unnecessary
+    # in the project-local temporary tree.
+    pytest_pathlib._force_symlink = lambda _root, _link_to, _target: None
+
+    def restore_pytest_temp_factory() -> None:
+        pytest_tmpdir.TempPathFactory.getbasetemp = original_getbasetemp
+        pytest_tmpdir.TempPathFactory.mktemp = original_mktemp
+        pytest_pathlib._force_symlink = original_force_symlink
+
+    config.add_cleanup(restore_pytest_temp_factory)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    del config
+    shutil.rmtree(_TEST_RUN_TEMP_PATH, ignore_errors=True)
+    shutil.rmtree(_TEST_RUN_TEMP_PATH.parent / f"cache-{_TEST_RUN_ID}", ignore_errors=True)
+
 
 # ---------------------------------------------------------------------------
 # General utilities
@@ -137,6 +230,16 @@ def _reset_app_data_dir_cache():
     _reset_for_tests()
     yield
     _reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _reset_database_auth_initialization():
+    """Keep application-lifespan authentication state isolated per test."""
+    import server.auth as auth_module
+
+    auth_module._database_auth_initialized = False  # noqa: SLF001 - process-global startup state
+    yield
+    auth_module._database_auth_initialized = False  # noqa: SLF001 - prevent order-dependent route tests
 
 
 @pytest.fixture(autouse=True)

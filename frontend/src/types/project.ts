@@ -216,6 +216,18 @@ export interface ProjectSummary {
   owner_avatar_path?: string | null;
 }
 
+export interface ProjectListPagination {
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
+
+export interface ProjectListResponse {
+  projects: ProjectSummary[];
+  pagination?: ProjectListPagination;
+}
+
 /** Stable project reference accepted by the API adapter during migration. */
 export interface ProjectIdentity {
   project_id: string;

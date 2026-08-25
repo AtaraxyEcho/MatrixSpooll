@@ -18,8 +18,9 @@ pytestmark = pytest.mark.unit
 
 PROJECT = "demo"
 PREFIX = f"/api/v1/projects/{PROJECT}/assistant"
+USER_ID = "00000000-0000-4000-8000-000000000001"
 
-_FAKE_USER = CurrentUserInfo(id="default", sub="testuser", role="admin")
+_FAKE_USER = CurrentUserInfo(id=USER_ID, sub="testuser", role="admin")
 
 
 def _override_translator():
@@ -92,7 +93,7 @@ class TestAssistantRoutes:
         }
 
         # Mock get_session for ownership validation
-        session_meta = make_session_meta(id="session-1", project_name=PROJECT)
+        session_meta = make_session_meta(id="session-1", project_name=PROJECT, actor_user_id=USER_ID)
         with (
             patch.object(
                 assistant.assistant_service,
@@ -146,7 +147,7 @@ class TestAssistantRoutes:
         _assert_generic_500(response, "LEAK_get")
 
     def test_delete_session_unexpected_error_no_leak(self):
-        session_meta = make_session_meta(id="session-1", project_name=PROJECT)
+        session_meta = make_session_meta(id="session-1", project_name=PROJECT, actor_user_id=USER_ID)
         with (
             patch.object(assistant.assistant_service, "get_session", return_value=session_meta),
             patch.object(
@@ -161,7 +162,7 @@ class TestAssistantRoutes:
         _assert_generic_500(response, "LEAK_delete")
 
     def test_interrupt_unexpected_error_no_leak(self):
-        session_meta = make_session_meta(id="session-1", project_name=PROJECT)
+        session_meta = make_session_meta(id="session-1", project_name=PROJECT, actor_user_id=USER_ID)
         with (
             patch.object(assistant.assistant_service, "get_session", return_value=session_meta),
             patch.object(
@@ -176,7 +177,7 @@ class TestAssistantRoutes:
         _assert_generic_500(response, "LEAK_interrupt")
 
     def test_answer_question_unexpected_error_no_leak(self):
-        session_meta = make_session_meta(id="session-1", project_name=PROJECT)
+        session_meta = make_session_meta(id="session-1", project_name=PROJECT, actor_user_id=USER_ID)
         with (
             patch.object(assistant.assistant_service, "get_session", return_value=session_meta),
             patch.object(

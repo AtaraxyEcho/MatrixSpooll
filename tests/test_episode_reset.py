@@ -1322,5 +1322,5 @@ def test_manifest_failure_restores_symlinked_episode_entry_without_touching_targ
         reset_episode_planning(project_dir, from_episode=1, confirm_consumed=True)
 
     assert derived.is_symlink()
-    assert derived.readlink() == outside
+    assert derived.resolve() == outside.resolve()
     assert outside.read_bytes() == b"outside"

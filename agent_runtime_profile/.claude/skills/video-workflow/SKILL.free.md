@@ -1,3 +1,8 @@
+---
+name: video-workflow
+description: 自由创作项目的请求路由。用户要求生成图片、视频、音频或编辑现有内容时使用。
+---
+
 # 自由创作项目路由
 <!-- mode: free -->
 

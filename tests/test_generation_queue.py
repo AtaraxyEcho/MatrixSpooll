@@ -47,8 +47,12 @@ def test_free_video_capability_uses_i2v_for_explicit_frame_roles() -> None:
 
 
 @pytest.fixture
-async def queue():
+async def queue(tmp_path, monkeypatch):
     """Create a GenerationQueue backed by in-memory SQLite."""
+    from lib.app_data_dir import _reset_for_tests
+
+    monkeypatch.setenv("MATRIXSPOOLL_DATA_DIR", str(tmp_path / "app-data"))
+    _reset_for_tests()
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -57,6 +61,7 @@ async def queue():
     q = GenerationQueue(session_factory=factory)
     yield q
     await engine.dispose()
+    _reset_for_tests()
 
 
 class TestGenerationQueue:
