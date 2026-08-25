@@ -1,0 +1,26 @@
+server {
+    listen 8080 default_server;
+    server_name ${PUBLIC_HOST};
+    server_tokens off;
+
+    if ($host != "${PUBLIC_HOST}") {
+        return 444;
+    }
+
+    location = /nginx-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        add_header Retry-After 30 always;
+        return 503;
+    }
+}
