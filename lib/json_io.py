@@ -5,16 +5,41 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+_WINDOWS_REPLACE_ATTEMPTS = 30
+
+
+def _replace_file(source: Path, destination: Path) -> None:
+    """Replace a file, tolerating brief Windows reader-handle contention."""
+
+    attempts = _WINDOWS_REPLACE_ATTEMPTS if os.name == "nt" else 1
+    for attempt in range(attempts):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt + 1 >= attempts:
+                raise
+            time.sleep(min(0.002 * (attempt + 1), 0.02))
+
 
 def load_json(path: Path) -> Any:
     """严格加载 JSON。异常直接抛出，调用方按业务需要做 try/except。"""
-    with open(path, encoding="utf-8") as handle:
-        return json.load(handle)
+    attempts = _WINDOWS_REPLACE_ATTEMPTS if os.name == "nt" else 1
+    for attempt in range(attempts):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return json.load(handle)
+        except PermissionError:
+            if attempt + 1 >= attempts:
+                raise
+            time.sleep(min(0.002 * (attempt + 1), 0.02))
+    raise AssertionError("unreachable")
 
 
 @contextmanager
@@ -61,7 +86,7 @@ def atomic_write_json(path: Path, data: Any) -> None:
         ) as tmp:
             tmp_path = Path(tmp.name)
             json.dump(data, tmp, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
+        _replace_file(tmp_path, path)
         tmp_path = None
     finally:
         if tmp_path is not None:
@@ -90,7 +115,7 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
             tmp.write(data)
             tmp.flush()
             os.fsync(tmp.fileno())
-        os.replace(tmp_path, path)
+        _replace_file(tmp_path, path)
         tmp_path = None
     finally:
         if tmp_path is not None:

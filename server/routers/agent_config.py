@@ -20,6 +20,7 @@ from lib.config.repository import mask_secret
 from lib.db import get_async_session
 from lib.db.base import dt_to_iso
 from lib.db.repositories.agent_credential_repo import AgentCredentialRepository
+from lib.db.repositories.custom_provider_repo import CustomProviderRepository
 from lib.i18n import Translator
 from server.auth import require_admin
 
@@ -105,7 +106,8 @@ class CreateCredentialRequest(BaseModel):
     preset_id: str
     display_name: str | None = None
     base_url: str | None = None
-    api_key: str
+    api_key: str = ""
+    source_custom_provider_id: int | None = None
     model: str | None = None
     haiku_model: str | None = None
     sonnet_model: str | None = None
@@ -163,18 +165,30 @@ async def create_credential(
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
 ) -> CredentialResponse:
+    source_provider = None
+    if body.source_custom_provider_id is not None:
+        source_provider = await CustomProviderRepository(session).get_provider(body.source_custom_provider_id)
+        if source_provider is None:
+            raise HTTPException(status_code=404, detail=_t("provider_not_found"))
+    api_key = source_provider.api_key if source_provider is not None else body.api_key.strip()
+    if not api_key:
+        raise HTTPException(status_code=422, detail=_t("anthropic_discovery_no_key"))
+
     if body.preset_id != CUSTOM_SENTINEL_ID:
         preset = get_preset(body.preset_id)
         if preset is None:
             raise HTTPException(status_code=422, detail=_t("agent_preset_unknown", preset_id=body.preset_id))
-        base_url = body.base_url or preset.messages_url
+        base_url = (
+            body.base_url or (source_provider.base_url if source_provider is not None else None) or preset.messages_url
+        )
         display_name = body.display_name or preset.display_name
         model = body.model or preset.default_model
     else:
-        if not body.base_url:
+        resolved_base_url = body.base_url or (source_provider.base_url if source_provider is not None else None)
+        if not resolved_base_url:
             raise HTTPException(status_code=422, detail=_t("agent_base_url_required_custom"))
-        base_url = body.base_url
-        display_name = body.display_name or "Custom"
+        base_url = resolved_base_url
+        display_name = body.display_name or (source_provider.display_name if source_provider is not None else "Custom")
         model = body.model
 
     repo = AgentCredentialRepository(session)
@@ -182,7 +196,7 @@ async def create_credential(
         preset_id=body.preset_id,
         display_name=display_name,
         base_url=base_url,
-        api_key=body.api_key,
+        api_key=api_key,
         model=model,
         haiku_model=body.haiku_model,
         sonnet_model=body.sonnet_model,
@@ -291,7 +305,8 @@ class TestConnectionResponseModel(BaseModel):
 class TestConnectionRequest(BaseModel):
     preset_id: str | None = None
     base_url: str | None = None
-    api_key: str
+    api_key: str = ""
+    source_custom_provider_id: int | None = None
     model: str | None = None
 
 
@@ -334,11 +349,20 @@ async def _run_and_serialize(
 async def test_connection_draft(
     body: TestConnectionRequest,
     _t: Translator,
+    session: AsyncSession = Depends(get_async_session),
 ) -> TestConnectionResponseModel:
+    api_key = body.api_key.strip()
+    if body.source_custom_provider_id is not None:
+        provider = await CustomProviderRepository(session).get_provider(body.source_custom_provider_id)
+        if provider is None:
+            raise HTTPException(status_code=404, detail=_t("provider_not_found"))
+        api_key = provider.api_key
+    if not api_key:
+        raise HTTPException(status_code=422, detail=_t("anthropic_discovery_no_key"))
     return await _run_and_serialize(
         preset_id=body.preset_id,
         base_url=body.base_url,
-        api_key=body.api_key,
+        api_key=api_key,
         model=body.model,
         _t=_t,
     )

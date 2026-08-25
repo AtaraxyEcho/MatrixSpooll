@@ -1,6 +1,10 @@
 import type enCommon from '../en/common';
 
 export default {
+  request_failed: "请求失败",
+  upload_failed: "上传失败",
+  project_content_mode_immutable: "项目创建后不支持修改内容模式",
+  upload_conflict_invalid: "上传“{{filename}}”失败：服务端返回的冲突信息不完整",
   'language': '语言',
   'chinese': '中文',
   'english': '英文',

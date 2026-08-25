@@ -18,9 +18,11 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     with op.batch_alter_table("users", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("email", sa.String(length=254), nullable=True))
-        batch_op.add_column(sa.Column("last_login_at", sa.DateTime(timezone=True), nullable=True))
-        batch_op.add_column(sa.Column("last_login_ip", sa.String(length=45), nullable=True))
+        batch_op.add_column(sa.Column("email", sa.String(length=254), nullable=True, comment="用户邮箱地址。"))
+        batch_op.add_column(
+            sa.Column("last_login_at", sa.DateTime(timezone=True), nullable=True, comment="最近登录时间。")
+        )
+        batch_op.add_column(sa.Column("last_login_ip", sa.String(length=45), nullable=True, comment="最近登录IP地址。"))
 
 
 def downgrade() -> None:

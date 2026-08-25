@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def alembic_cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
-    """指向项目 alembic 脚本，但 DB 用临时 sqlite（通过 DATABASE_URL，env.py 会读取）。
+    """指向项目 alembic 脚本，但 DB 用临时 sqlite（env.py 经测试数据库变量读取）。
 
     刻意不传 alembic.ini 路径：env.py 在 config.config_file_name 为 None 时跳过
     fileConfig() 调用，避免 alembic.ini 的 logging section 在测试中重置 root
@@ -26,7 +26,7 @@ def alembic_cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     cfg.set_main_option("script_location", str(repo_root / "alembic"))
     db_path = tmp_path / "test.db"
     # env.py 通过 lib.db.engine.get_database_url() 读环境变量，不会读 cfg sqlalchemy.url
-    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("MATRIXSPOOLL_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     cfg.attributes["_test_db_path"] = str(db_path)
     return cfg
 
@@ -38,7 +38,7 @@ def backfill_revisions() -> tuple[str, str]:
     versions_dir = repo_root / "alembic" / "versions"
     matches = list(versions_dir.glob("*_backfill_custom_model_durations.py"))
     assert len(matches) == 1, f"找到 {len(matches)} 个回填迁移文件，期望 1"
-    text = matches[0].read_text()
+    text = matches[0].read_text(encoding="utf-8")
     revision: str | None = None
     down_revision: str | None = None
     for line in text.splitlines():

@@ -68,6 +68,10 @@ class TestListAvailableSkills:
             "---\nname: video-workflow\ndescription: Ad variant\n---\n",
             encoding="utf-8",
         )
+        (skill_dir / "SKILL.free.md").write_text(
+            "---\nname: video-workflow\ndescription: Free creation variant\n---\n",
+            encoding="utf-8",
+        )
         monkeypatch.setenv("MATRIXSPOOLL_PROFILE_DIR", str(profile_root))
 
         with patch.object(AssistantService, "__init__", lambda self, *a, **kw: None):
@@ -179,6 +183,10 @@ class TestListAvailableSkills:
         )
         (skill_dir / "SKILL.ad.md").write_text(
             "---\nname: drifted-skill\ndescription: Ad\nuser-invocable: true\n---\n",
+            encoding="utf-8",
+        )
+        (skill_dir / "SKILL.free.md").write_text(
+            "---\nname: drifted-skill\ndescription: Free creation\nuser-invocable: true\n---\n",
             encoding="utf-8",
         )
         monkeypatch.setenv("MATRIXSPOOLL_PROFILE_DIR", str(profile_root))

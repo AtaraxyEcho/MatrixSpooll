@@ -139,6 +139,32 @@ async def test_create_custom_with_base_url(authed_client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_custom_from_provider_keeps_secret_server_side(authed_client, _session_factory) -> None:
+    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+
+    async with _session_factory() as session:
+        provider = await CustomProviderRepository(session).create_provider(
+            display_name="Imported Provider",
+            discovery_format="openai",
+            base_url="https://proxy.example.com/anthropic",
+            api_key="sk-provider-secret",
+        )
+        await session.commit()
+        provider_id = provider.id
+
+    resp = await authed_client.post(
+        "/api/v1/agent/credentials",
+        json={
+            "preset_id": "__custom__",
+            "source_custom_provider_id": provider_id,
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["base_url"] == "https://proxy.example.com/anthropic"
+    assert "sk-provider-secret" not in resp.text
+
+
+@pytest.mark.asyncio
 async def test_create_unknown_preset_rejected(authed_client) -> None:
     resp = await authed_client.post(
         "/api/v1/agent/credentials",
@@ -265,6 +291,46 @@ async def test_test_connection_draft_calls_run_test(authed_client, monkeypatch) 
     assert body["messages_probe"]["success"] is True
     assert body["derived_messages_root"] == "https://api.deepseek.com/anthropic"
     fake.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_test_connection_draft_resolves_provider_secret(authed_client, _session_factory, monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from lib.config import anthropic_probe as probe_mod
+    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+
+    expected = probe_mod.TestConnectionResponse(
+        overall="ok",
+        messages_probe=probe_mod.ProbeResult(success=True, status_code=200, latency_ms=10, error=None),
+        discovery_probe=None,
+        diagnosis=None,
+        suggestion=None,
+        derived_messages_root="https://proxy.example.com/anthropic",
+        derived_discovery_root="",
+    )
+    fake = AsyncMock(return_value=expected)
+    monkeypatch.setattr("server.routers.agent_config.run_test", fake)
+    async with _session_factory() as session:
+        provider = await CustomProviderRepository(session).create_provider(
+            display_name="Imported Provider",
+            discovery_format="openai",
+            base_url="https://proxy.example.com/anthropic",
+            api_key="sk-provider-secret",
+        )
+        await session.commit()
+        provider_id = provider.id
+
+    resp = await authed_client.post(
+        "/api/v1/agent/test-connection",
+        json={
+            "preset_id": "__custom__",
+            "base_url": "https://proxy.example.com/anthropic",
+            "source_custom_provider_id": provider_id,
+        },
+    )
+    assert resp.status_code == 200
+    assert fake.await_args.kwargs["api_key"] == "sk-provider-secret"
 
 
 @pytest.mark.asyncio

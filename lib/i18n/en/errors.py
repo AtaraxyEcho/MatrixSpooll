@@ -27,6 +27,8 @@ MESSAGES = {
     "api_key_user_invalid": "The user bound to this API key is missing or inactive",
     "token_invalid": "The authentication token is invalid or expired",
     "auth_required": "Please sign in first",
+    "csrf_invalid": "The security token is missing or invalid. Refresh the page and try again",
+    "login_rate_limited": "Too many sign-in attempts. Please try again later",
     "auth_token_required": "Authentication credentials are required",
     "password_change_unavailable": "Password changes are unavailable for this login session",
     "current_password_invalid": "The current password is incorrect",
@@ -522,4 +524,5 @@ MESSAGES = {
     "video_resolution_unsupported": "Model {model} does not support {resolution} resolution",
     "video_duration_unsupported": "Model {model} does not support a duration of {duration} seconds",
     "video_prompt_required": "Model {model} requires a prompt or a supported reference input",
+    "storage_capacity_low": "Storage is low (free: {free_mb} MB; required headroom: {required_mb} MB). Free some space and try again",
 }

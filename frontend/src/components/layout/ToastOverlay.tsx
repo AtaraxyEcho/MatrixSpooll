@@ -58,6 +58,8 @@ export function ToastOverlay() {
     >
       <div
         key={toast.id}
+        role="status"
+        aria-live="polite"
         onMouseEnter={pauseTimer}
         onMouseLeave={startTimer}
         className={`toast-enter pointer-events-auto flex items-center gap-2.5 rounded-lg border px-4 py-2.5 shadow-lg backdrop-blur-sm text-sm ${TONE_STYLES[toast.tone]}`}

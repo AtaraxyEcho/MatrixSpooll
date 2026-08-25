@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { memoryLocation } from "wouter/memory-location";
@@ -30,6 +30,7 @@ describe("ProjectsPage", () => {
   beforeEach(() => {
     useProjectsStore.setState(useProjectsStore.getInitialState(), true);
     useAppStore.setState(useAppStore.getInitialState(), true);
+    localStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -242,6 +243,41 @@ describe("ProjectsPage", () => {
       expect(screen.queryByText("Shooting Project")).not.toBeInTheDocument();
     });
     expect(screen.getAllByText("Writing Project").length).toBeGreaterThan(0);
+  });
+
+  it("keeps content filters available when a mode has no matching projects", async () => {
+    vi.spyOn(API, "listProjects").mockImplementation(async (filters = {}) => {
+      if (filters.contentMode === "drama") {
+        return {
+          projects: [],
+          pagination: { page: 1, page_size: 24, total: 0, total_pages: 1 },
+        };
+      }
+      return {
+        projects: [
+          {
+            name: "free-project",
+            title: "Free Project",
+            content_mode: "free",
+            style: "cinematic",
+            thumbnail: null,
+            status: {},
+          },
+        ],
+        pagination: { page: 1, page_size: 24, total: 1, total_pages: 1 },
+      };
+    });
+
+    renderPage();
+
+    const contentModeGroup = await screen.findByRole("group", { name: t("content_mode") });
+    fireEvent.click(within(contentModeGroup).getByRole("button", { name: t("drama_animation") }));
+    await waitFor(() => expect(screen.queryByText("Free Project")).not.toBeInTheDocument());
+
+    fireEvent.click(within(contentModeGroup).getByRole("button", { name: t("lobby_filter_all") }));
+
+    expect((await screen.findAllByText("Free Project")).length).toBeGreaterThan(0);
+    expect(localStorage.getItem("matrixspooll.lobby.contentModeFilter")).toBe("all");
   });
 
   it("tells the reader how many sheets are older than the current content", async () => {

@@ -21,6 +21,8 @@ async def test_lifespan_invokes_session_store_migration():
             new=AsyncMock(return_value={"imported": 0, "skipped": 0, "failed": 0}),
         ) as migrate_mock,
         patch("server.app.init_db", new=AsyncMock(return_value=None)),
+        patch("server.app.ensure_database_users", new=AsyncMock(return_value=None)),
+        patch("server.app.backfill_project_registry", new=AsyncMock(return_value=None)),
         patch(
             "server.app.run_project_migrations",
             return_value=type("M", (), {"migrated": [], "failed": [], "skipped": []})(),

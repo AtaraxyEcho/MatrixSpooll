@@ -1,6 +1,10 @@
 import type enCommon from "@/i18n/en/common";
 
 export default {
+  request_failed: "Yêu cầu thất bại",
+  upload_failed: "Tải lên thất bại",
+  project_content_mode_immutable: "Không thể thay đổi chế độ nội dung sau khi tạo dự án",
+  upload_conflict_invalid: "Không thể tải lên “{{filename}}” vì máy chủ trả về thông tin xung đột không đầy đủ",
   'language': 'Ngôn ngữ',
   'chinese': 'Tiếng Trung',
   'english': 'Tiếng Anh',

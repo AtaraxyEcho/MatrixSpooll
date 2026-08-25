@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "r
 import { KeyRound, Loader2, Trash2, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth-store";
-import { getToken } from "@/utils/auth";
+import { sessionFetch } from "@/utils/auth";
 import { API } from "@/api";
 import { FieldLabel } from "@/components/ui/FieldLabel";
 import { ACCENT_BTN_CLS, ACCENT_BUTTON_STYLE, CARD_STYLE, INPUT_CLS } from "@/components/ui/darkroom-tokens";
@@ -14,7 +14,7 @@ async function readError(response: Response, fallback: string): Promise<Error> {
 
 export function AccountSecuritySection() {
   const { t, i18n } = useTranslation(["common", "dashboard"]);
-  const token = useAuthStore((state) => state.token) ?? getToken();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const storedNickname = useAuthStore((state) => state.nickname);
   const storedAvatar = useAuthStore((state) => state.avatarPath);
   const storedUsername = useAuthStore((state) => state.username);
@@ -36,10 +36,10 @@ export function AccountSecuritySection() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    if (!token) return;
+    if (!isAuthenticated) return;
     let cancelled = false;
-    void fetch("/api/v1/auth/me", {
-      headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+    void sessionFetch("/api/v1/auth/me", {
+      headers: { Accept: "application/json" },
     })
       .then(async (response) => {
         if (!response.ok) throw new Error("profile request failed");
@@ -54,25 +54,24 @@ export function AccountSecuritySection() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [isAuthenticated]);
 
   const handleNicknameSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setNicknameError("");
     setNicknameSuccess(false);
-    if (!token) {
+    if (!isAuthenticated) {
       setNicknameError(t("dashboard:profile_save_failed"));
       return;
     }
     setSavingNickname(true);
     try {
-      const response = await fetch("/api/v1/auth/me", {
+      const response = await sessionFetch("/api/v1/auth/me", {
         method: "PUT",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
           "Accept-Language": i18n.language || "zh",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ nickname: nickname.trim() || null, email: email.trim() || null }),
       });
@@ -96,19 +95,18 @@ export function AccountSecuritySection() {
   const handleAvatarUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file || !token) return;
+    if (!file || !isAuthenticated) return;
     setAvatarError("");
     setAvatarSuccess(false);
     setAvatarUploading(true);
     try {
       const form = new FormData();
       form.append("avatar", file);
-      const response = await fetch("/api/v1/auth/me/avatar", {
+      const response = await sessionFetch("/api/v1/auth/me/avatar", {
         method: "PUT",
         headers: {
           Accept: "application/json",
           "Accept-Language": i18n.language || "zh",
-          Authorization: `Bearer ${token}`,
         },
         body: form,
       });
@@ -129,17 +127,16 @@ export function AccountSecuritySection() {
   };
 
   const handleAvatarRemove = async () => {
-    if (!token) return;
+    if (!isAuthenticated) return;
     setAvatarError("");
     setAvatarSuccess(false);
     setAvatarUploading(true);
     try {
-      const response = await fetch("/api/v1/auth/me/avatar", {
+      const response = await sessionFetch("/api/v1/auth/me/avatar", {
         method: "DELETE",
         headers: {
           Accept: "application/json",
           "Accept-Language": i18n.language || "zh",
-          Authorization: `Bearer ${token}`,
         },
       });
       if (!response.ok) throw await readError(response, t("dashboard:avatar_failed"));
@@ -165,20 +162,19 @@ export function AccountSecuritySection() {
       setError(t("dashboard:password_mismatch"));
       return;
     }
-    if (!token) {
+    if (!isAuthenticated) {
       setError(t("dashboard:password_change_unavailable"));
       return;
     }
 
     setSaving(true);
     try {
-      const response = await fetch("/api/v1/auth/password", {
+      const response = await sessionFetch("/api/v1/auth/password", {
         method: "POST",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
           "Accept-Language": i18n.language || "zh",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
       });

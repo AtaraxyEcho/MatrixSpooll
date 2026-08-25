@@ -189,6 +189,7 @@ export function AddCredentialModal({
       const res = await API.discoverAnthropicModels({
         base_url: discoverBase,
         api_key: form.apiKey,
+        source_custom_provider_id: form.sourceCustomProviderId,
       });
       if (session !== sessionRef.current) return;
       setModelOptions(res.models.map((m) => m.model_id));
@@ -205,7 +206,7 @@ export function AddCredentialModal({
     }
   };
 
-  const handleImportProvider = async (provider: CustomProviderInfo) => {
+  const handleImportProvider = (provider: CustomProviderInfo) => {
     // 同 session 防重入：popover 内 provider option 没有 disabled，用户可以
     // 连击或在 inflight 期间点别的 provider；sessionRef 只挡跨 session race，
     // 挡不住同一 session 内的并发，最后返回的请求会覆盖表单。
@@ -215,12 +216,12 @@ export function AddCredentialModal({
     // 立即关闭 popover，避免 inflight 期间用户继续看到可点选项
     setImportPickerOpen(false);
     try {
-      const cred = await API.getCustomProviderCredentials(provider.id);
       if (session !== sessionRef.current) return;
       // 切到 __custom__：避免预设的 messages_url 覆盖刚导入的 base_url
       form.setPreset(customSentinelId);
-      form.setApiKey(cred.api_key);
-      form.setBaseUrl(cred.base_url);
+      form.setApiKey("");
+      form.setSourceCustomProviderId(provider.id);
+      form.setBaseUrl(provider.base_url);
       if (!form.displayName.trim()) {
         form.setDisplayName(provider.display_name);
       }
@@ -250,6 +251,7 @@ export function AddCredentialModal({
         preset_id: form.presetId,
         base_url: submitBaseUrl,
         api_key: form.apiKey,
+        source_custom_provider_id: form.sourceCustomProviderId,
         model: form.model || undefined,
       });
       if (session !== sessionRef.current) return;
@@ -285,7 +287,7 @@ export function AddCredentialModal({
 
   const submitDisabled =
     submitting ||
-    (mode === "create" && !form.apiKey.trim()) ||
+    (mode === "create" && !form.apiKey.trim() && form.sourceCustomProviderId == null) ||
     !form.baseUrl.trim() ||
     (mode === "edit" && !form.isDirty(initial));
 
@@ -447,12 +449,19 @@ export function AddCredentialModal({
               value={form.apiKey}
               onChange={(e) => {
                 form.setApiKey(e.target.value);
+                form.setSourceCustomProviderId(null);
                 invalidateDiscoveredModels();
                 invalidateDraftTest();
               }}
               autoComplete="off"
               spellCheck={false}
-              placeholder={mode === "edit" ? t("api_key_unchanged_hint") : undefined}
+              placeholder={
+                form.sourceCustomProviderId != null
+                  ? providers.find((provider) => provider.id === form.sourceCustomProviderId)?.api_key_masked
+                  : mode === "edit"
+                    ? t("api_key_unchanged_hint")
+                    : undefined
+              }
               className={INPUT_CLS}
             />
           </Field>
@@ -579,7 +588,12 @@ export function AddCredentialModal({
           <button
             type="button"
             onClick={() => void handleTest()}
-            disabled={testing || submitting || !form.apiKey.trim() || !form.baseUrl.trim()}
+            disabled={
+              testing ||
+              submitting ||
+              (!form.apiKey.trim() && form.sourceCustomProviderId == null) ||
+              !form.baseUrl.trim()
+            }
             className={GHOST_BTN_CLS}
             data-testid="test-connection"
           >

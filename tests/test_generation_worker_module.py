@@ -278,6 +278,7 @@ async def _patch_empty_db(monkeypatch):
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr("lib.db.async_session_factory", factory)
+    monkeypatch.setattr("lib.db.safe_session_factory", factory)
     yield factory
     await engine.dispose()
 
@@ -646,7 +647,7 @@ class TestCapacityTable:
         assert table.get("unknown", "video") == 2
 
     @pytest.mark.unit
-    async def test_from_db_known_providers_and_unsupported_lanes_zero(self):
+    async def test_from_db_known_providers_and_unsupported_lanes_zero(self, _patch_empty_db):
         """from_db：所有 registry provider 已知，不支持的 lane 强制 0。
 
         只断言与 config 数值无关的确定不变量（已知 + 不支持→0），避免本地 dev DB
@@ -1444,14 +1445,17 @@ class TestGenerationWorker:
 
         started = asyncio.Event()
 
-        async def _block(_task):
+        async def _block(_task, **_kwargs):
             started.set()
             await asyncio.sleep(10)  # 模拟长时间运行的生成任务
 
         monkeypatch.setattr("server.services.generation_tasks.execute_generation_task", _block)
 
         t = asyncio.create_task(
-            worker._process_task({"task_id": "tid", "media_type": "video"}),
+            worker._process_task(
+                {"task_id": "tid", "media_type": "video"},
+                claimed_provider_id="test",
+            ),
             name="generation-video-tid",
         )
         worker._slots.register("test", "video", "tid", t)
@@ -1500,7 +1504,7 @@ class TestGenerationWorker:
         release = asyncio.Event()
         entered: set[str] = set()
 
-        async def _block(task):
+        async def _block(task, **_kwargs):
             entered.add(task["task_id"])
             await release.wait()
             return {"ok": True}
@@ -1510,7 +1514,10 @@ class TestGenerationWorker:
         vid_ids = ["vid-0", "vid-1", "vid-2"]
         for tid in vid_ids:
             t = asyncio.create_task(
-                worker._process_task({"task_id": tid, "media_type": "video"}),
+                worker._process_task(
+                    {"task_id": tid, "media_type": "video"},
+                    claimed_provider_id="gemini-aistudio",
+                ),
                 name=f"generation-video-{tid}",
             )
             worker._slots.register("gemini-aistudio", "video", tid, t)
@@ -1549,14 +1556,17 @@ class TestGenerationWorker:
 
         started = asyncio.Event()
 
-        async def _block(_task):
+        async def _block(_task, **_kwargs):
             started.set()
             await asyncio.sleep(10)
 
         monkeypatch.setattr("server.services.generation_tasks.execute_generation_task", _block)
 
         t = asyncio.create_task(
-            worker._process_task({"task_id": "tid", "media_type": "video"}),
+            worker._process_task(
+                {"task_id": "tid", "media_type": "video"},
+                claimed_provider_id="test",
+            ),
             name="generation-video-tid",
         )
         worker._slots.register("test", "video", "tid", t)

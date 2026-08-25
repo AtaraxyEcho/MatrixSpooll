@@ -74,7 +74,9 @@ def _client(monkeypatch, tmp_path):
 
     app = FastAPI()
     register_error_handlers(app)
-    app.dependency_overrides[get_current_user] = lambda: CurrentUserInfo(id="default", sub="testuser", role="admin")
+    current_user = CurrentUserInfo(id="default", sub="testuser", role="admin", is_superadmin=True)
+    app.dependency_overrides[get_current_user] = lambda: current_user
+    app.dependency_overrides[files._get_project_file_user] = lambda: current_user
     app.include_router(files.router, prefix="/api/v1", dependencies=AUTH_DEPENDENCIES)
     app.include_router(files.public_router, prefix="/api/v1")
     return TestClient(app), pm

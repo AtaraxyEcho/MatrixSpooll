@@ -310,6 +310,7 @@ class TestAssistantServiceMore:
         store = EventLogStore(session_factory=factory)
 
         # 首次受理（重启前）：新会话首条用户条目已随 client_key 落库
+        await SessionMetaStore(session_factory=factory).create("demo", "sdk-prev")
         accepted_entry = build_user_entry([{"type": "text", "text": "hello"}])
         await store.append("sdk-prev", [accepted_entry], client_key="ck-restart")
 
@@ -352,12 +353,14 @@ class TestAssistantServiceMore:
         service.event_log = _FakeEventLogService()
         service.event_log_store = store
         service._new_session_client_keys_max = 1
+        registration_store = SessionMetaStore(session_factory=factory)
 
         # 模拟 SessionManager 的受理落库：新会话首条条目随 client_key 写入
         async def send_new_session(project_name, prompt, *, user_entry=None, client_key=None, **kwargs):
             sid = f"sdk-{len(sm.new_sessions)}"
             sm.new_sessions.append((project_name, prompt))
             service.meta_store.metas[sid] = make_session_meta(id=sid, project_name=project_name)
+            await registration_store.create(project_name, sid)
             if user_entry is not None:
                 await store.append_user_entry(sid, user_entry, client_key=client_key)
             return sid
@@ -376,7 +379,7 @@ class TestAssistantServiceMore:
         await engine.dispose()
 
     @staticmethod
-    def _make_project_scoped_service(tmp_path, store, sm, meta_store):
+    def _make_project_scoped_service(tmp_path, store, sm, meta_store, registration_store):
         """装配一个跨项目 send_new_session 会落地 meta + 事件日志的 service。"""
         service = AssistantService(project_root=tmp_path)
         service.pm = _MultiProjectPM({"proj_a", "proj_b"})
@@ -391,6 +394,11 @@ class TestAssistantServiceMore:
             meta_store.metas[sid] = make_session_meta(
                 id=sid,
                 project_name=project_name,
+                actor_user_id=kwargs.get("actor_user_id", "default"),
+            )
+            await registration_store.create(
+                project_name,
+                sid,
                 actor_user_id=kwargs.get("actor_user_id", "default"),
             )
             if user_entry is not None:
@@ -410,7 +418,8 @@ class TestAssistantServiceMore:
         factory = async_sessionmaker(engine, expire_on_commit=False)
         store = EventLogStore(session_factory=factory)
         sm = _FakeSessionManager()
-        service = self._make_project_scoped_service(tmp_path, store, sm, _FakeMetaStore([]))
+        registration_store = SessionMetaStore(session_factory=factory)
+        service = self._make_project_scoped_service(tmp_path, store, sm, _FakeMetaStore([]), registration_store)
 
         first = await service.send_or_create("proj_a", "one", client_key="shared", actor_user_id="user-a")
         second = await service.send_or_create("proj_a", "two", client_key="shared", actor_user_id="user-b")
@@ -436,7 +445,8 @@ class TestAssistantServiceMore:
 
         sm = _FakeSessionManager()
         meta_store = _FakeMetaStore([])
-        service = self._make_project_scoped_service(tmp_path, store, sm, meta_store)
+        registration_store = SessionMetaStore(session_factory=factory)
+        service = self._make_project_scoped_service(tmp_path, store, sm, meta_store, registration_store)
 
         first = await service.send_or_create("proj_a", "hello", client_key="ck-shared")
         assert first["session_id"] == "sdk-0"
@@ -467,7 +477,8 @@ class TestAssistantServiceMore:
 
         sm = _FakeSessionManager()
         meta_store = _FakeMetaStore([])
-        service = self._make_project_scoped_service(tmp_path, store, sm, meta_store)
+        registration_store = SessionMetaStore(session_factory=factory)
+        service = self._make_project_scoped_service(tmp_path, store, sm, meta_store, registration_store)
 
         first = await service.send_or_create("proj_a", "hello", client_key="ck-shared")
         assert first["session_id"] == "sdk-0"
@@ -495,7 +506,8 @@ class TestAssistantServiceMore:
 
         sm = _FakeSessionManager()
         meta_store = _FakeMetaStore([])
-        service = self._make_project_scoped_service(tmp_path, store, sm, meta_store)
+        registration_store = SessionMetaStore(session_factory=factory)
+        service = self._make_project_scoped_service(tmp_path, store, sm, meta_store, registration_store)
 
         first = await service.send_or_create("proj_a", "hello", client_key="ck-same")
         assert first["session_id"] == "sdk-0"
@@ -533,11 +545,13 @@ class TestAssistantServiceMore:
         service.event_log = _FakeEventLogService()
         service.event_log_store = store
         service._new_session_client_keys_max = 2
+        registration_store = SessionMetaStore(session_factory=factory)
 
         async def send_new_session(project_name, prompt, *, user_entry=None, client_key=None, **kwargs):
             sid = f"sdk-{len(sm.new_sessions)}"
             sm.new_sessions.append((project_name, prompt))
             service.meta_store.metas[sid] = make_session_meta(id=sid, project_name=project_name)
+            await registration_store.create(project_name, sid)
             if user_entry is not None:
                 await store.append_user_entry(sid, user_entry, client_key=client_key)
             return sid
@@ -582,11 +596,13 @@ class TestAssistantServiceMore:
         service.meta_store = _FakeMetaStore([])
         service.event_log = _FakeEventLogService()
         service.event_log_store = store
+        registration_store = SessionMetaStore(session_factory=factory)
 
         async def send_new_session(project_name, prompt, *, user_entry=None, client_key=None, **kwargs):
             sid = f"sdk-{len(sm.new_sessions)}"
             sm.new_sessions.append((project_name, prompt))
             service.meta_store.metas[sid] = make_session_meta(id=sid, project_name=project_name)
+            await registration_store.create(project_name, sid)
             if user_entry is not None:
                 await store.append_user_entry(sid, user_entry, client_key=client_key)
             return sid

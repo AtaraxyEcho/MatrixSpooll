@@ -221,6 +221,7 @@ class TestEndpointCatalog:
             "newapi-video",
             "v2-video-generations",
             "ark-seedance",
+            "anyfast-seedance",
             "vidu-video",
             "dashscope-image",
             "dashscope-async-video",
@@ -1675,9 +1676,8 @@ class TestDiscoverAnthropic:
         assert args[2] == "sk-stored"
 
 
-class TestGetProviderCredentials:
-    def test_returns_plaintext(self, client: TestClient):
-        """正常路径返回明文 base_url + api_key。"""
+class TestGetProviderCredentialSummary:
+    def test_never_returns_plaintext(self, client: TestClient):
         # 先创建 provider
         create_resp = client.post(
             "/api/v1/custom-providers",
@@ -1692,14 +1692,15 @@ class TestGetProviderCredentials:
         assert create_resp.status_code == 201
         provider_id = create_resp.json()["id"]
 
-        resp = client.get(f"/api/v1/custom-providers/{provider_id}/credentials")
+        resp = client.get(f"/api/v1/custom-providers/{provider_id}/credential-summary")
         assert resp.status_code == 200
         body = resp.json()
         assert body["base_url"] == "https://oneapi.example.com"
-        assert body["api_key"] == "sk-secret"
+        assert body["api_key_masked"] != "sk-secret"
+        assert "sk-secret" not in resp.text
 
     def test_returns_404_for_unknown_provider(self, client: TestClient):
-        resp = client.get("/api/v1/custom-providers/99999/credentials")
+        resp = client.get("/api/v1/custom-providers/99999/credential-summary")
         assert resp.status_code == 404
 
 

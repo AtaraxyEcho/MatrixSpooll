@@ -13,7 +13,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
 import type { AdminAuditEvent, AdminSession } from "@/types/admin";
 import type { TaskItem, TaskStatus } from "@/types/task";
-import { getToken } from "@/utils/auth";
+import { sessionFetch } from "@/utils/auth";
 
 type Role = "admin" | "member";
 export type AdminSection = "users" | "sessions" | "logs" | "tasks";
@@ -524,27 +524,30 @@ function SectionFrame({ icon, title, description, action, children }: { icon: Re
 export function AdminManagerPage({ section = "users" }: { section?: AdminSection }) {
   const { t, i18n } = useTranslation(["admin", "common"]);
   const [, navigate] = useLocation();
-  const token = useAuthStore((state) => state.token) ?? getToken();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isAuthLoading = useAuthStore((state) => state.isLoading);
+  const role = useAuthStore((state) => state.role);
   const logout = useAuthStore((state) => state.logout);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const request = useCallback(async (path: string, init?: RequestInit) => {
-    const response = await fetch(`/api/v1${path}`, {
+    const response = await sessionFetch(`/api/v1${path}`, {
       ...init,
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
         "Accept-Language": i18n.language || "zh",
-        Authorization: token ? `Bearer ${token}` : "",
         ...(init?.headers ?? {}),
       },
     });
     if (!response.ok) throw await readError(response, t("request_failed"));
     return response;
-  }, [i18n.language, t, token]);
+  }, [i18n.language, t]);
   useEffect(() => {
-    if (!token) navigate(`${ROUTE_ADMIN_LOGIN}?from=${encodeURIComponent(`${ROUTE_ADMIN_MANAGER}/${section}`)}`);
-  }, [navigate, section, token]);
+    if (!isAuthLoading && (!isAuthenticated || role !== "admin")) {
+      navigate(`${ROUTE_ADMIN_LOGIN}?from=${encodeURIComponent(`${ROUTE_ADMIN_MANAGER}/${section}`)}`);
+    }
+  }, [isAuthenticated, isAuthLoading, navigate, role, section]);
   const onError = useCallback((message: string) => {
     useAppStore.getState().pushToast(message, "error");
   }, []);

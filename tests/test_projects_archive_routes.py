@@ -131,6 +131,19 @@ class TestProjectArchiveRoutes:
         assert any("project.json" in error for error in response.json()["errors"])
         assert "diagnostics" in response.json()
 
+    def test_import_route_rejects_upload_over_limit(self, tmp_path, monkeypatch):
+        pm = ProjectManager(tmp_path / "projects")
+        client = _client(monkeypatch, pm)
+        monkeypatch.setattr(projects, "MAX_IMPORT_UPLOAD_BYTES", 4)
+
+        with client:
+            response = client.post(
+                "/api/v1/projects/import",
+                files={"file": ("large.zip", b"12345", "application/zip")},
+            )
+
+        assert response.status_code == 413
+
     def test_import_route_returns_conflict_payload_for_secondary_confirmation(
         self,
         tmp_path,

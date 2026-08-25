@@ -20,7 +20,7 @@ DOWN_REVISION = "d4f8b1c73a20"
 @pytest.fixture
 def alembic_cfg(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
-    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("MATRIXSPOOLL_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     import logging.config
 
     real_file_config = logging.config.fileConfig

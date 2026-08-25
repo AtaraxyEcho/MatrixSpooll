@@ -41,6 +41,7 @@ from lib.path_safety import try_safe_join
 from lib.project_migrations import cleanup_stale_backups, run_project_migrations
 from lib.runtime_identity_migration import migrate_runtime_identity
 from lib.source_loader.migration import migrate_project_source_encoding
+from lib.storage_capacity import storage_capacity
 from server.auth import (
     database_auth_initialized,
     ensure_auth_password,
@@ -51,6 +52,7 @@ from server.auth import (
 )
 from server.dependencies import require_project_migration_ok
 from server.error_handlers import register_error_handlers
+from server.middleware.csrf import CSRFMiddleware
 from server.routers import (
     admin,
     agent_chat,
@@ -528,6 +530,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(CSRFMiddleware)
 
 
 def _resolve_listen_addr() -> tuple[str, int]:
@@ -759,7 +762,7 @@ app.include_router(auth_router.public_router, prefix="/api/v1", tags=["认证"])
 app.include_router(files.public_router, prefix="/api/v1", tags=["文件管理"])
 
 # 自带认证端点：成因都是浏览器直发请求带不了 Authorization header，
-# 端点内自行校验凭证（SSE 用 CurrentUserFlexible 收 ?token=，导出用短时效下载 token）。
+# 端点内自行校验凭证（SSE 用 CurrentUserFlexible 读取 Cookie，导出用短时效下载 token）。
 app.include_router(
     assistant.self_auth_router,
     prefix="/api/v1/projects/{project_name}/assistant",
@@ -775,7 +778,6 @@ app.include_router(
 app.include_router(
     projects.self_auth_router,
     prefix="/api/v1",
-    dependencies=[Depends(require_project_flexible_access)],
     tags=["项目管理"],
 )
 app.include_router(
@@ -826,7 +828,15 @@ async def _readiness_report() -> tuple[bool, dict[str, object]]:
 
     report["auth"] = database_auth_initialized() if is_auth_enabled() else is_testing()
     media_root = app_data_dir()
-    report["media"] = media_root.is_dir() and os.access(media_root, os.R_OK | os.W_OK)
+    media_accessible = media_root.is_dir() and os.access(media_root, os.R_OK | os.W_OK)
+    try:
+        capacity = await asyncio.to_thread(storage_capacity, media_root)
+        report["media_free_bytes"] = capacity.free_bytes
+        report["media_reserve_bytes"] = capacity.reserve_bytes
+        report["media"] = media_accessible and capacity.available
+    except Exception as exc:
+        logger.warning("Readiness storage check failed: %s", exc)
+        report["media"] = False
     ready = all(bool(report[key]) for key in ("database", "migration", "auth", "media", "startup"))
     return ready, report
 

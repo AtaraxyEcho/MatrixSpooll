@@ -11,17 +11,34 @@ pytestmark = pytest.mark.unit
 
 
 class TestGetDatabaseUrl:
-    def test_default_returns_sqlite(self):
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("DATABASE_URL", None)
+    def test_testing_uses_isolated_sqlite_even_when_runtime_url_exists(self):
+        with patch.dict(
+            os.environ,
+            {"TESTING": "true", "DATABASE_URL": "postgresql+asyncpg://localhost/development"},
+            clear=False,
+        ):
+            os.environ.pop("MATRIXSPOOLL_TEST_DATABASE_URL", None)
             url = get_database_url()
-            assert url.startswith("sqlite+aiosqlite:///")
-            assert ".matrixspooll.db" in url
+            assert url == "sqlite+aiosqlite:///:memory:"
 
-    def test_env_override(self):
-        with patch.dict(os.environ, {"DATABASE_URL": "postgresql+asyncpg://localhost/test"}):
+    def test_explicit_test_database_override(self):
+        with patch.dict(
+            os.environ,
+            {
+                "TESTING": "true",
+                "DATABASE_URL": "postgresql+asyncpg://localhost/development",
+                "MATRIXSPOOLL_TEST_DATABASE_URL": "postgresql+asyncpg://localhost/matrixspooll_test",
+            },
+        ):
             url = get_database_url()
-            assert url == "postgresql+asyncpg://localhost/test"
+            assert url == "postgresql+asyncpg://localhost/matrixspooll_test"
+
+    def test_runtime_env_override(self):
+        with patch.dict(
+            os.environ,
+            {"TESTING": "false", "DATABASE_URL": "postgresql+asyncpg://localhost/matrixspooll"},
+        ):
+            assert get_database_url() == "postgresql+asyncpg://localhost/matrixspooll"
 
     def test_missing_url_rejected_outside_testing(self):
         with patch.dict(os.environ, {"TESTING": "false"}, clear=False):
@@ -32,10 +49,13 @@ class TestGetDatabaseUrl:
 
 class TestIsSqliteBackend:
     def test_sqlite(self):
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("DATABASE_URL", None)
+        with patch.dict(os.environ, {"TESTING": "true"}, clear=False):
+            os.environ.pop("MATRIXSPOOLL_TEST_DATABASE_URL", None)
             assert is_sqlite_backend() is True
 
     def test_postgresql(self):
-        with patch.dict(os.environ, {"DATABASE_URL": "postgresql+asyncpg://localhost/test"}):
+        with patch.dict(
+            os.environ,
+            {"TESTING": "true", "MATRIXSPOOLL_TEST_DATABASE_URL": "postgresql+asyncpg://localhost/test"},
+        ):
             assert is_sqlite_backend() is False

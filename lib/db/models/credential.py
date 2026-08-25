@@ -6,6 +6,7 @@ from sqlalchemy import Boolean, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lib.db.base import Base, TimestampMixin
+from lib.db.encrypted_type import EncryptedText
 
 
 class ProviderCredential(TimestampMixin, Base):
@@ -26,13 +27,13 @@ class ProviderCredential(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_key: Mapped[str | None] = mapped_column(EncryptedText(), nullable=True)
     credentials_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     base_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 按 registry key 命名的定型列，承载需要两个 secret 字符串的内置 provider（可灵 Kling 的
     # access_key + secret_key，JWT HS256 鉴权）。除可灵外恒为 NULL 的稀疏列（见 ADR 0037）。
-    access_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    secret_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_key: Mapped[str | None] = mapped_column(EncryptedText(), nullable=True)
+    secret_key: Mapped[str | None] = mapped_column(EncryptedText(), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     def overlay_config(self, config: dict[str, str]) -> dict[str, str]:

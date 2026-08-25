@@ -350,15 +350,10 @@ describe("AddCredentialModal", () => {
       );
     });
 
-    it("populates base_url + api_key from selected provider", async () => {
+    it("references a selected provider without exposing its api key", async () => {
       vi.spyOn(API, "listCustomProviders").mockResolvedValue({
         providers: [sampleProvider],
       });
-      vi.spyOn(API, "getCustomProviderCredentials").mockResolvedValue({
-        api_key: "sk-real-key",
-        base_url: "https://api.deepseek.com/anthropic",
-      });
-
       render(
         <AddCredentialModal
           open
@@ -376,13 +371,14 @@ describe("AddCredentialModal", () => {
         /base[_ ]url|代理地址/i,
       )) as HTMLInputElement;
       await waitFor(() => {
-        expect(baseUrlInput.value).toBe("https://api.deepseek.com/anthropic");
+        expect(baseUrlInput.value).toBe(sampleProvider.base_url);
       });
 
       const apiKeyInput = screen.getByLabelText(
         /anthropic[_ ]?api[_ ]?key|Anthropic API 密钥/i,
       ) as HTMLInputElement;
-      expect(apiKeyInput.value).toBe("sk-real-key");
+      expect(apiKeyInput.value).toBe("");
+      expect(apiKeyInput.placeholder).toBe(sampleProvider.api_key_masked);
     });
 
     it("does not show import button in edit mode", async () => {

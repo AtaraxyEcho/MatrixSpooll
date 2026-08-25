@@ -2929,7 +2929,7 @@ async def test_execute_reference_video_task_stages_actual_request_and_checkpoint
         submitted.update(kwargs)
         assert kwargs["formal_output"] is True
         assert all(
-            ".matrixspooll/tasks/task-submit/provider_media/" in str(path) for path in kwargs["reference_images"]
+            ".matrixspooll/tasks/task-submit/provider_media/" in path.as_posix() for path in kwargs["reference_images"]
         )
         expected_staged_basis = real_visual_basis(**captured_basis_kwargs)
         assert kwargs["visual_basis_digest"] == expected_staged_basis

@@ -18,7 +18,6 @@ function renderUserMenu(path = "/app") {
 describe("UserMenu", () => {
   beforeEach(() => {
     useAuthStore.setState({
-      token: null,
       username: null,
       role: null,
       isAuthenticated: false,
@@ -43,7 +42,6 @@ describe("UserMenu", () => {
 
   it("opens the menu on avatar click and shows account actions for admins", () => {
     useAuthStore.setState({
-      token: "tok-123",
       username: "alice",
       role: "admin",
       isAuthenticated: true,
@@ -61,7 +59,6 @@ describe("UserMenu", () => {
 
   it("hides the admin portal for members", () => {
     useAuthStore.setState({
-      token: "tok-123",
       username: "bob",
       role: "member",
       isAuthenticated: true,
@@ -78,7 +75,6 @@ describe("UserMenu", () => {
 
   it("opens the password modal from the menu and closes the popover", () => {
     useAuthStore.setState({
-      token: "tok-123",
       username: "alice",
       role: "admin",
       isAuthenticated: true,
@@ -97,7 +93,6 @@ describe("UserMenu", () => {
 
   it("confirms logout, clears the session and redirects to login with the return path", () => {
     useAuthStore.setState({
-      token: "tok-123",
       username: "alice",
       role: "member",
       isAuthenticated: true,
@@ -109,7 +104,6 @@ describe("UserMenu", () => {
     fireEvent.click(screen.getByText("登出"));
     fireEvent.click(screen.getByRole("button", { name: "登出" }));
 
-    expect(useAuthStore.getState().token).toBeNull();
     expect(useAuthStore.getState().username).toBeNull();
     expect(useAuthStore.getState().isAuthenticated).toBe(false);
     expect(history.at(-1)).toMatch(/^\/login\?from=/);

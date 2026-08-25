@@ -430,7 +430,14 @@ def _ensure_activation_backup(source: Path, *, stamp: int) -> None:
         try:
             if candidate.read_bytes() == content:
                 try:
-                    os.utime(candidate, None, follow_symlinks=False)
+                    if os.utime in os.supports_follow_symlinks:
+                        os.utime(candidate, None, follow_symlinks=False)
+                    else:
+                        # Windows cannot combine utime with follow_symlinks=False.
+                        # Recheck immediately before the regular-file fallback.
+                        if candidate.is_symlink():
+                            continue
+                        os.utime(candidate, None)
                 except (NotImplementedError, OSError):
                     continue
                 return

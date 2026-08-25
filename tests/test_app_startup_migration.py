@@ -36,6 +36,8 @@ async def test_startup_invokes_project_migrations(monkeypatch):
     monkeypatch.setattr(app_module, "cleanup_stale_backups", cleanup_mock)
     monkeypatch.setattr(app_module, "ensure_auth_password", lambda: "test")
     monkeypatch.setattr(app_module, "init_db", _noop_async)
+    monkeypatch.setattr(app_module, "ensure_database_users", _noop_async)
+    monkeypatch.setattr(app_module, "backfill_project_registry", _noop_async)
     monkeypatch.setattr(lib.db, "init_db", _noop_async)
     monkeypatch.setattr(app_module, "create_generation_worker", _FakeWorker)
     monkeypatch.setattr(assistant_router.assistant_service, "startup", _noop_async)

@@ -84,8 +84,7 @@ def _db_url() -> str:
 
         return urlunparse(parsed._replace(netloc=netloc, query=query))
     except Exception:
-        # 脱敏失败时回退到原始字符串，避免诊断包完全失败；调用方 _safe 会再兜一层。
-        return raw
+        return "<redacted: invalid database URL>"
 
 
 def _log_level() -> str:

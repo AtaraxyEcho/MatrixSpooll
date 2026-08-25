@@ -35,18 +35,16 @@ def get_database_url() -> str:
 
     Production and development processes must provide ``DATABASE_URL`` so a
     missing environment variable cannot silently create a second SQLite
-    database.  The test suite opts in with ``TESTING=true`` and may then use
-    the historical application-data SQLite path unless it supplies a URL.
+    database. Tests never inherit that URL: ``TESTING=true`` uses an isolated
+    in-memory SQLite database unless ``MATRIXSPOOLL_TEST_DATABASE_URL`` is set.
     """
+    if _testing_mode_enabled():
+        return os.environ.get("MATRIXSPOOLL_TEST_DATABASE_URL", "").strip() or "sqlite+aiosqlite:///:memory:"
+
     url = os.environ.get("DATABASE_URL", "").strip()
     if url:
         return url
-    if not _testing_mode_enabled():
-        raise RuntimeError("DATABASE_URL is required outside TESTING mode; implicit SQLite databases are disabled")
-    from lib.app_data_dir import app_data_dir
-
-    db_path = app_data_dir() / ".matrixspooll.db"
-    return f"sqlite+aiosqlite:///{db_path}"
+    raise RuntimeError("DATABASE_URL is required outside TESTING mode; implicit SQLite databases are disabled")
 
 
 def is_sqlite_backend() -> bool:

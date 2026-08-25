@@ -822,8 +822,14 @@ async def test_free_audio_is_committed_as_a_versioned_creation(tmp_path: Path, m
             ),
         )
 
+    class Queue:
+        async def get_task(self, task_id):
+            assert task_id == "task-audio"
+            return {"status": "running"}
+
     monkeypatch.setattr(free_creation_tasks_module, "get_project_manager", lambda: FakeProjectManager())
     monkeypatch.setattr(free_creation_tasks_module, "resolve_generation_context", _context)
+    monkeypatch.setattr(free_creation_tasks_module, "get_generation_queue", lambda: Queue())
 
     result = await execute_free_audio_task(
         "demo",

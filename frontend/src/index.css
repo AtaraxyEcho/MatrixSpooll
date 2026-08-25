@@ -52,12 +52,11 @@
     --color-danger-ring: oklch(0.45 0.18 25 / 0.40);
     --color-danger-glow: oklch(0.45 0.18 25 / 0.45);
 
-    /* 字体 — 设计稿统一使用 Inter，display 仅在字号/字重上做区分 */
-    --font-sans: "Inter", "Noto Sans SC", system-ui, sans-serif;
-    --font-display: "Inter", "Noto Sans SC", system-ui, sans-serif;
-    --font-mono: "JetBrains Mono", "Fira Code", "Noto Sans Mono", ui-monospace, monospace;
+    --font-sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    --font-display: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    --font-mono: "Cascadia Code", "SFMono-Regular", Consolas, ui-monospace, monospace;
     /* 衬线 — 仅项目大厅 (Darkroom) 用于编辑式电影感大标题 */
-    --font-editorial: "Instrument Serif", "Songti SC", "Noto Serif SC", Georgia, serif;
+    --font-editorial: "Songti SC", "STSong", Georgia, serif;
 
     /* 阴影 */
     --shadow-glow: 0 0 0 1px oklch(0.76 0.09 295 / 0.28), 0 18px 40px oklch(0 0 0 / 0.45);

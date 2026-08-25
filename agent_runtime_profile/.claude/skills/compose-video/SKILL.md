@@ -30,6 +30,8 @@ stale 产物照常参与成片，不因「看起来旧」跳过或触发重生�
 
 脚本必须在含 `project.json` 的项目 cwd 内运行，并使用**相对项目根 cwd** 的剧本文件名：
 
+CLI 状态与错误输出使用纯文本前缀，兼容 Windows 默认控制台编码。
+
 ```bash
 # 最简形式：按剧本顺序拼接 + 自动转场（按 transition_to_next）
 python .claude/skills/compose-video/scripts/compose_video.py scripts/episode_1.json

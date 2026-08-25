@@ -15,13 +15,14 @@ pytestmark = pytest.mark.unit
 
 PROJECT = "demo"
 PREFIX = f"/api/v1/projects/{PROJECT}/assistant"
+USER_ID = "00000000-0000-4000-8000-000000000001"
 
 
 class _FakeService:
     def __init__(self):
         self.sessions = {
-            "session-1": make_session_meta(id="session-1", project_name=PROJECT),
-            "bad": make_session_meta(id="bad", project_name=PROJECT),
+            "session-1": make_session_meta(id="session-1", project_name=PROJECT, actor_user_id=USER_ID),
+            "bad": make_session_meta(id="bad", project_name=PROJECT, actor_user_id=USER_ID),
             "other-user": make_session_meta(id="other-user", project_name=PROJECT, actor_user_id="other-user"),
         }
 
@@ -77,7 +78,7 @@ class _FakeService:
         return [{"name": "skill-a"}]
 
 
-_FAKE_USER = CurrentUserInfo(id="default", sub="testuser", role="admin")
+_FAKE_USER = CurrentUserInfo(id=USER_ID, sub="testuser", role="admin")
 
 
 def _client(monkeypatch):
@@ -110,6 +111,12 @@ class TestAssistantRouterFull:
             )
             assert send_existing.status_code == 200
             assert send_existing.json()["session_id"] == "session-1"
+
+            send_missing_session = client.post(
+                f"{PREFIX}/sessions/send",
+                json={"content": "hello", "session_id": "missing"},
+            )
+            assert send_missing_session.status_code == 404
 
             # POST /sessions/send — missing project → 404
             send_missing_project = client.post(

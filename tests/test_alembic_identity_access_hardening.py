@@ -20,7 +20,7 @@ REVISION = "a4d6e8f0b2c4"
 @pytest.fixture
 def alembic_cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Config, Path]:
     db_path = tmp_path / "identity.db"
-    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("MATRIXSPOOLL_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     cfg = Config()
     cfg.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
     return cfg, db_path

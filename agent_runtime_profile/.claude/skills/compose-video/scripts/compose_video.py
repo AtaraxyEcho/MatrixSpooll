@@ -552,7 +552,7 @@ def concatenate_with_transitions(
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
-            print(f"⚠️  转场效果失败，尝试简单拼接: {result.stderr[:200]}")
+            print(f"警告: 转场效果失败，尝试简单拼接: {result.stderr[:200]}")
             concatenate_final(normalized_paths, output_path)
 
 
@@ -647,7 +647,7 @@ def compose_video(
     if not video_paths:
         raise ValueError("没有可用的视频片段")
 
-    print(f"📹 共 {len(video_paths)} 个视频片段")
+    print(f"视频片段: 共 {len(video_paths)} 个")
 
     # 确定输出路径：强制落在 project_dir/output/ 内，拒绝 ../ 逃逸
     if output_filename is None:
@@ -679,22 +679,22 @@ def compose_video(
             raise FileNotFoundError(f"BGM 文件不存在或不是普通文件: {music_file}")
 
     # 合成视频
-    print("🎬 正在合成视频...")
+    print("正在合成视频...")
 
     if use_transitions and any(t != "cut" for t in transitions):
         concatenate_with_transitions(video_paths, transitions, output_path)
     else:
         concatenate_simple(video_paths, output_path)
 
-    print(f"✅ 视频合成完成: {output_path}")
+    print(f"完成: 视频合成完成: {output_path}")
 
     # 添加背景音乐（存在性已在前置校验保证）
     if music_file is not None:
-        print("🎵 正在添加背景音乐...")
+        print("正在添加背景音乐...")
         final_output = output_path.with_stem(output_path.stem + "_with_music")
         add_background_music(output_path, music_file, final_output)
         output_path = final_output
-        print(f"✅ 背景音乐添加完成: {output_path}")
+        print(f"完成: 背景音乐添加完成: {output_path}")
 
     return output_path
 
@@ -710,7 +710,7 @@ def main():
 
     # 检查 ffmpeg / ffprobe
     if not check_ffmpeg():
-        print(f"❌ 错误: {FFMPEG_TOOLS_HINT}")
+        print(f"错误: {FFMPEG_TOOLS_HINT}")
         print("   macOS 可执行: brew install ffmpeg")
         print("   安装后请确认 ffmpeg -version 和 ffprobe -version 都能执行")
         sys.exit(1)
@@ -718,11 +718,11 @@ def main():
     try:
         output_path = compose_video(args.script, args.output, args.music, use_transitions=not args.no_transitions)
 
-        print(f"\n🎉 最终视频: {output_path}")
+        print(f"\n最终视频: {output_path}")
         print("   单独片段保留在: videos/")
 
     except Exception as e:
-        print(f"❌ 错误: {e}")
+        print(f"错误: {e}")
         sys.exit(1)
 
 

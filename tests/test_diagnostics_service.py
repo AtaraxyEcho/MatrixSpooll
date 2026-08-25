@@ -29,7 +29,7 @@ def test_collect_returns_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 def test_collect_masks_db_password(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MATRIXSPOOLL_DATA_DIR", str(tmp_path))
     monkeypatch.setenv(
-        "DATABASE_URL",
+        "MATRIXSPOOLL_TEST_DATABASE_URL",
         "postgresql+asyncpg://arcuser:supersecretpassword@db.example.com:5432/matrixspooll",
     )
     _reset_for_tests()
@@ -44,7 +44,7 @@ def test_collect_masks_db_password(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 def test_collect_masks_db_query_secrets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MATRIXSPOOLL_DATA_DIR", str(tmp_path))
     monkeypatch.setenv(
-        "DATABASE_URL",
+        "MATRIXSPOOLL_TEST_DATABASE_URL",
         "postgresql://host.example.com/matrixspooll?sslmode=require&password=topsecret&token=abc123",
     )
     _reset_for_tests()
@@ -58,6 +58,20 @@ def test_collect_masks_db_query_secrets(monkeypatch: pytest.MonkeyPatch, tmp_pat
         db_line
         == "Database URL: postgresql://host.example.com/matrixspooll?sslmode=require&password=%E2%80%A2%E2%80%A2&token=%E2%80%A2%E2%80%A2"
     )
+
+
+def test_collect_does_not_expose_invalid_db_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MATRIXSPOOLL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "MATRIXSPOOLL_TEST_DATABASE_URL",
+        "postgresql+asyncpg://matrixspooll:top-secret@db.example.com:not-a-port/matrixspooll",
+    )
+    _reset_for_tests()
+
+    text = diag_mod.collect_diagnostics()
+    db_line = next(line for line in text.splitlines() if line.startswith("Database URL:"))
+    assert db_line == "Database URL: <redacted: invalid database URL>"
+    assert "top-secret" not in text
 
 
 def test_collect_swallows_field_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

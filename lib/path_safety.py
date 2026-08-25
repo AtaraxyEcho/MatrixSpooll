@@ -71,7 +71,12 @@ def safe_join(
     # 可表达但会让 os.path.realpath 直接抛出原生 ValueError/OSError。调用方普遍只捕获
     # PathTraversalError，在这里统一转换，避免每个调用点各自补漏、遗漏的会退化成 500。
     try:
-        candidate_real = os.path.realpath(os.path.join(base_real, *parts))
+        normalized_parts = tuple(os.fspath(part) for part in parts)
+        if any("\x00" in part for part in normalized_parts):
+            raise PathTraversalError(f"path contains NUL: {parts!r}")
+        candidate_real = os.path.realpath(os.path.join(base_real, *normalized_parts))
+    except PathTraversalError:
+        raise
     except (OSError, ValueError) as exc:
         raise PathTraversalError(f"路径解析失败：{parts!r}") from exc
 

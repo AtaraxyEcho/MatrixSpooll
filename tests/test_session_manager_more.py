@@ -1,6 +1,9 @@
 import asyncio
+import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from hashlib import sha256
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -686,11 +689,12 @@ class TestSessionManagerMore:
 
     async def _make_sdk_hook_env(self, tmp_path):
         """Create a SessionManager + hook with SDK dir outside project_root."""
-        app_root = tmp_path / "app"
+        short_root = tmp_path.parent / f"sdk-{sha256(str(tmp_path).encode('utf-8')).hexdigest()[:8]}"
+        app_root = short_root / "app"
         own_project = app_root / "projects" / "alpha"
         own_project.mkdir(parents=True)
 
-        claude_home = tmp_path / "claude_home" / "projects"
+        claude_home = short_root / "claude" / "projects"
         claude_home.mkdir(parents=True)
 
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -749,9 +753,9 @@ class TestSessionManagerMore:
         New policy: 跨项目隔离基于 project_root/projects/<other>/ 的物理位置，
         而非 SDK 编码路径。
         """
-        hook, _, _, engine = await self._make_sdk_hook_env(tmp_path)
+        hook, own_project, _, engine = await self._make_sdk_hook_env(tmp_path)
 
-        other_project = tmp_path / "app" / "projects" / "beta"
+        other_project = own_project.parent / "beta"
         other_project.mkdir(parents=True)
         other_file = other_project / "secret.json"
         other_file.write_text("{}")
@@ -786,17 +790,18 @@ class TestSessionManagerMore:
 
     @pytest.mark.asyncio
     async def test_file_access_hook_allows_read_sdk_task_output(self, tmp_path):
-        """Hook allows Read for SDK task output files under /tmp/claude-*.
+        """Hook allows Read for SDK task output files under the system temp directory.
 
         New policy: cwd-external non-projects 路径默认放行（含 SDK 后台任务输出），
         写工具仍受 cwd 内限制约束。
         """
         hook, _, _, engine = await self._make_sdk_hook_env(tmp_path)
 
-        # SDK task output path pattern: /tmp/claude-{N}/{encoded}/tasks/{id}.output
-        task_output = "/tmp/claude-0/-app-projects-alpha-abc123/tasks/bdgaof0ba.output"
+        task_output = (
+            Path(tempfile.gettempdir()) / "claude-0" / "-app-projects-alpha-abc123" / "tasks" / "bdgaof0ba.output"
+        )
         result = await hook(
-            {"tool_name": "Read", "tool_input": {"file_path": task_output}},
+            {"tool_name": "Read", "tool_input": {"file_path": str(task_output)}},
             None,
             None,
         )
@@ -804,7 +809,7 @@ class TestSessionManagerMore:
 
         # Write to task output — denied (write tools only allow project_cwd)
         result = await hook(
-            {"tool_name": "Write", "tool_input": {"file_path": task_output}},
+            {"tool_name": "Write", "tool_input": {"file_path": str(task_output)}},
             None,
             None,
         )

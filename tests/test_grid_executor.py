@@ -669,14 +669,14 @@ class TestExecuteGridTask:
         assert not mock_generator.versions.ensure_current_tracked.called
         assert not mock_generator.versions.add_version.called
 
-    async def test_execute_grid_task_not_found(self):
+    async def test_execute_grid_task_not_found(self, tmp_path):
         from server.services.generation_tasks import execute_grid_task
 
         with (
             patch("server.services.generation_tasks.get_project_manager") as mock_pm_fn,
         ):
             mock_pm = MagicMock()
-            mock_pm.get_project_path.return_value = Path("/tmp/nonexistent")
+            mock_pm.get_project_path.return_value = tmp_path / "nonexistent"
             mock_pm_fn.return_value = mock_pm
 
             with pytest.raises(ValueError, match="grid not found"):

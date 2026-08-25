@@ -29,6 +29,8 @@ MESSAGES = {
     "api_key_user_invalid": "Người dùng liên kết với API Key không tồn tại hoặc đã bị vô hiệu hóa",
     "token_invalid": "Thông tin xác thực không hợp lệ hoặc đã hết hạn",
     "auth_required": "Vui lòng đăng nhập trước",
+    "csrf_invalid": "Xác minh bảo mật đã hết hạn. Hãy tải lại trang và thử lại",
+    "login_rate_limited": "Có quá nhiều lần đăng nhập. Vui lòng thử lại sau",
     "auth_token_required": "Thiếu thông tin xác thực",
     "password_change_unavailable": "Phiên đăng nhập hiện tại không hỗ trợ đổi mật khẩu",
     "current_password_invalid": "Mật khẩu hiện tại không đúng",
@@ -524,4 +526,5 @@ MESSAGES = {
     "video_resolution_unsupported": "Mô hình {model} không hỗ trợ độ phân giải {resolution}",
     "video_duration_unsupported": "Mô hình {model} không hỗ trợ thời lượng {duration} giây",
     "video_prompt_required": "Mô hình {model} cần câu lệnh hoặc nội dung tham chiếu được hỗ trợ",
+    "storage_capacity_low": "Dung lượng lưu trữ sắp hết (còn {free_mb} MB; cần dự phòng ít nhất {required_mb} MB). Hãy giải phóng dung lượng rồi thử lại",
 }

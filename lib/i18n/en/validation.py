@@ -205,6 +205,11 @@ MESSAGES = {
     "arch_zip_traversal_entry": "The ZIP contains a path-traversal entry: {name}",
     "arch_zip_symlink_entry": "The ZIP contains a symlink entry: {name}",
     "arch_zip_unparsable_member": "Cannot parse {label}: {path}",
+    "arch_upload_too_large": "The project archive exceeds the {max_mb} MB upload limit",
+    "arch_zip_too_many_entries": "The ZIP contains more than {max_count} entries",
+    "arch_zip_entry_too_large": "The ZIP entry exceeds the {max_mb} MB per-file limit: {name}",
+    "arch_zip_expanded_too_large": "The expanded ZIP exceeds the {max_mb} MB total limit",
+    "arch_zip_compression_ratio_too_high": "The ZIP entry has an unsafe compression ratio (limit {max_ratio}:1): {name}",
     "arch_multiple_manifests": (
         "The ZIP contains multiple matrixspooll-export.json files; the project root cannot be determined"
     ),

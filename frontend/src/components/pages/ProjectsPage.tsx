@@ -13,6 +13,7 @@ import { Link, useLocation } from "wouter";
 import {
   AlertTriangle,
   ChevronLeft,
+  ChevronRight,
   Library,
   Loader2,
   Plus,
@@ -64,6 +65,7 @@ import {
   type ImportConflictPolicy,
   type ImportFailureDiagnostics,
   type ProjectSummary,
+  type ProjectListPagination,
 } from "@/types";
 
 // 项目大厅 · Darkroom
@@ -435,6 +437,8 @@ function TopBar({
             <img
               src="/logo.jpg"
               alt={BRAND.name}
+              width={32}
+              height={32}
               className="h-8 w-8 rounded-lg"
             />
             <span
@@ -689,21 +693,19 @@ function HeroStrip({ totals, t }: HeroStripProps) {
 interface FilterPillsProps {
   active: PhaseFilter;
   onChange: (next: PhaseFilter) => void;
-  counts: Record<Phase, number> & { all: number };
   phaseLabels: Record<Phase, string>;
   contentActive: ContentModeFilter;
   onContentChange: (next: ContentModeFilter) => void;
   t: TFunction;
 }
 
-function FilterPills({ active, onChange, counts, phaseLabels, contentActive, onContentChange, t }: FilterPillsProps) {
-  const pills: Array<{ key: PhaseFilter; label: string; n: number }> = [
-    { key: "all", label: t("dashboard:lobby_filter_all"), n: counts.all },
+function FilterPills({ active, onChange, phaseLabels, contentActive, onContentChange, t }: FilterPillsProps) {
+  const pills: Array<{ key: PhaseFilter; label: string }> = [
+    { key: "all", label: t("dashboard:lobby_filter_all") },
     // 顺序即流程：胶囊按阶段推进排，不按使用频率排
     ...PHASE_ORDER.map((phase) => ({
       key: phase,
       label: phaseLabels[phase],
-      n: counts[phase],
     })),
   ];
 
@@ -735,14 +737,6 @@ function FilterPills({ active, onChange, counts, phaseLabels, contentActive, onC
               }
             >
               {c.label}
-              <span
-                className={
-                  "ml-1.5 font-mono tabular-nums " +
-                  (isActive ? "text-accent-2" : "text-text-4")
-                }
-              >
-                {c.n}
-              </span>
             </button>
           );
         })}
@@ -883,6 +877,52 @@ function ProjectListView({ projects, hasProjects, styleLabels, onDelete, onOpenM
   );
 }
 
+function ProjectPagination({
+  pagination,
+  onPageChange,
+  t,
+}: {
+  pagination: ProjectListPagination | null;
+  onPageChange: (page: number) => void;
+  t: TFunction;
+}) {
+  if (!pagination || pagination.total_pages <= 1) return null;
+  const start = (pagination.page - 1) * pagination.page_size + 1;
+  const end = Math.min(pagination.total, pagination.page * pagination.page_size);
+  return (
+    <nav className="flex items-center justify-between gap-3 border-t border-hairline px-6 py-4" aria-label={t("dashboard:project_list")}>
+      <span className="font-mono text-[11px] text-text-3">
+        {t("dashboard:project_page_summary", { start, end, total: pagination.total })}
+      </span>
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          disabled={pagination.page <= 1}
+          onClick={() => onPageChange(pagination.page - 1)}
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-hairline px-2.5 text-[11px] text-text-2 transition-colors hover:border-accent/50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          aria-label={t("dashboard:project_previous_page")}
+        >
+          <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+          {t("dashboard:project_previous_page")}
+        </button>
+        <span className="min-w-16 text-center font-mono text-[11px] tabular-nums text-text-3">
+          {pagination.page} / {pagination.total_pages}
+        </span>
+        <button
+          type="button"
+          disabled={pagination.page >= pagination.total_pages}
+          onClick={() => onPageChange(pagination.page + 1)}
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-hairline px-2.5 text-[11px] text-text-2 transition-colors hover:border-accent/50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          aria-label={t("dashboard:project_next_page")}
+        >
+          {t("dashboard:project_next_page")}
+          <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      </div>
+    </nav>
+  );
+}
+
 // -- ProjectsPage -------------------------------------------------------------
 
 export interface ProjectsPageProps {
@@ -921,21 +961,40 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
       : "all";
   });
   const [searchQuery, setSearchQuery] = useState("");
+  const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagination, setPagination] = useState<ProjectListPagination | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const isConfigComplete = useConfigStatusStore((s) => s.isComplete);
 
   const phaseLabels = usePhaseLabels();
+  const pageSize = mode === "list" ? 12 : 24;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setAppliedSearchQuery(searchQuery);
+      setCurrentPage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
 
   const fetchProjects = useCallback(async () => {
     setProjectsLoading(true);
     try {
-      const res = await API.listProjects();
+      const res = await API.listProjects({
+        page: currentPage,
+        pageSize,
+        query: appliedSearchQuery,
+        contentMode: contentModeFilter,
+        phase: phaseFilter,
+      });
       setProjects(res.projects);
+      setPagination(res.pagination ?? null);
     } finally {
       setProjectsLoading(false);
     }
-  }, [setProjects, setProjectsLoading]);
+  }, [appliedSearchQuery, contentModeFilter, currentPage, pageSize, phaseFilter, setProjects, setProjectsLoading]);
 
   useEffect(() => {
     void fetchProjects();
@@ -1054,23 +1113,6 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
     }
   };
 
-  const phaseCounts = useMemo(() => {
-    const out: Record<Phase, number> & { all: number } = {
-      all: 0,
-      creative: 0,
-      preparation: 0,
-      script: 0,
-      production: 0,
-      completed: 0,
-    };
-    for (const p of projects) {
-      out.all += 1;
-      const status = asProjectStatus(p.status);
-      if (status) out[status.phase] += 1;
-    }
-    return out;
-  }, [projects]);
-
   const styleLabels = useMemo(() => {
     const map: Record<string, string> = {};
     for (const p of projects) {
@@ -1079,24 +1121,25 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
     return map;
   }, [projects, t]);
 
-  const filteredProjects = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return projects.filter((p) => {
-      const s = asProjectStatus(p.status);
-      if (phaseFilter !== "all") {
-        if (!s || s.phase !== phaseFilter) return false;
-      }
-      if (contentModeFilter !== "all" && p.content_mode !== contentModeFilter) return false;
-      if (!q) return true;
-      const phaseLabel = s ? phaseLabels[s.phase] : "";
-      return `${p.title || ""} ${p.name} ${phaseLabel}`.toLowerCase().includes(q);
-    });
-  }, [projects, phaseFilter, contentModeFilter, searchQuery, phaseLabels]);
+  const filteredProjects = projects;
 
   const handleContentModeChange = (next: ContentModeFilter) => {
     setContentModeFilter(next);
+    setCurrentPage(1);
     localStorage.setItem(CONTENT_MODE_FILTER_KEY, next);
   };
+
+  const handlePhaseChange = (next: PhaseFilter) => {
+    setPhaseFilter(next);
+    setCurrentPage(1);
+  };
+
+  const hasActiveProjectFilters =
+    phaseFilter !== "all" ||
+    contentModeFilter !== "all" ||
+    appliedSearchQuery.trim().length > 0;
+  const hasVisibleOrFilteredProjects =
+    hasActiveProjectFilters || (pagination?.total ?? projects.length) > 0;
 
   return (
     <div
@@ -1140,11 +1183,10 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
         />
       ) : null}
 
-      {projects.length > 0 ? (
+      {hasVisibleOrFilteredProjects ? (
         <FilterPills
           active={phaseFilter}
-          onChange={setPhaseFilter}
-          counts={phaseCounts}
+          onChange={handlePhaseChange}
           phaseLabels={phaseLabels}
           contentActive={contentModeFilter}
           onContentChange={handleContentModeChange}
@@ -1164,21 +1206,24 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
         ) : (
           <>
             {mode === "list" ? (
-              <ProjectListView
-                projects={filteredProjects}
-                hasProjects={projects.length > 0}
-                styleLabels={styleLabels}
-                onDelete={setDeletingProject}
-                onOpenMembers={setMembersProject}
-                onCreate={() => setShowCreateModal(true)}
-                onClearFilter={() => {
-                  setPhaseFilter("all");
-                  handleContentModeChange("all");
-                  setSearchQuery("");
-                }}
-                t={t}
-              />
-            ) : filteredProjects.length === 0 && projects.length > 0 ? (
+              <>
+                <ProjectListView
+                  projects={filteredProjects}
+                  hasProjects={hasVisibleOrFilteredProjects}
+                  styleLabels={styleLabels}
+                  onDelete={setDeletingProject}
+                  onOpenMembers={setMembersProject}
+                  onCreate={() => setShowCreateModal(true)}
+                  onClearFilter={() => {
+                    setPhaseFilter("all");
+                    handleContentModeChange("all");
+                    setSearchQuery("");
+                  }}
+                  t={t}
+                />
+                <ProjectPagination pagination={pagination} onPageChange={setCurrentPage} t={t} />
+              </>
+            ) : filteredProjects.length === 0 && hasActiveProjectFilters ? (
               <div className="flex flex-col items-center justify-center px-6 py-16 text-text-3">
                 <p className="text-lg text-text">{t("dashboard:lobby_no_filter_match")}</p>
                 <p className="mt-1 text-sm">{t("dashboard:lobby_no_filter_match_hint")}</p>

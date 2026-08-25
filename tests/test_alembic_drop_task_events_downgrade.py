@@ -26,19 +26,19 @@ _BELOW_FK_MIGRATION = "ecbb53758daa"
 
 @pytest.fixture
 def alembic_cfg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
-    """指向项目 alembic 脚本，DB 用临时 sqlite（通过 DATABASE_URL，env.py 会读取）。"""
+    """指向项目 alembic 脚本，DB 用临时 sqlite（env.py 经测试数据库变量读取）。"""
     repo_root = Path(__file__).resolve().parent.parent
     cfg = Config()
     cfg.set_main_option("script_location", str(repo_root / "alembic"))
     db_path = tmp_path / "test.db"
-    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("MATRIXSPOOLL_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     cfg.attributes["_test_db_path"] = str(db_path)
     return cfg
 
 
 def test_downgrade_rebuilds_task_events_with_named_fk(alembic_cfg: Config):
     """降级重建的 task_events 带具名 FK，且能继续下行跨过按名 drop 约束的迁移。"""
-    command.upgrade(alembic_cfg, "head")
+    command.upgrade(alembic_cfg, "3649100774fa")
 
     engine = sa.create_engine(f"sqlite:///{alembic_cfg.attributes['_test_db_path']}")
     try:

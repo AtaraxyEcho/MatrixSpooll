@@ -25,7 +25,7 @@ if (metaDescription) {
   metaDescription.content = BRAND.description;
 }
 
-// 从 localStorage 恢复登录状态
+// 验证 HttpOnly Cookie 会话并恢复当前用户状态。
 useAuthStore.getState().initialize();
 
 // ---------------------------------------------------------------------------

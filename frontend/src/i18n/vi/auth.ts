@@ -4,6 +4,7 @@ export default {
   'login': 'Đăng nhập',
   'logging_in': 'Đang đăng nhập...',
   'login_failed': 'Đăng nhập thất bại',
+  'login_required': 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại',
   'username': 'Tên đăng nhập',
   'password': 'Mật khẩu',
   'workspace_kicker': 'Không gian làm việc / truy cập',

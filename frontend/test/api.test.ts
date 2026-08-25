@@ -299,7 +299,7 @@ describe("API", () => {
       }
     });
 
-    it("clears auth and redirects on unauthorized responses", async () => {
+    it("redirects on unauthorized responses", async () => {
       const fetchMock = vi.fn().mockResolvedValue(
         mockResponse({
           ok: false,
@@ -308,14 +308,12 @@ describe("API", () => {
         }),
       );
       vi.stubGlobal("fetch", fetchMock);
-      const clearTokenMock = vi.spyOn(await import("@/utils/auth"), "clearToken");
       // /app（无尾斜杠）不属于 /app/ 受保护页面，重定向不应附带 from。
       const location = { href: "", pathname: "/app", search: "", hash: "" };
       vi.stubGlobal("location", location);
 
-      await expect(API.request("/projects")).rejects.toThrow("认证已过期，请重新登录");
+      await expect(API.request("/projects")).rejects.toThrow("登录已失效，请重新登录");
 
-      expect(clearTokenMock).toHaveBeenCalledTimes(1);
       expect(location.href).toBe("/login");
     });
 
@@ -327,7 +325,7 @@ describe("API", () => {
       const location = { href: "", pathname: "/app/projects/demo", search: "", hash: "" };
       vi.stubGlobal("location", location);
 
-      await expect(API.request("/projects")).rejects.toThrow("认证已过期，请重新登录");
+      await expect(API.request("/projects")).rejects.toThrow("登录已失效，请重新登录");
 
       expect(location.href).toBe("/login?from=%2Fapp%2Fprojects%2Fdemo");
     });
@@ -576,7 +574,7 @@ describe("API", () => {
 
       await expect(
         API.updateProject("demo", { content_mode: "drama" } as never),
-      ).rejects.toThrow("项目创建后不支持修改 content_mode");
+      ).rejects.toThrow("项目创建后不支持修改内容模式");
       expect(requestSpy).not.toHaveBeenCalled();
     });
 
@@ -1050,15 +1048,13 @@ describe("API", () => {
         }),
       );
       vi.stubGlobal("fetch", fetchMock);
-      const clearTokenMock = vi.spyOn(await import("@/utils/auth"), "clearToken");
       const location = { href: "/app/projects" };
       vi.stubGlobal("location", location);
 
       await expect(
         API.importProject(new File(["zip"], "demo.zip", { type: "application/zip" }))
-      ).rejects.toThrow("认证已过期，请重新登录");
+      ).rejects.toThrow("登录已失效，请重新登录");
 
-      expect(clearTokenMock).toHaveBeenCalledTimes(1);
       expect(location.href).toBe("/login");
     });
 
@@ -1100,12 +1096,10 @@ describe("API", () => {
           mockResponse({ ok: false, status: 401, statusText: "Unauthorized" }),
         );
         vi.stubGlobal("fetch", fetchMock);
-        const clearTokenMock = vi.spyOn(await import("@/utils/auth"), "clearToken");
         const location = { href: "", pathname: "/app/settings", search: "", hash: "" };
         vi.stubGlobal("location", location);
 
-        await expect(API.downloadDiagnostics()).rejects.toThrow("认证已过期，请重新登录");
-        expect(clearTokenMock).toHaveBeenCalledTimes(1);
+        await expect(API.downloadDiagnostics()).rejects.toThrow("登录已失效，请重新登录");
         expect(location.href).toBe("/login?from=%2Fapp%2Fsettings");
       });
 

@@ -18,6 +18,7 @@ from lib.artifact_activation import (
 )
 from lib.async_thread import run_noninterruptible_sync
 from lib.formal_write import formal_write_transaction
+from lib.storage_capacity import ensure_storage_capacity
 from lib.thumbnail import extract_video_thumbnail
 from lib.version_manager import MANUAL_UPLOAD_VERSION_SOURCE, VersionManager
 from server.services.generation_tasks import _storyboard_formal_image_callback, get_project_manager
@@ -83,6 +84,7 @@ def _upload_tmp_path(target: Path) -> Path:
 
 
 def _copy_limited(src: BinaryIO, dst_path: Path, max_bytes: int) -> None:
+    ensure_storage_capacity(dst_path)
     total = 0
     with open(dst_path, "wb") as out:
         while True:
@@ -129,6 +131,7 @@ def write_bytes_atomic(content: bytes, target: Path) -> None:
     阻塞 I/O，供调用方自行决定线程化时机——需要与其它阻塞操作（如剧本锁）共享
     同一临界区时（见 `server/services/end_frame.py`），不能各自套一层 `asyncio.to_thread`。
     """
+    ensure_storage_capacity(target, required_bytes=len(content))
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = _upload_tmp_path(target)
     try:
@@ -142,6 +145,7 @@ def write_bytes_atomic(content: bytes, target: Path) -> None:
 def stage_uploaded_bytes(content: bytes, target: Path) -> Path:
     """Write normalized upload bytes beside the canonical target without selecting them."""
 
+    ensure_storage_capacity(target, required_bytes=len(content))
     target.parent.mkdir(parents=True, exist_ok=True)
     staged_file = _upload_tmp_path(target)
     try:

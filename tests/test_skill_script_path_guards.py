@@ -200,7 +200,7 @@ def test_compose_video_fails_fast_on_missing_music(fake_project: Path) -> None:
     out = result.stdout + result.stderr
     assert "BGM 文件不存在" in out
     # 关键不变量：fail-fast — 不能让脚本进入拼接阶段
-    assert "✅ 视频合成完成" not in out
+    assert "视频合成完成" not in out
 
 
 @_requires_ffmpeg
@@ -228,7 +228,7 @@ def test_compose_video_rejects_video_clip_escape(fake_project: Path, tmp_path: P
     assert result.returncode != 0
     out = result.stdout + result.stderr
     assert "视频文件必须位于项目目录内" in out
-    assert "✅ 视频合成完成" not in out
+    assert "视频合成完成" not in out
 
 
 @_requires_ffmpeg
@@ -274,7 +274,7 @@ def test_compose_video_rejects_output_symlink(fake_project: Path, tmp_path: Path
     assert result.returncode != 0
     out = result.stdout + result.stderr
     assert "output/ 不能是符号链接" in out
-    assert "✅ 视频合成完成" not in out
+    assert "视频合成完成" not in out
 
 
 @_requires_ffmpeg
@@ -293,7 +293,7 @@ def test_compose_video_rejects_music_dir(fake_project: Path) -> None:
     assert result.returncode != 0
     out = result.stdout + result.stderr
     assert "不存在或不是普通文件" in out
-    assert "✅ 视频合成完成" not in out
+    assert "视频合成完成" not in out
 
 
 @_requires_ffmpeg

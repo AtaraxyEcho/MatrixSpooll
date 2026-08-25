@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from lib.db.base import Base
+from lib.db.repositories.session_repo import SessionRepository
 from server.agent_runtime.event_log import (
     REPLAYED_USER_ECHO_KEY,
     EventLogService,
@@ -21,6 +22,23 @@ from server.agent_runtime.event_log import (
 
 pytestmark = pytest.mark.unit
 
+_REGISTERED_SESSION_IDS = (
+    "s1",
+    "s2",
+    "sdk-a",
+    "sdk-b",
+    "old",
+    "old-session",
+    "session-with-poison",
+)
+
+
+async def _register_test_sessions(factory: async_sessionmaker) -> None:
+    async with factory() as session:
+        repository = SessionRepository(session)
+        for session_id in _REGISTERED_SESSION_IDS:
+            await repository.create("demo", session_id)
+
 
 @pytest.fixture()
 async def log_store():
@@ -28,6 +46,7 @@ async def log_store():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    await _register_test_sessions(factory)
     yield EventLogStore(session_factory=factory)
     await engine.dispose()
 
@@ -51,6 +70,7 @@ async def file_log_store(tmp_path):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    await _register_test_sessions(factory)
     yield EventLogStore(session_factory=factory)
     await engine.dispose()
 
