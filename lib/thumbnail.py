@@ -1,12 +1,15 @@
 """视频帧提取（首帧缩略图 / 尾帧）"""
 
-import asyncio
 import functools
 import logging
 import shutil
 from pathlib import Path
 
+from lib.ffmpeg_runner import MediaProcessError, run_media_process
+
 logger = logging.getLogger(__name__)
+
+_MEDIA_PROCESS_TIMEOUT_SECONDS = 30 * 60
 
 
 @functools.cache
@@ -56,27 +59,25 @@ async def extract_video_thumbnail(
     thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-i",
-            str(video_path),
-            "-vframes",
-            "1",
-            "-q:v",
-            "2",
-            "-y",
-            str(thumbnail_path),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+        await run_media_process(
+            [
+                "ffmpeg",
+                "-i",
+                str(video_path),
+                "-vframes",
+                "1",
+                "-q:v",
+                "2",
+                "-y",
+                str(thumbnail_path),
+            ],
+            timeout=_MEDIA_PROCESS_TIMEOUT_SECONDS,
         )
-        await proc.wait()
-
-        if proc.returncode != 0 or not thumbnail_path.exists():
+        if not thumbnail_path.exists():
             return None
-
         return thumbnail_path
-    except Exception:
-        logger.warning("提取视频缩略图失败: %s", video_path, exc_info=True)
+    except MediaProcessError as exc:
+        logger.warning("提取视频缩略图失败: %s code=%s detail=%s", video_path, exc.code, exc.detail[:2000])
         return None
 
 
@@ -102,16 +103,11 @@ async def _probe_frame_count(video_path: Path, *, count_frames: bool) -> int | N
     ]
 
     try:
-        probe = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+        stdout, _ = await run_media_process(
+            args,
+            timeout=_MEDIA_PROCESS_TIMEOUT_SECONDS,
         )
-        stdout, _ = await probe.communicate()
-    except (FileNotFoundError, OSError):
-        return None
-
-    if probe.returncode != 0:
+    except MediaProcessError:
         return None
 
     try:
@@ -129,24 +125,28 @@ async def _extract_frame_at_index(
     if temp_path.exists():
         temp_path.unlink()
 
-    proc = await asyncio.create_subprocess_exec(
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(video_path),
-        "-vf",
-        f"select='eq(n\\,{frame_index})'",
-        "-fps_mode",
-        "vfr",
-        "-frames:v",
-        "1",
-        str(temp_path),
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    await proc.wait()
+    try:
+        await run_media_process(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(video_path),
+                "-vf",
+                f"select='eq(n\\,{frame_index})'",
+                "-fps_mode",
+                "vfr",
+                "-frames:v",
+                "1",
+                str(temp_path),
+            ],
+            timeout=_MEDIA_PROCESS_TIMEOUT_SECONDS,
+        )
+    except MediaProcessError:
+        temp_path.unlink(missing_ok=True)
+        return False
 
-    if proc.returncode != 0 or not temp_path.exists() or temp_path.stat().st_size < 1:
+    if not temp_path.exists() or temp_path.stat().st_size < 1:
         if temp_path.exists():
             temp_path.unlink()
         return False

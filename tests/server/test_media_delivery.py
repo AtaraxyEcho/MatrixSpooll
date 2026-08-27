@@ -65,3 +65,22 @@ def test_invalid_media_range_returns_416(tmp_path: Path) -> None:
     response = serve_media_file(path, _request(headers={"Range": "bytes=20-30"}), media_type="video/mp4")
     assert response.status_code == 416
     assert response.headers["content-range"] == "bytes */10"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("validator_header", ["If-None-Match", "If-Range"])
+def test_stale_media_range_restarts_with_current_representation(tmp_path: Path, validator_header: str) -> None:
+    path = tmp_path / "sample.mp4"
+    path.write_bytes(b"0123456789")
+    old_etag = serve_media_file(path, _request(), media_type="video/mp4").headers["etag"]
+    path.write_bytes(b"new")
+
+    response = serve_media_file(
+        path,
+        _request(headers={"Range": "bytes=8-9", validator_header: old_etag}),
+        media_type="video/mp4",
+    )
+
+    assert response.status_code == 200
+    assert "content-range" not in response.headers
+    assert response.headers["etag"] != old_etag

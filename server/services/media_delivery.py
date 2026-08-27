@@ -56,6 +56,33 @@ def _not_modified(request: Request, headers: dict[str, str], modified_timestamp:
     return requested >= modified_at
 
 
+def _range_representation_is_current(
+    request: Request,
+    headers: dict[str, str],
+    modified_timestamp: float,
+) -> bool:
+    """Return whether a byte range targets the representation now on disk."""
+
+    if_range = request.headers.get("if-range")
+    if if_range:
+        if if_range.startswith(('"', "W/")):
+            return if_range == headers["ETag"]
+        try:
+            requested = email.utils.parsedate_to_datetime(if_range)
+        except (TypeError, ValueError, IndexError):
+            return False
+        if requested.tzinfo is None:
+            requested = requested.replace(tzinfo=UTC)
+        modified_at = datetime.fromtimestamp(modified_timestamp, tz=UTC).replace(microsecond=0)
+        return requested >= modified_at
+
+    if_none_match = request.headers.get("if-none-match")
+    if not if_none_match:
+        return True
+    validators = {value.strip() for value in if_none_match.split(",")}
+    return "*" in validators or headers["ETag"] in validators
+
+
 def _parse_range(value: str | None, size: int) -> tuple[int, int] | None:
     """Parse a single HTTP byte range, returning inclusive offsets."""
 
@@ -109,6 +136,8 @@ def serve_media_file(
 
     range_header = request.headers.get("range")
     if not range_header:
+        return FileResponse(path, media_type=media_type, headers=headers)
+    if not _range_representation_is_current(request, headers, stat.st_mtime):
         return FileResponse(path, media_type=media_type, headers=headers)
 
     try:

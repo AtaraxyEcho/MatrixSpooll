@@ -41,6 +41,28 @@ async def _fake_provider_env():
 
 class TestSessionManagerProjectScope:
     @pytest.mark.asyncio
+    async def test_build_options_resolves_stable_project_id_to_storage_directory(self, tmp_path, monkeypatch):
+        project_dir = tmp_path / "projects" / "storage-key"
+        project_dir.mkdir(parents=True)
+        store, engine = await _make_store()
+        manager = SessionManager(
+            project_root=tmp_path,
+            meta_store=store,
+            project_cwd_resolver=lambda project_ref: project_dir if project_ref == "project-id" else None,
+        )
+        monkeypatch.setattr("server.agent_runtime.options_assembler.load_provider_env_overrides", _fake_provider_env)
+
+        with patch("server.agent_runtime.options_assembler.SDK_AVAILABLE", True):
+            with patch(
+                "server.agent_runtime.options_assembler.ClaudeAgentOptions",
+                _FakeOptions,
+            ):
+                options = await manager._build_options("project-id")
+
+        assert options.kwargs["cwd"] == str(project_dir.resolve())
+        await engine.dispose()
+
+    @pytest.mark.asyncio
     async def test_build_options_uses_project_directory_as_cwd(self, tmp_path, monkeypatch):
         project_dir = tmp_path / "projects" / "demo"
         project_dir.mkdir(parents=True)

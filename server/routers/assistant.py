@@ -29,6 +29,7 @@ from server.agent_runtime.service import (
 from server.agent_runtime.session_branch import SessionBranchError
 from server.agent_runtime.session_manager import AgentStartupError, SessionBusyError, SessionCapacityError
 from server.auth import CurrentUser, CurrentUserFlexible
+from server.services.project_access import ProjectAccess
 
 router = APIRouter()
 
@@ -47,6 +48,23 @@ MAX_IMAGES_TOTAL_BASE64_CHARS = MAX_IMAGES_PER_REQUEST * MAX_IMAGE_BASE64_CHARS
 
 def get_assistant_service() -> AssistantService:
     return assistant_service
+
+
+def _runtime_project_reference(
+    request: Request,
+    project_name: str,
+    service: AssistantService,
+) -> str:
+    """Return the stable session identity and register its filesystem locator."""
+
+    access = getattr(request.state, "project_access", None)
+    if not isinstance(access, ProjectAccess):
+        return project_name
+    storage_key = access.storage_key or access.project_path.name
+    if access.project_id.startswith("legacy:"):
+        return storage_key
+    service.register_project_identity(access.project_id, access.project_name, storage_key)
+    return access.project_id
 
 
 def agent_startup_failure_detail(
@@ -86,11 +104,13 @@ async def _validate_session_ownership(
 async def _assistant_service_for_stream(
     project_name: str,
     session_id: str,
+    request: Request,
     user: CurrentUserFlexible,
     _t: Translator,
 ) -> tuple[AssistantService, SessionMeta]:
     service = get_assistant_service()
-    meta = await _validate_session_ownership(service, session_id, project_name, user.id, _t)
+    project_ref = _runtime_project_reference(request, project_name, service)
+    meta = await _validate_session_ownership(service, session_id, project_ref, user.id, _t)
     return service, meta
 
 
@@ -203,10 +223,11 @@ async def send_message(
 ):
     try:
         service = get_assistant_service()
+        project_ref = _runtime_project_reference(request, project_name, service)
         if req.session_id is not None:
-            await _validate_session_ownership(service, req.session_id, project_name, user.id, _t)
+            await _validate_session_ownership(service, req.session_id, project_ref, user.id, _t)
         result = await service.send_or_create(
-            project_name,
+            project_ref,
             req.content,
             session_id=req.session_id,
             images=req.images,
@@ -262,9 +283,10 @@ async def rewrite_message(
     """
     try:
         service = get_assistant_service()
-        await _validate_session_ownership(service, session_id, project_name, user.id, _t)
+        project_ref = _runtime_project_reference(request, project_name, service)
+        await _validate_session_ownership(service, session_id, project_ref, user.id, _t)
         return await service.rewrite_message(
-            project_name,
+            project_ref,
             session_id,
             anchor_entry_uuid=req.anchor_entry_uuid,
             content=req.content,
@@ -319,6 +341,7 @@ async def rewrite_message(
 @router.get("/sessions")
 async def list_sessions(
     project_name: str,
+    request: Request,
     _t: Translator,
     user: CurrentUser,
     status: Literal["idle", "running", "completed", "error", "interrupted"] | None = None,
@@ -326,8 +349,10 @@ async def list_sessions(
     offset: int = Query(default=0, ge=0),
 ):
     try:
-        sessions = await get_assistant_service().list_sessions(
-            project_name=project_name,
+        service = get_assistant_service()
+        project_ref = _runtime_project_reference(request, project_name, service)
+        sessions = await service.list_sessions(
+            project_name=project_ref,
             actor_user_id=user.id,
             status=status,
             limit=limit,
@@ -342,10 +367,11 @@ async def list_sessions(
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(project_name: str, session_id: str, _t: Translator, user: CurrentUser):
+async def get_session(project_name: str, session_id: str, request: Request, _t: Translator, user: CurrentUser):
     try:
         service = get_assistant_service()
-        session = await _validate_session_ownership(service, session_id, project_name, user.id, _t)
+        project_ref = _runtime_project_reference(request, project_name, service)
+        session = await _validate_session_ownership(service, session_id, project_ref, user.id, _t)
         return session.model_dump()
     except HTTPException:
         raise
@@ -355,10 +381,11 @@ async def get_session(project_name: str, session_id: str, _t: Translator, user: 
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(project_name: str, session_id: str, _t: Translator, user: CurrentUser):
+async def delete_session(project_name: str, session_id: str, request: Request, _t: Translator, user: CurrentUser):
     try:
         service = get_assistant_service()
-        await _validate_session_ownership(service, session_id, project_name, user.id, _t)
+        project_ref = _runtime_project_reference(request, project_name, service)
+        await _validate_session_ownership(service, session_id, project_ref, user.id, _t)
         deleted = await service.delete_session(session_id)
         if not deleted:
             raise HTTPException(status_code=404, detail=_t("session_not_found", session_id=session_id))
@@ -390,6 +417,7 @@ async def get_snapshot(project_name: str, session_id: str, _t: Translator):
 async def list_entries(
     project_name: str,
     session_id: str,
+    request: Request,
     _t: Translator,
     user: CurrentUser,
     after: int = Query(default=-1, ge=-1),
@@ -397,7 +425,8 @@ async def list_entries(
     """冷读会话事件日志（历史回放；``after`` 为 seq 游标）。"""
     try:
         service = get_assistant_service()
-        meta = await _validate_session_ownership(service, session_id, project_name, user.id, _t)
+        project_ref = _runtime_project_reference(request, project_name, service)
+        meta = await _validate_session_ownership(service, session_id, project_ref, user.id, _t)
         return await service.list_session_entries(session_id, meta=meta, after_seq=after)
     except HTTPException:
         raise
@@ -451,10 +480,11 @@ async def stream_entries(
 
 
 @router.post("/sessions/{session_id}/interrupt")
-async def interrupt_session(project_name: str, session_id: str, _t: Translator, user: CurrentUser):
+async def interrupt_session(project_name: str, session_id: str, request: Request, _t: Translator, user: CurrentUser):
     try:
         service = get_assistant_service()
-        meta = await _validate_session_ownership(service, session_id, project_name, user.id, _t)
+        project_ref = _runtime_project_reference(request, project_name, service)
+        meta = await _validate_session_ownership(service, session_id, project_ref, user.id, _t)
         result = await service.interrupt_session(session_id, meta=meta)
         return result
     except HTTPException:
@@ -475,6 +505,7 @@ async def answer_question(
     session_id: str,
     question_id: str,
     req: AnswerQuestionRequest,
+    request: Request,
     _t: Translator,
     user: CurrentUser,
 ):
@@ -482,7 +513,8 @@ async def answer_question(
         raise HTTPException(status_code=400, detail=_t("answers_required"))
     try:
         service = get_assistant_service()
-        meta = await _validate_session_ownership(service, session_id, project_name, user.id, _t)
+        project_ref = _runtime_project_reference(request, project_name, service)
+        meta = await _validate_session_ownership(service, session_id, project_ref, user.id, _t)
         result = await service.answer_user_question(
             session_id=session_id,
             question_id=question_id,
@@ -512,9 +544,11 @@ async def stream_events(project_name: str, session_id: str, _user: CurrentUserFl
 
 
 @router.get("/skills")
-async def list_skills(project_name: str, _t: Translator):
+async def list_skills(project_name: str, request: Request, _t: Translator):
     try:
-        skills = get_assistant_service().list_available_skills(project_name=project_name)
+        service = get_assistant_service()
+        project_ref = _runtime_project_reference(request, project_name, service)
+        skills = service.list_available_skills(project_name=project_ref)
         return {"skills": skills}
     except FileNotFoundError as exc:
         raise NotFoundError("project_not_found", name=project_name) from exc

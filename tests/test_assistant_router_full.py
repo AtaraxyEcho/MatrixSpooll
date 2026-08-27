@@ -35,6 +35,7 @@ class _FakeService:
         locale=None,
         client_key=None,
         actor_user_id=None,
+        generation_policy=None,
     ):
         if project_name == "missing":
             raise FileNotFoundError(project_name)
@@ -223,6 +224,7 @@ class TestAssistantRouterFull:
             locale=None,
             client_key=None,
             actor_user_id=None,
+            generation_policy=None,
         ):
             raise TimeoutError("timeout")
 

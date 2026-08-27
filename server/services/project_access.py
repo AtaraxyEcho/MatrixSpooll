@@ -251,7 +251,9 @@ async def require_project_request_access(
     target = project_name or name
     if not target:
         return None
-    return await resolve_project_access(target, user, session, required_role=_required_role(request, target))
+    access = await resolve_project_access(target, user, session, required_role=_required_role(request, target))
+    request.state.project_access = access
+    return access
 
 
 async def require_project_flexible_access(
@@ -266,7 +268,9 @@ async def require_project_flexible_access(
     target = project_name or name
     if not target:
         return None
-    return await resolve_project_access(target, user, session, required_role=_required_role(request, target))
+    access = await resolve_project_access(target, user, session, required_role=_required_role(request, target))
+    request.state.project_access = access
+    return access
 
 
 async def register_project(
