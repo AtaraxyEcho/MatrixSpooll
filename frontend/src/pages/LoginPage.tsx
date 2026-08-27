@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Loader2, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, ShieldCheck, TriangleAlert } from "lucide-react";
 import { useAutoFocus } from "@/hooks/useAutoFocus";
 import { errMsg, voidPromise } from "@/utils/async";
 import { Link, useLocation, useSearch } from "wouter";
@@ -33,7 +33,9 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
   const search = useSearch();
   const login = useAuthStore((s) => s.login);
   const logout = useAuthStore((s) => s.logout);
+  const sessionEndReason = useAuthStore((s) => s.sessionEndReason);
   const usernameRef = useAutoFocus<HTMLInputElement>();
+  const sessionEndMessage = sessionEndReason ? t(`auth:session_ended_${sessionEndReason}`) : null;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -85,6 +87,16 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
 
   const loginForm = (
     <form onSubmit={voidPromise(handleSubmit)} className="space-y-4">
+      {sessionEndMessage && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="flex items-start gap-2.5 rounded-lg border border-amber-400/35 bg-amber-400/10 px-3 py-2.5 text-sm leading-5 text-amber-100"
+        >
+          <TriangleAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+          <span>{sessionEndMessage}</span>
+        </div>
+      )}
       <div>
         <FieldLabel htmlFor="login-username" required>
           {t("auth:username")}

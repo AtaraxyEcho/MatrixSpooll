@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { memoryLocation } from "wouter/memory-location";
@@ -45,6 +45,17 @@ describe("LoginPage returnTo consumption", () => {
         json: vi.fn().mockResolvedValue({ username: "alice", role: "member" }),
       } as unknown as Response),
     );
+  });
+
+  it("keeps a server-ended session reason visible until the next successful login", async () => {
+    useAuthStore.setState({ sessionEndReason: "replaced" });
+    const { container } = renderLoginAt("/login");
+
+    expect(screen.getByRole("alert")).toHaveTextContent("您的账号已在其他设备登录，当前会话已下线");
+
+    submitLogin(container);
+    await waitFor(() => expect(useAuthStore.getState().isAuthenticated).toBe(true));
+    expect(useAuthStore.getState().sessionEndReason).toBeNull();
   });
 
   // 锁住登录成功后对 ?from 的「消费」分支：读取 from → safeReturnPath 校验 → 回跳。

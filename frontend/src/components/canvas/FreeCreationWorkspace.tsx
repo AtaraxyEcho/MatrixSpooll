@@ -4,6 +4,8 @@ import {
   AudioLines,
   Bot,
   Captions,
+  ChevronDown,
+  ChevronUp,
   Clapperboard,
   Download,
   FileText,
@@ -27,6 +29,8 @@ import { useGenerationCapabilities } from "@/hooks/useModelCapabilities";
 import { useAppStore } from "@/stores/app-store";
 import { useFreeCreationStore } from "@/stores/free-creation-store";
 import type {
+  AgentGenerationControlMode,
+  AgentGenerationPreference,
   CreateFreeCreationRequest,
   FreeCreation,
   FreeCreationArtifactMediaType,
@@ -46,7 +50,6 @@ import { FreeCreationSubtitlePanel } from "./FreeCreationSubtitlePanel";
 import { AgentCopilot } from "@/components/copilot/AgentCopilot";
 import {
   AgentParameterControl,
-  type AgentGenerationPreference,
   DurationControl,
   handleComposerStripWheel,
   HomeMenu,
@@ -56,11 +59,22 @@ import {
   VideoParameterControl,
   videoDurationsForModel,
 } from "@/components/generation/GenerationComposer";
+import { buildAgentGenerationPolicy } from "@/components/generation/agentGenerationPolicy";
 import { FreeCreationAssetPickerModal } from "@/components/generation/FreeCreationAssetPickerModal";
+import {
+  createContinuationDraft,
+  type ContinuationDraft,
+} from "@/components/generation/continuation-draft";
 import {
   readGenerationModelPreferences,
   writeGenerationModelPreference,
 } from "@/components/generation/generationModelPreference";
+import {
+  imageDimensionsForManualInput,
+  imageDimensionsForPreset,
+  selectableImageResolutionOptions,
+  type ImageDimensions,
+} from "@/components/generation/image-parameters";
 import {
   referenceCompatibilityIssue,
 } from "@/components/generation/FreeCreationReferenceRoleSelect";
@@ -80,6 +94,10 @@ import {
   type FreeCreationComposerPreferences,
 } from "@/components/generation/freeCreationComposerPreference";
 import type { Asset } from "@/types/asset";
+import { GlassModal } from "@/components/ui/GlassModal";
+import { ModalCloseButton } from "@/components/ui/ModalCloseButton";
+import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { SecondaryButton } from "@/components/ui/SecondaryButton";
 
 export interface FreeCreationWorkspaceProps {
   projectName: string;
@@ -105,20 +123,6 @@ function creationMediaType(creation: FreeCreation): FreeCreationArtifactMediaTyp
 function creationReferenceRole(creation: FreeCreation) {
   const artifactType = creationMediaType(creation);
   return artifactType === "video" ? "reference_video" : artifactType === "audio" ? "reference_audio" : "reference_image";
-}
-
-const IMAGE_RESOLUTION_PIXELS: Record<string, number> = {
-  "1.5k": 1536,
-  "2k": 2048,
-  "4k": 4096,
-};
-
-function dimensionsFor(resolution: string, ratio: string): { width: number; height: number } {
-  const edge = IMAGE_RESOLUTION_PIXELS[resolution] ?? 1536;
-  const [rawWidth, rawHeight] = ratio.split(":").map(Number);
-  if (!rawWidth || !rawHeight) return { width: edge, height: edge };
-  if (rawWidth >= rawHeight) return { width: edge, height: Math.max(1, Math.round(edge * rawHeight / rawWidth)) };
-  return { width: Math.max(1, Math.round(edge * rawWidth / rawHeight)), height: edge };
 }
 
 function claimKey(claim: FreeCreationReferenceClaim): string {
@@ -152,6 +156,7 @@ export function FreeCreationWorkspace({
 }: FreeCreationWorkspaceProps) {
   const { t } = useTranslation("dashboard");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const promptInputRef = useRef<HTMLTextAreaElement>(null);
   const pendingFrameRoleRef = useRef<"first_frame" | "last_frame" | null>(null);
   const loadSequenceRef = useRef(0);
   const initialProjectAspectRatio = initialAspectRatio?.trim() || "16:9";
@@ -165,8 +170,13 @@ export function FreeCreationWorkspace({
     ?? (restoredMode === "image" || restoredMode === "video" ? restoredMode : initialMediaType);
   const [mediaType, setMediaType] = useState<FreeCreationMediaType>(restoredMediaType);
   const [composerMode, setComposerMode] = useState<ComposerMode>(restoredMode);
+  const [agentControlMode, setAgentControlMode] = useState<AgentGenerationControlMode>(
+    storedComposerPreferences?.agentControlMode ?? "auto",
+  );
   const [agentPreference, setAgentPreference] = useState<AgentGenerationPreference>(storedComposerPreferences?.agentPreference ?? "video");
-  const [agentAspectRatio, setAgentAspectRatio] = useState(storedComposerPreferences?.agentAspectRatio ?? initialProjectAspectRatio);
+  const [agentAspectRatio, setAgentAspectRatio] = useState(storedComposerPreferences?.agentAspectRatio ?? "smart");
+  const [agentModel, setAgentModel] = useState(storedComposerPreferences?.agentModel ?? "auto");
+  const [agentResolution, setAgentResolution] = useState(storedComposerPreferences?.agentResolution ?? "auto");
   const [prompt, setPrompt] = useState("");
   const [referenceMode, setReferenceMode] = useState<FreeCreationReferenceMode>(storedComposerPreferences?.referenceMode ?? "omni");
   const [omniReferences, setOmniReferences] = useState<ComposerReference[]>([]);
@@ -175,17 +185,28 @@ export function FreeCreationWorkspace({
   const [aspectRatio, setAspectRatio] = useState(storedComposerPreferences?.aspectRatio ?? initialProjectAspectRatio);
   const [resolution, setResolution] = useState(
     storedComposerPreferences?.resolution
-      ?? (restoredMediaType === "image" ? "1.5k" : initialProjectVideoResolution),
+      ?? (restoredMediaType === "image" ? "1K" : initialProjectVideoResolution),
   );
-  const initialDimensions = dimensionsFor("1.5k", initialProjectAspectRatio);
-  const [imageWidth, setImageWidth] = useState(storedComposerPreferences?.imageWidth ?? initialDimensions.width);
-  const [imageHeight, setImageHeight] = useState(storedComposerPreferences?.imageHeight ?? initialDimensions.height);
-  const [customSize, setCustomSize] = useState(storedComposerPreferences?.customSize ?? false);
+  const [customImageSize, setCustomImageSize] = useState<(
+    ImageDimensions & { ratio: string; resolution: string }
+  ) | null>(() => (
+    storedComposerPreferences?.customSize
+    && storedComposerPreferences.imageWidth
+    && storedComposerPreferences.imageHeight
+      ? {
+          width: storedComposerPreferences.imageWidth,
+          height: storedComposerPreferences.imageHeight,
+          ratio: storedComposerPreferences.aspectRatio ?? initialProjectAspectRatio,
+          resolution: storedComposerPreferences.resolution ?? "1K",
+        }
+      : null
+  ));
   const [quantity, setQuantity] = useState(storedComposerPreferences?.quantity ?? 1);
   const [modelPreferences, setModelPreferences] = useState(
     storedComposerPreferences?.modelPreferences ?? readGenerationModelPreferences(),
   );
   const [duration, setDuration] = useState(storedComposerPreferences?.duration ?? 4);
+  const [composerCollapsed, setComposerCollapsed] = useState(storedComposerPreferences?.collapsed ?? false);
   const [parentId, setParentId] = useState("");
   const [creations, setCreations] = useState<FreeCreation[]>([]);
   const [subtitleTracks, setSubtitleTracks] = useState<FreeSubtitleTrack[]>([]);
@@ -203,40 +224,52 @@ export function FreeCreationWorkspace({
   const [subtitleOpen, setSubtitleOpen] = useState(false);
   const [subtitleCreationId, setSubtitleCreationId] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
+  const [pendingContinuation, setPendingContinuation] = useState<{
+    draft: ContinuationDraft;
+    label: string;
+  } | null>(null);
+  const continuationSettingsRef = useRef<Pick<ContinuationDraft, "aspectRatio" | "resolution" | "duration"> | null>(null);
   const refreshToken = useFreeCreationStore((state) => state.refreshToken);
   const { candidates, reload: reloadCandidates } = useModelCandidates();
 
   useEffect(() => {
     writeFreeCreationComposerPreferences(projectName, {
+      version: 2,
       composerMode,
       mediaType,
+      agentControlMode,
       agentPreference,
       agentAspectRatio,
+      agentModel,
+      agentResolution,
       referenceMode,
       aspectRatio,
       resolution,
-      imageWidth,
-      imageHeight,
-      customSize,
+      imageWidth: customImageSize?.width,
+      imageHeight: customImageSize?.height,
+      customSize: Boolean(customImageSize),
       quantity,
       duration,
+      collapsed: composerCollapsed,
       modelPreferences,
     });
   }, [
+    agentControlMode,
     agentAspectRatio,
+    agentModel,
     agentPreference,
+    agentResolution,
     aspectRatio,
     composerMode,
-    customSize,
+    composerCollapsed,
     duration,
-    imageHeight,
-    imageWidth,
     mediaType,
     modelPreferences,
     projectName,
     quantity,
     referenceMode,
     resolution,
+    customImageSize,
   ]);
 
   useEffect(() => {
@@ -253,6 +286,7 @@ export function FreeCreationWorkspace({
   const model = modelPreferences[effectiveMediaType];
   const setModel = useCallback((nextModel: string) => {
     setModelPreferences((current) => writeGenerationModelPreference(current, effectiveMediaType, nextModel));
+    if (effectiveMediaType === "image") setCustomImageSize(null);
   }, [effectiveMediaType]);
   const references = referenceMode === "frames" ? frameReferences : omniReferences;
   const modelOptions = useMemo(() => {
@@ -263,6 +297,13 @@ export function FreeCreationWorkspace({
   // auto here would briefly request the default model's capabilities and show its ratios,
   // resolutions, and durations for the user's selected model.
   const selectedModel = model === "auto" || candidates === null || modelOptions.includes(model) ? model : "auto";
+  const agentModelOptions = useMemo(() => {
+    const values = agentPreference === "video" ? candidates?.video.default : candidates?.image.default;
+    return [...new Set(values ?? [])];
+  }, [agentPreference, candidates]);
+  const selectedAgentModel = agentModel === "auto" || candidates === null || agentModelOptions.includes(agentModel)
+    ? agentModel
+    : "auto";
 
   const referenceKind = useMemo<"none" | "frame" | "image" | "video" | "audio">(() => {
     if (effectiveMediaType !== "video") {
@@ -283,6 +324,14 @@ export function FreeCreationWorkspace({
     projectName,
     projectId,
   });
+  const { capabilities: agentCapabilities } = useGenerationCapabilities({
+    outputType: agentPreference,
+    model: selectedAgentModel === "auto" ? null : selectedAgentModel,
+    projectName,
+    projectId,
+    strictMode: false,
+    enabled: composerMode === "agent",
+  });
   const capabilityError = rawCapabilityError;
 
   const ratioOptions = useMemo(
@@ -298,7 +347,7 @@ export function FreeCreationWorkspace({
           const declared = capabilities.resolutions.filter((value) => value !== "auto");
           return declared;
         }
-        return capabilities.resolutions;
+        return selectableImageResolutionOptions(capabilities.resolutions);
       }
       return [];
     },
@@ -313,8 +362,33 @@ export function FreeCreationWorkspace({
     ),
     [capabilities, selectedModel],
   );
+  const agentResolutionOptions = agentCapabilities?.output_type === agentPreference
+    ? agentPreference === "image"
+      ? selectableImageResolutionOptions(agentCapabilities.resolutions)
+      : agentCapabilities.resolutions.filter((value) => value !== "auto")
+    : [];
+  const effectiveAgentResolution = agentResolution === "auto" || agentResolutionOptions.includes(agentResolution)
+    ? agentResolution
+    : "auto";
+  const agentCapabilityRatios = agentCapabilities?.output_type === agentPreference
+    ? agentCapabilities.ratios
+    : [];
+  const effectiveAgentAspectRatio = agentAspectRatio === "smart"
+    || selectedAgentModel === "auto"
+    || agentCapabilityRatios.includes(agentAspectRatio)
+    ? agentAspectRatio
+    : agentCapabilityRatios[0] ?? agentAspectRatio;
   const effectiveAspectRatio = ratioOptions.includes(aspectRatio) ? aspectRatio : ratioOptions[0] ?? "";
   const selectedResolution = resolutionOptions.includes(resolution) ? resolution : resolutionOptions[0] ?? "";
+  const presetImageSize = useMemo(
+    () => imageDimensionsForPreset(selectedResolution, effectiveAspectRatio),
+    [effectiveAspectRatio, selectedResolution],
+  );
+  const activeCustomImageSize = customImageSize?.ratio === effectiveAspectRatio
+    && customImageSize.resolution === selectedResolution
+    ? customImageSize
+    : null;
+  const { width: imageWidth, height: imageHeight } = activeCustomImageSize ?? presetImageSize;
   const safeDuration = durationOptions.reduce((closest, candidate) => (
     Math.abs(candidate - duration) < Math.abs(closest - duration) ? candidate : closest
   ), durationOptions[0] ?? 0);
@@ -327,6 +401,20 @@ export function FreeCreationWorkspace({
       ? t("free_creation_capabilities_unavailable")
       : null
   );
+
+  useEffect(() => {
+    const settings = continuationSettingsRef.current;
+    if (!settings || !capabilitiesReady) return;
+    const adjusted = Boolean(
+      (settings.aspectRatio && !ratioOptions.includes(settings.aspectRatio))
+      || (settings.resolution && !resolutionOptions.includes(settings.resolution))
+      || (settings.duration && effectiveMediaType === "video" && !durationOptions.includes(settings.duration)),
+    );
+    continuationSettingsRef.current = null;
+    if (adjusted) {
+      useAppStore.getState().pushToast(t("free_creation_continue_settings_adjusted"), "info");
+    }
+  }, [capabilitiesReady, durationOptions, effectiveMediaType, ratioOptions, resolutionOptions, t]);
 
   const parameterRatioOptions = useMemo(
     () => ratioOptions.map((value) => ({
@@ -353,6 +441,7 @@ export function FreeCreationWorkspace({
       setRequests(requestResponse.requests);
       setSubtitleTracks(subtitleResponse.tracks);
       setTotalCreations(index.creation_total);
+      if (index.total === 0) setComposerCollapsed(false);
       setError(null);
     } catch (loadError) {
       if (loadSequenceRef.current === sequence) setError(errMsg(loadError));
@@ -404,6 +493,23 @@ export function FreeCreationWorkspace({
     useAppStore.getState().pushToast(message, "error");
   }, [capabilities, effectiveMediaType, referenceMode, t]);
 
+  const expandComposer = useCallback(() => {
+    setComposerCollapsed(false);
+    window.requestAnimationFrame(() => promptInputRef.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    const handleComposerShortcut = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey || composerMode === "agent" || readOnly) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true'], [role='dialog']")) return;
+      event.preventDefault();
+      expandComposer();
+    };
+    window.addEventListener("keydown", handleComposerShortcut);
+    return () => window.removeEventListener("keydown", handleComposerShortcut);
+  }, [composerMode, expandComposer, readOnly]);
+
   const addReferences = useCallback((incoming: Array<{ claim: FreeCreationReferenceClaim; label: string }>) => {
     if (referenceMode === "frames") {
       const next = [...frameReferences];
@@ -439,6 +545,7 @@ export function FreeCreationWorkspace({
         next.push({ claim: { ...claim, role }, label });
       }
       setFrameReferences(next);
+      expandComposer();
       return;
     }
 
@@ -468,11 +575,63 @@ export function FreeCreationWorkspace({
       next.push({ claim: normalized, label });
     }
     setOmniReferences(next);
-  }, [capabilities, effectiveMediaType, frameReferences, omniReferences, referenceMediaType, referenceMode, showReferenceAdmissionIssue]);
+    expandComposer();
+  }, [capabilities, effectiveMediaType, expandComposer, frameReferences, omniReferences, referenceMediaType, referenceMode, showReferenceAdmissionIssue]);
 
   const addReference = useCallback((claim: FreeCreationReferenceClaim, label: string) => {
     addReferences([{ claim, label }]);
   }, [addReferences]);
+
+  const applyContinuationDraft = useCallback((draft: ContinuationDraft, label: string) => {
+    const candidateModels = draft.mediaType === "video" ? candidates?.video.default : candidates?.image.default;
+    const modelAvailable = !draft.model || candidates === null || candidateModels?.includes(draft.model);
+    const nextModel = draft.model && modelAvailable ? draft.model : "auto";
+    const nextAspectRatio = draft.aspectRatio ?? initialProjectAspectRatio;
+    const nextResolution = draft.resolution ?? (draft.mediaType === "video" ? initialProjectVideoResolution : "1K");
+    setParentId("");
+    setMediaType(draft.mediaType);
+    setComposerMode(draft.mediaType);
+    setReferenceMode("omni");
+    setFrameReferences([]);
+    setOmniReferences([{ claim: draft.reference, label }]);
+    setPrompt(draft.prompt);
+    setAspectRatio(nextAspectRatio);
+    setResolution(nextResolution);
+    setQuantity(1);
+    if (draft.duration) setDuration(draft.duration);
+    if (draft.mediaType === "image" && !draft.aspectRatio && draft.imageSize) {
+      const dimensions = draft.imageSize;
+      setAspectRatio(`${dimensions.width}:${dimensions.height}`);
+    }
+    setModelPreferences((current) => writeGenerationModelPreference(current, draft.mediaType, nextModel));
+    continuationSettingsRef.current = {
+      aspectRatio: draft.aspectRatio,
+      resolution: draft.resolution,
+      duration: draft.duration,
+    };
+    setPendingContinuation(null);
+    setError(null);
+    expandComposer();
+    useAppStore.getState().pushToast(
+      modelAvailable ? t("free_creation_continue_ready") : t("free_creation_continue_model_unavailable"),
+      modelAvailable ? "success" : "info",
+    );
+  }, [candidates, expandComposer, initialProjectAspectRatio, initialProjectVideoResolution, t]);
+
+  const continueFromCreation = useCallback((creationId: string) => {
+    if (readOnly) return;
+    const creation = creations.find((item) => item.creation_id === creationId);
+    if (!creation) return;
+    const draft = createContinuationDraft(creation);
+    if (!draft) return;
+    const label = creation.prompt || t("free_creation");
+    const hasUnsentDraft = Boolean(prompt.trim() || references.length || parentId);
+    if (hasUnsentDraft) {
+      setPendingContinuation({ draft, label });
+      return;
+    }
+    applyContinuationDraft(draft, label);
+  }, [applyContinuationDraft, creations, parentId, prompt, readOnly, references.length, t]);
 
   const referenceFromShortcut = (
     event: React.MouseEvent<HTMLElement> | React.KeyboardEvent<HTMLElement>,
@@ -504,11 +663,7 @@ export function FreeCreationWorkspace({
       setResolution("1080p");
     } else {
       setReferenceMode("omni");
-      setResolution("1.5k");
-      const nextDimensions = dimensionsFor("1.5k", effectiveAspectRatio);
-      setImageWidth(nextDimensions.width);
-      setImageHeight(nextDimensions.height);
-      setCustomSize(false);
+      setResolution("1K");
     }
   };
 
@@ -519,27 +674,22 @@ export function FreeCreationWorkspace({
 
   const changeAspectRatio = (next: string) => {
     setAspectRatio(next);
-    if (effectiveMediaType === "image" && !customSize) {
-      const nextDimensions = dimensionsFor(selectedResolution, next);
-      setImageWidth(nextDimensions.width);
-      setImageHeight(nextDimensions.height);
-    }
+    setCustomImageSize(null);
   };
 
   const changeResolution = (next: string) => {
     setResolution(next);
-    if (effectiveMediaType === "image") {
-      const nextDimensions = dimensionsFor(next, effectiveAspectRatio);
-      setImageWidth(nextDimensions.width);
-      setImageHeight(nextDimensions.height);
-      setCustomSize(false);
-    }
+    setCustomImageSize(null);
   };
 
-  const commitImageDimensions = (width: number, height: number) => {
-    setImageWidth(width);
-    setImageHeight(height);
-    setCustomSize(true);
+  const changeImageDimension = (axis: "width" | "height", value: number): ImageDimensions => {
+    const next = imageDimensionsForManualInput(value, axis, selectedResolution, effectiveAspectRatio);
+    setCustomImageSize({
+      ...next,
+      ratio: effectiveAspectRatio,
+      resolution: selectedResolution,
+    });
+    return next;
   };
 
   const runCreationAction = async (creationId: string, action: "cancel" | "retry") => {
@@ -671,8 +821,10 @@ export function FreeCreationWorkspace({
       prompt: cleanPrompt,
       references: references.map((item) => item.claim),
       aspect_ratio: effectiveAspectRatio,
-      resolution: effectiveMediaType === "image" && customSize ? undefined : selectedResolution || undefined,
-      size: effectiveMediaType === "image" ? `${imageWidth}x${imageHeight}` : undefined,
+      resolution: selectedResolution || undefined,
+      size: effectiveMediaType === "image" && activeCustomImageSize
+        ? `${imageWidth}x${imageHeight}`
+        : undefined,
       model: selectedModel === "auto" ? undefined : selectedModel,
       quantity: editing ? 1 : quantity,
       duration_seconds: effectiveMediaType === "video" ? safeDuration : undefined,
@@ -699,7 +851,13 @@ export function FreeCreationWorkspace({
   );
   const storyboardSourceReferenceId = uploads.find((upload) => upload.media_type === "text")?.reference_id;
   const ComposerModeIcon = composerMode === "agent" ? Bot : composerMode === "image" ? Image : Video;
-  const agentRatioOptions = ASPECT_RATIO_OPTIONS.map(({ value, labelKey }) => ({ value, label: t(labelKey) }));
+  const agentRatioValues = selectedAgentModel === "auto" || agentCapabilityRatios.length === 0
+    ? ASPECT_RATIO_OPTIONS.map(({ value }) => value)
+    : agentCapabilityRatios;
+  const agentRatioOptions = agentRatioValues.map((value) => {
+    const known = ASPECT_RATIO_OPTIONS.find((option) => option.value === value);
+    return { value, label: known ? t(known.labelKey) : value };
+  });
   const composerModeControl = (
     <HomeSelect
       label={t("free_creation_mode")}
@@ -722,21 +880,51 @@ export function FreeCreationWorkspace({
       preferenceLabel={t("free_creation_agent_generation_preference")}
       imageLabel={t("free_creation_agent_preference_image")}
       videoLabel={t("free_creation_agent_preference_video")}
+      modelLabel={t("free_creation_agent_model")}
+      resolutionLabel={t("home_resolution")}
+      autoLabel={t("free_creation_agent_auto_mode")}
+      customLabel={t("free_creation_agent_custom_mode")}
+      smartLabel={t("free_creation_agent_smart_ratio")}
+      recommendedLabel={t("free_creation_agent_recommended")}
+      modelAutoLabel={t("free_creation_agent_model_auto")}
+      resolutionAutoLabel={t("free_creation_agent_resolution_auto")}
+      modelSearchPlaceholder={t("free_creation_agent_model_search")}
+      noModelsLabel={t("home_model_no_results")}
       ratioLabel={t("free_creation_aspect_ratio")}
+      controlMode={agentControlMode}
       preference={agentPreference}
-      ratio={agentAspectRatio}
+      model={selectedAgentModel}
+      resolution={effectiveAgentResolution}
+      ratio={effectiveAgentAspectRatio}
+      modelOptions={agentModelOptions.map((option) => ({
+        value: option,
+        label: modelLabel(option, t("home_model_auto")),
+      }))}
+      resolutionOptions={agentResolutionOptions}
       ratioOptions={agentRatioOptions}
-      onPreferenceChange={setAgentPreference}
+      onControlModeChange={setAgentControlMode}
+      onPreferenceChange={(nextPreference) => {
+        setAgentPreference(nextPreference);
+        setAgentModel("auto");
+        setAgentResolution("auto");
+      }}
+      onModelChange={(nextModel) => {
+        setAgentModel(nextModel);
+        setAgentResolution("auto");
+      }}
+      onResolutionChange={setAgentResolution}
       onRatioChange={setAgentAspectRatio}
       hideLabel
       placement="top"
     />
   );
-  const agentMessageContext = t("free_creation_agent_prompt_context", {
-    preference: agentPreference === "image"
-      ? t("free_creation_agent_preference_image")
-      : t("free_creation_agent_preference_video"),
-    ratio: agentAspectRatio,
+  const agentGenerationPolicy = buildAgentGenerationPolicy({
+    controlMode: agentControlMode,
+    preference: agentPreference,
+    aspectRatio: effectiveAgentAspectRatio,
+    model: selectedAgentModel,
+    resolution: effectiveAgentResolution,
+    references: references.map((item) => item.claim),
   });
   const referenceCardData = (reference: ComposerReference | null) => {
     if (!reference) return {};
@@ -880,15 +1068,8 @@ export function FreeCreationWorkspace({
     if (readOnly || merging || creationIds.length < 2) return;
     setMerging(true);
     try {
-      const blob = await API.mergeFreeCreationVideos(projectName, creationIds);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${projectName}-merged.mp4`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      await API.mergeFreeCreationVideos(projectName, creationIds);
+      await loadCreations();
       useAppStore.getState().pushToast(t("free_creation_merge_started"), "success");
     } catch (mergeError) {
       useAppStore.getState().pushToast(t("free_creation_merge_failed", { message: errMsg(mergeError) }), "error");
@@ -922,7 +1103,9 @@ export function FreeCreationWorkspace({
             embedded
             detachedComposer
             footerStart={<>{composerModeControl}{agentParameterControl}</>}
-            messageContext={agentMessageContext}
+            generationPolicy={agentGenerationPolicy}
+            contextReferences={referenceItems}
+            onRemoveContextReference={removeComposerReference}
           />
         </section>
       ) : (
@@ -930,6 +1113,7 @@ export function FreeCreationWorkspace({
       )}
       <div className="absolute inset-0 hidden md:block">
         <FreeCreationInfiniteCanvas
+          key={projectName}
           projectName={projectName}
           creations={creations}
           subtitleTracks={subtitleTracks}
@@ -941,6 +1125,7 @@ export function FreeCreationWorkspace({
           onEdit={editFromCreation}
           onReference={addReference}
           onReferences={addReferences}
+          onContinue={continueFromCreation}
           onPreview={setPreviewTarget}
           onEditSubtitle={(creationId) => {
             setSubtitleCreationId(creationId);
@@ -952,6 +1137,7 @@ export function FreeCreationWorkspace({
           onMerge={(creationIds) => void mergeCreationVideos(creationIds)}
           onCompositeAudio={(videoCreationId, audioCreationId) => void compositeCreationAudio(videoCreationId, audioCreationId)}
           onUploadFiles={uploadCanvasFiles}
+          bottomInset={composerMode === "agent" ? 20 : composerCollapsed ? 76 : 290}
         />
       </div>
 
@@ -987,7 +1173,19 @@ export function FreeCreationWorkspace({
       </div>
 
       {composerMode !== "agent" ? (
-      <section className="free-creation-composer absolute bottom-3 left-1/2 z-30 w-[min(920px,calc(100vw-1.5rem))] -translate-x-1/2 rounded-lg border border-[var(--color-hairline)] bg-[var(--color-surface)]/96 p-3 shadow-lg backdrop-blur-md sm:bottom-4 sm:p-4">
+      composerCollapsed ? (
+        <section className="free-creation-composer free-creation-composer--collapsed absolute bottom-3 left-1/2 z-30 -translate-x-1/2 overflow-hidden rounded-[10px] border border-[var(--color-hairline-strong)] bg-[var(--color-surface)]/96 shadow-[0_12px_28px_-16px_oklch(0_0_0_/_0.5),0_2px_8px_-4px_oklch(0_0_0_/_0.3)] backdrop-blur-md sm:bottom-4">
+          <button type="button" onClick={expandComposer} className="focus-ring flex h-12 w-full items-center gap-3 px-3.5 text-left hover:bg-white/[0.04]" aria-expanded="false" aria-label={t("free_creation_composer_expand")} title={t("free_creation_composer_expand")}>
+            <WandSparkles className="h-4 w-4 shrink-0 text-[var(--color-accent-2)]" aria-hidden />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-xs font-medium text-[var(--color-text)]">{t("free_creation_start_creating")}</span>
+              <span className="block truncate text-[10px] text-[var(--color-text-muted)]">{t(composerMode === "image" ? "free_creation_mode_image" : "free_creation_mode_video")} · {t("free_creation_composer_reference_count", { count: references.length })}</span>
+            </span>
+            <ChevronUp className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden />
+          </button>
+        </section>
+      ) : (
+      <section className="free-creation-composer absolute bottom-3 left-1/2 z-30 -translate-x-1/2 rounded-[10px] border border-[var(--color-hairline)] bg-[var(--color-surface)]/96 p-3 shadow-[0_12px_28px_-16px_oklch(0_0_0_/_0.5),0_2px_8px_-4px_oklch(0_0_0_/_0.3)] backdrop-blur-md sm:bottom-4 sm:p-4">
         {selectedParent ? (
           <div className="mb-2 flex items-center gap-2 rounded-md bg-[var(--color-accent-dim)] px-2.5 py-1.5 text-xs text-[var(--color-accent-2)]">
             <Pencil className="h-3.5 w-3.5" aria-hidden />
@@ -1009,11 +1207,11 @@ export function FreeCreationWorkspace({
           onRemove={removeComposerReference}
           onSwapFrames={swapFrameReferences}
         >
-          <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void handleSubmit(); } }} rows={3} maxLength={10000} placeholder={t("free_creation_prompt")} className="min-h-[88px] w-full min-w-0 resize-none bg-transparent px-2.5 py-2 text-sm leading-5 outline-none placeholder:text-[var(--color-text-muted)]" disabled={readOnly || submitting} />
+          <textarea ref={promptInputRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void handleSubmit(); } }} rows={2} maxLength={10000} placeholder={t("free_creation_prompt")} className="min-h-[56px] w-full min-w-0 resize-none bg-transparent px-2.5 py-1.5 text-sm leading-5 outline-none placeholder:text-[var(--color-text-muted)]" disabled={readOnly || submitting} />
         </FreeCreationReferenceInput>
         <input ref={fileInputRef} type="file" className="sr-only" aria-label={t("free_creation_upload_reference")} onChange={(event) => void uploadReferences(event.target.files)} />
           <div
-            className="composer-param-strip free-creation-parameter-strip mt-2 flex items-center gap-1.5 border-y border-[var(--color-hairline)] py-2"
+            className="composer-param-strip free-creation-parameter-strip mt-1.5 flex items-center gap-1.5 border-y border-[var(--color-hairline)] py-1.5"
             onWheel={handleComposerStripWheel}
           >
             {composerModeControl}
@@ -1082,7 +1280,7 @@ export function FreeCreationWorkspace({
                   heightLabel={t("home_height")}
                   sizeHint={t("home_size_hint")}
                   ratio={effectiveAspectRatio}
-                  resolution={selectedResolution || "1.5k"}
+                  resolution={selectedResolution || "1K"}
                   quantity={quantity}
                   width={imageWidth}
                   height={imageHeight}
@@ -1091,7 +1289,8 @@ export function FreeCreationWorkspace({
                   onRatioChange={changeAspectRatio}
                   onResolutionChange={changeResolution}
                   onQuantityChange={setQuantity}
-                  onDimensionsCommit={commitImageDimensions}
+                  onWidthChange={(value) => changeImageDimension("width", value)}
+                  onHeightChange={(value) => changeImageDimension("height", value)}
                   hideLabel
                   placement="top"
                 />
@@ -1144,10 +1343,6 @@ export function FreeCreationWorkspace({
               >
                 {[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
-              {effectiveMediaType === "image" ? <>
-                <input className="sr-only" aria-label="W" type="number" value={imageWidth} onChange={(event) => commitImageDimensions(Number(event.target.value) || imageWidth, imageHeight)} tabIndex={-1} />
-                <input className="sr-only" aria-label="H" type="number" value={imageHeight} onChange={(event) => commitImageDimensions(imageWidth, Number(event.target.value) || imageHeight)} tabIndex={-1} />
-              </> : null}
               {effectiveMediaType === "video" && durationOptions.length ? (
                 <input
                   className="sr-only"
@@ -1194,6 +1389,7 @@ export function FreeCreationWorkspace({
         ) : null}
 
         <div className="mt-2 flex items-center justify-between gap-3 border-t border-[var(--color-hairline)] pt-2">
+          <button type="button" onClick={() => setComposerCollapsed(true)} className="focus-ring grid h-8 w-8 shrink-0 place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-white/[0.04] hover:text-[var(--color-text)]" aria-expanded="true" aria-label={t("free_creation_composer_collapse")} title={t("free_creation_composer_collapse")}><ChevronDown className="h-4 w-4" aria-hidden /></button>
           <p
             className={`min-h-4 min-w-0 flex-1 truncate text-xs ${capabilityMessage || error ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"}`}
             role={capabilityMessage || error ? "alert" : "status"}
@@ -1214,7 +1410,38 @@ export function FreeCreationWorkspace({
           </button>
         </div>
       </section>
+      )
       ) : null}
+      <GlassModal
+        open={Boolean(pendingContinuation)}
+        onClose={() => setPendingContinuation(null)}
+        labelledBy="free-creation-continuation-title"
+        describedBy="free-creation-continuation-description"
+        widthClassName="w-full max-w-lg"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--color-hairline)] px-5 py-4">
+          <div>
+            <h2 id="free-creation-continuation-title" className="text-sm font-semibold text-[var(--color-text)]">{t("free_creation_continue_draft_conflict_title")}</h2>
+            <p id="free-creation-continuation-description" className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{t("free_creation_continue_draft_conflict_description")}</p>
+          </div>
+          <ModalCloseButton onClick={() => setPendingContinuation(null)} />
+        </div>
+        <div className="px-5 py-4">
+          <p className="line-clamp-2 rounded-md border border-[var(--color-hairline)] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-[var(--color-text-2)]">{pendingContinuation?.label}</p>
+        </div>
+        <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--color-hairline)] px-5 py-4">
+          <SecondaryButton size="sm" onClick={() => setPendingContinuation(null)}>{t("cancel")}</SecondaryButton>
+          <SecondaryButton size="sm" onClick={() => {
+            if (!pendingContinuation) return;
+            addReference(pendingContinuation.draft.reference, pendingContinuation.label);
+            setPendingContinuation(null);
+          }}>{t("free_creation_continue_add_reference_only")}</SecondaryButton>
+          <PrimaryButton size="sm" onClick={() => {
+            if (!pendingContinuation) return;
+            applyContinuationDraft(pendingContinuation.draft, pendingContinuation.label);
+          }}>{t("free_creation_continue_replace_draft")}</PrimaryButton>
+        </div>
+      </GlassModal>
       <FreeCreationPreviewDialog
         projectName={projectName}
         target={previewTarget}

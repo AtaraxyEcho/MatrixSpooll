@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -620,6 +621,85 @@ async def execute_free_edit_task(
     return result
 
 
+async def execute_free_video_merge_task(
+    project_name: str,
+    resource_id: str,
+    payload: dict[str, Any],
+    *,
+    user_id: str,
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    """Merge selected videos as a durable, project-scoped derived creation."""
+    del user_id
+    from server.services.free_creation_merge import merge_video_creations, resolve_merge_video_paths
+    from server.services.free_creation_workspace import list_reference_uploads
+
+    pm = get_project_manager()
+    project_path = pm.get_project_path(project_name)
+    item_ids = payload.get("item_ids")
+    if not isinstance(item_ids, list) or not all(isinstance(item, str) for item in item_ids):
+        raise ValueError("merge item_ids are required")
+    creations = await asyncio.to_thread(list_creation_metadata, project_path, None)
+    uploads = await asyncio.to_thread(list_reference_uploads, project_path)
+    paths = await asyncio.to_thread(resolve_merge_video_paths, project_path, item_ids, creations, uploads)
+    output, temporary_directory = await merge_video_creations(project_path, item_ids, creations, uploads)
+    cover_path = project_path / "free_creation" / "covers" / f"{resource_id}.jpg"
+    committed = False
+    try:
+        extracted_cover = await extract_video_thumbnail(output, cover_path)
+        output_path = creation_media_path(project_path, resource_id, "video")
+        claims: list[dict[str, Any]] = []
+        creations_by_id = {
+            item.get("creation_id"): item for item in creations if isinstance(item.get("creation_id"), str)
+        }
+        for item_id in item_ids:
+            if item_id.startswith("c_"):
+                source = creations_by_id.get(item_id) or {}
+                claims.append(
+                    {
+                        "type": "creation",
+                        "creation_id": item_id,
+                        "version": source.get("version"),
+                        "role": "reference_video",
+                    }
+                )
+            else:
+                claims.append({"type": "reference", "reference_id": item_id, "role": "reference_video"})
+        metadata = {
+            "creation_id": resource_id,
+            "task_id": task_id,
+            "status": "succeeded",
+            "output_type": "video",
+            "media_type": "video",
+            "prompt": "",
+            "prompt_mode": "original",
+            "model": "local/ffmpeg",
+            "references": [path.relative_to(project_path).as_posix() for path in paths],
+            "reference_claims": claims,
+            "effective_mode": "video_merge",
+            "quantity": 1,
+            "media_path": output_path.relative_to(project_path).as_posix(),
+            "cover_path": extracted_cover.relative_to(project_path).as_posix() if extracted_cover else None,
+            "version": 1,
+            "updated_at": _now(),
+        }
+        VersionManager(project_path).commit_staged_version(
+            "free_videos",
+            resource_id,
+            "",
+            staged_file=output,
+            current_file=output_path,
+            on_commit=lambda: commit_free_creation_state(project_path, metadata),
+            source="free_creation_video_merge",
+        )
+        committed = True
+        return metadata
+    finally:
+        shutil.rmtree(temporary_directory, ignore_errors=True)
+        if not committed:
+            cover_path.unlink(missing_ok=True)
+
+
 async def execute_free_creation_task(
     task_type: str,
     project_name: str,
@@ -669,6 +749,14 @@ async def execute_free_creation_task(
             user_id=user_id,
             task_id=task_id,
         )
+    if task_type == "free_video_merge":
+        return await execute_free_video_merge_task(
+            project_name,
+            resource_id,
+            payload,
+            user_id=user_id,
+            task_id=task_id,
+        )
     raise ValueError(f"unsupported free creation task type: {task_type}")
 
 
@@ -679,6 +767,7 @@ __all__ = [
     "delete_creation_metadata",
     "discard_free_creation_result",
     "execute_free_creation_task",
+    "execute_free_video_merge_task",
     "list_creation_metadata",
     "load_creation_metadata",
     "new_creation_id",

@@ -52,6 +52,11 @@ from server.agent_runtime.sdk_tools.enqueue_videos import (
     generate_video_scene_tool,
     generate_video_selected_tool,
 )
+from server.agent_runtime.sdk_tools.free_creation import (
+    get_free_creation_options_tool,
+    inspect_free_creation_tool,
+    submit_free_creation_tool,
+)
 from server.agent_runtime.sdk_tools.text_generation import (
     _parse_normalized_content,
     generate_episode_script_tool,
@@ -513,6 +518,190 @@ def test_generate_narration_audio_registered() -> None:
     from server.agent_runtime.sdk_tools import MATRIXSPOOLL_MCP_TOOL_IDS
 
     assert "generate_narration_audio" in MATRIXSPOOLL_MCP_TOOL_IDS
+
+
+@pytest.mark.unit
+def test_free_creation_tools_are_registered_once() -> None:
+    from server.agent_runtime.sdk_tools import MATRIXSPOOLL_MCP_TOOL_IDS
+
+    assert len(MATRIXSPOOLL_MCP_TOOL_IDS) == len(set(MATRIXSPOOLL_MCP_TOOL_IDS))
+    assert {
+        "get_free_creation_options",
+        "submit_free_creation",
+        "inspect_free_creation",
+    }.issubset(MATRIXSPOOLL_MCP_TOOL_IDS)
+
+
+def _configure_mock_free_project(fake_ctx: ToolContext) -> None:
+    fake_ctx.pm.project_payload.update(  # type: ignore[attr-defined]
+        {
+            "content_mode": "free",
+            "generation_mode": None,
+            "episodes": [],
+        }
+    )
+
+
+@pytest.mark.unit
+async def test_free_creation_options_returns_mock_provider_capabilities(
+    fake_ctx: ToolContext,
+    monkeypatch,
+) -> None:
+    from server.routers import free_creations as router
+
+    _configure_mock_free_project(fake_ctx)
+    captured: dict[str, Any] = {}
+
+    async def fake_capabilities(**kwargs):
+        captured.update(kwargs)
+        return {
+            "output_type": "video",
+            "model": "mock/video-model",
+            "ratios": ["16:9", "9:16"],
+            "resolutions": ["720p", "1080p"],
+            "durations": [5, 10],
+            "modes": ["t2v", "reference_image", "reference_video"],
+            "input_slots": [
+                {"role": "reference_image", "accepted_types": ["image"], "max_count": 4},
+                {"role": "reference_video", "accepted_types": ["video"], "max_count": 2},
+            ],
+        }
+
+    monkeypatch.setattr(router, "_get_generation_capabilities", fake_capabilities)
+
+    result = await _call(
+        get_free_creation_options_tool(fake_ctx),
+        {"output_type": "video", "model": "mock/video-model", "reference_kind": "image"},
+    )
+
+    assert result["is_error"] is False
+    assert result["generation_options"]["durations"] == [5, 10]
+    assert result["generation_options"]["input_slots"][0]["role"] == "reference_image"
+    assert captured == {
+        "output_type": "video",
+        "model": "mock/video-model",
+        "reference_kind": "image",
+        "project_name": "demo",
+        "validate_reference_mode": True,
+    }
+
+
+@pytest.mark.unit
+async def test_free_creation_submit_preserves_mock_constraints_and_actor(
+    fake_ctx: ToolContext,
+    monkeypatch,
+) -> None:
+    from server.routers import free_creations as router
+
+    _configure_mock_free_project(fake_ctx)
+    fake_ctx.actor_user_id = "11111111-1111-4111-8111-111111111111"
+    captured: dict[str, Any] = {}
+
+    async def fake_submit(project_name, request, *, user_id, source):
+        captured.update(
+            project_name=project_name,
+            request=request.model_dump(exclude_none=True),
+            user_id=user_id,
+            source=source,
+        )
+        return {
+            "success": True,
+            "request_id": "q_11111111111111111111",
+            "creation_id": "c_11111111111111111111",
+            "task_id": "task-mock-1",
+            "creations": [
+                {"creation_id": "c_11111111111111111111", "task_id": "task-mock-1"},
+                {"creation_id": "c_22222222222222222222", "task_id": "task-mock-2"},
+            ],
+        }
+
+    monkeypatch.setattr(router, "submit_free_creation", fake_submit)
+
+    result = await _call(
+        submit_free_creation_tool(fake_ctx),
+        {
+            "output_type": "video",
+            "prompt": "Create a mock launch clip",
+            "model": "mock/video-model",
+            "aspect_ratio": "16:9",
+            "resolution": "1080p",
+            "duration_seconds": 10,
+            "quantity": 2,
+            "references": [
+                {
+                    "type": "upload",
+                    "reference_id": "r_11111111111111111111",
+                    "role": "reference_image",
+                },
+                {
+                    "type": "creation",
+                    "creation_id": "c_33333333333333333333",
+                    "version": 2,
+                    "role": "reference_video",
+                },
+            ],
+        },
+    )
+
+    assert result["is_error"] is False
+    assert result["free_creation"]["status"] == "queued"
+    assert result["free_creation"]["creations"][1]["task_id"] == "task-mock-2"
+    assert captured["project_name"] == "demo"
+    assert captured["user_id"] == "11111111-1111-4111-8111-111111111111"
+    assert captured["source"] == "agent"
+    assert captured["request"]["model"] == "mock/video-model"
+    assert captured["request"]["references"][1] == {
+        "type": "creation",
+        "creation_id": "c_33333333333333333333",
+        "version": 2,
+        "role": "reference_video",
+    }
+
+
+@pytest.mark.integration
+async def test_free_creation_inspect_reads_mock_workspace_data(fake_ctx: ToolContext) -> None:
+    _configure_mock_free_project(fake_ctx)
+    creations_dir = fake_ctx.project_path / "creations"
+    creations_dir.mkdir(exist_ok=True)
+    (creations_dir / "c_11111111111111111111.json").write_text(
+        json.dumps(
+            {
+                "creation_id": "c_11111111111111111111",
+                "output_type": "video",
+                "status": "succeeded",
+                "prompt": "mock result",
+            }
+        ),
+        encoding="utf-8",
+    )
+    references_dir = fake_ctx.project_path / "free_creation" / "references"
+    references_dir.mkdir(parents=True, exist_ok=True)
+    (references_dir / "r_11111111111111111111.json").write_text(
+        json.dumps(
+            {
+                "reference_id": "r_11111111111111111111",
+                "type": "upload",
+                "original_filename": "character.png",
+                "media_type": "image",
+                "path": "uploads/character.png",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = await _call(inspect_free_creation_tool(fake_ctx), {"limit": 10})
+
+    assert result["is_error"] is False
+    workspace = result["free_creation_workspace"]
+    assert workspace["creations"] == [
+        {
+            "creation_id": "c_11111111111111111111",
+            "output_type": "video",
+            "status": "succeeded",
+            "prompt": "mock result",
+        }
+    ]
+    assert workspace["references"][0]["original_filename"] == "character.png"
 
 
 # ---------------------------------------------------------------------------

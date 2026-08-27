@@ -40,6 +40,11 @@ from server.agent_runtime.sdk_tools.episode_planning import (
     plan_episodes_tool,
     reset_episode_planning_tool,
 )
+from server.agent_runtime.sdk_tools.free_creation import (
+    get_free_creation_options_tool,
+    inspect_free_creation_tool,
+    submit_free_creation_tool,
+)
 from server.agent_runtime.sdk_tools.patch_episode_meta import patch_episode_meta_tool
 from server.agent_runtime.sdk_tools.patch_project import patch_project_tool
 from server.agent_runtime.sdk_tools.patch_script import (
@@ -106,6 +111,9 @@ MATRIXSPOOLL_MCP_TOOL_IDS: tuple[str, ...] = (
     "patch_project",
     "rename_asset",
     "retry_project_migration",
+    "get_free_creation_options",
+    "submit_free_creation",
+    "inspect_free_creation",
 )
 
 # Tools refused outright while the project's schema migration verdict is a failure.
@@ -134,6 +142,7 @@ MIGRATION_BLOCKED_TOOL_IDS: frozenset[str] = frozenset(
         "split_narration_segments",
         "plan_episodes",
         "reset_episode_planning",
+        "submit_free_creation",
     }
 )
 
@@ -197,6 +206,9 @@ def build_matrixspooll_mcp_server(
         patch_project_tool(ctx),
         rename_asset_tool(ctx),
         retry_project_migration_tool(ctx),
+        get_free_creation_options_tool(ctx),
+        submit_free_creation_tool(ctx),
+        inspect_free_creation_tool(ctx),
     ]
     return create_sdk_mcp_server(
         name="matrixspooll",

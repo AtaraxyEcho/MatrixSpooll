@@ -1,3 +1,4 @@
+import shutil
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,7 +36,9 @@ from server.routers.free_creations import (
 from server.services import free_creation_merge as free_creation_merge_module
 from server.services import free_creation_tasks as free_creation_tasks_module
 from server.services.free_creation_merge import (
+    FreeCreationMergeError,
     composite_creation_audio,
+    merge_video_creations,
     render_creation_subtitles,
     resolve_audio_composite_paths,
     resolve_merge_video_paths,
@@ -47,6 +50,7 @@ from server.services.free_creation_tasks import (
     discard_free_creation_result,
     execute_free_audio_task,
     execute_free_edit_task,
+    execute_free_video_merge_task,
     execute_free_video_task,
     list_creation_metadata,
     load_creation_metadata,
@@ -572,6 +576,32 @@ async def test_capability_endpoint_uses_video_reference_duration_subset(monkeypa
 
     assert result["durations"] == list(range(2, 11))
     assert result["ratios"] == ["16:9", "9:16"]
+
+
+@pytest.mark.asyncio
+async def test_capability_endpoint_uses_standard_resolutions_for_custom_image_model(monkeypatch) -> None:
+    class FakeResolver:
+        def __init__(self, _session_factory):
+            pass
+
+        async def resolve_image_backend(self, _project, _payload, *, capability=None):
+            assert capability == "t2i"
+            return SimpleNamespace(provider_id="custom-7", model_id="image-model")
+
+        async def resolve_resolution(self, _project, provider_id, model_id):
+            assert (provider_id, model_id) == ("custom-7", "image-model")
+            return None
+
+    monkeypatch.setattr("lib.config.resolver.ConfigResolver", FakeResolver)
+
+    result = await get_free_creation_capabilities(
+        output_type="image",
+        model=None,
+        reference_kind="none",
+    )
+
+    assert result["model"] == "custom-7/image-model"
+    assert result["resolutions"] == ["512px", "1K", "2K", "4K"]
 
 
 @pytest.mark.asyncio
@@ -1376,6 +1406,152 @@ def test_free_creation_merge_resolves_only_manifested_videos_in_requested_order(
         resolve_merge_video_paths(tmp_path, [creations[0]["creation_id"]], creations)
 
 
+def test_free_creation_merge_accepts_uploaded_and_generated_videos_in_requested_order(tmp_path: Path) -> None:
+    creation_id = "c_0123456789abcdef0123"
+    creation_media = tmp_path / "creations" / f"{creation_id}.mp4"
+    creation_media.parent.mkdir(parents=True, exist_ok=True)
+    creation_media.write_bytes(b"generated-video")
+    creation = {
+        "creation_id": creation_id,
+        "status": "succeeded",
+        "output_type": "video",
+        "media_type": "video",
+        "media_path": f"creations/{creation_id}.mp4",
+    }
+    register_free_creation_artifact(tmp_path, creation)
+    reference_id = "r_0123456789abcdef0123"
+    reference_media = tmp_path / "uploads" / "free_creation" / f"{reference_id}.mov"
+    reference_media.parent.mkdir(parents=True, exist_ok=True)
+    reference_media.write_bytes(b"uploaded-video")
+    upload = {
+        "reference_id": reference_id,
+        "media_type": "video",
+        "path": f"uploads/free_creation/{reference_id}.mov",
+    }
+
+    paths = resolve_merge_video_paths(
+        tmp_path,
+        [reference_id, creation_id],
+        [creation],
+        [upload],
+    )
+
+    assert paths == [reference_media, creation_media]
+
+
+@pytest.mark.asyncio
+async def test_free_creation_merge_reports_missing_tools_with_stable_code(tmp_path: Path, monkeypatch) -> None:
+    uploads: list[dict] = []
+    item_ids: list[str] = []
+    for suffix in ("1", "2"):
+        reference_id = f"r_{suffix * 20}"
+        media = tmp_path / "uploads" / "free_creation" / f"{reference_id}.mp4"
+        media.parent.mkdir(parents=True, exist_ok=True)
+        media.write_bytes(b"video")
+        item_ids.append(reference_id)
+        uploads.append(
+            {
+                "reference_id": reference_id,
+                "media_type": "video",
+                "path": media.relative_to(tmp_path).as_posix(),
+            }
+        )
+
+    def _missing(_name: str) -> str:
+        raise free_creation_merge_module.MediaProcessError("media_tool_missing")
+
+    monkeypatch.setattr(free_creation_merge_module, "find_media_tool", _missing)
+
+    with pytest.raises(FreeCreationMergeError) as error:
+        await merge_video_creations(tmp_path, item_ids, [], uploads)
+    assert error.value.code == "free_creation_merge_tools_missing"
+
+
+@pytest.mark.asyncio
+async def test_free_video_merge_task_persists_a_derived_creation(tmp_path: Path, monkeypatch) -> None:
+    generated_id = "c_0123456789abcdef0123"
+    upload_id = "r_0123456789abcdef0123"
+    output_id = "c_0123456789abcdef0124"
+    generated_path = tmp_path / "creations" / f"{generated_id}.mp4"
+    upload_path = tmp_path / "uploads" / "free_creation" / f"{upload_id}.mp4"
+    generated_path.parent.mkdir(parents=True, exist_ok=True)
+    upload_path.parent.mkdir(parents=True, exist_ok=True)
+    generated_path.write_bytes(b"generated")
+    upload_path.write_bytes(b"uploaded")
+    creations = [
+        {
+            "creation_id": generated_id,
+            "status": "succeeded",
+            "output_type": "video",
+            "media_type": "video",
+            "media_path": generated_path.relative_to(tmp_path).as_posix(),
+            "version": 3,
+        }
+    ]
+    uploads = [
+        {
+            "reference_id": upload_id,
+            "media_type": "video",
+            "path": upload_path.relative_to(tmp_path).as_posix(),
+        }
+    ]
+
+    class FakeProjectManager:
+        def get_project_path(self, _project_name: str) -> Path:
+            return tmp_path
+
+    temporary_directory = tmp_path / "tmp" / "merge"
+    temporary_directory.mkdir(parents=True)
+    staged_output = temporary_directory / "merged.mp4"
+    staged_output.write_bytes(b"merged")
+
+    async def _merge(*_args, **_kwargs):
+        return staged_output, temporary_directory
+
+    async def _thumbnail(_source: Path, destination: Path):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"cover")
+        return destination
+
+    class FakeVersionManager:
+        def __init__(self, _project_path: Path):
+            pass
+
+        def commit_staged_version(
+            self, _resource_type, _resource_id, _prompt, *, staged_file, current_file, on_commit, **_kwargs
+        ):
+            current_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(staged_file, current_file)
+            on_commit()
+
+    monkeypatch.setattr(free_creation_tasks_module, "get_project_manager", lambda: FakeProjectManager())
+    monkeypatch.setattr(free_creation_tasks_module, "list_creation_metadata", lambda *_args: creations)
+    monkeypatch.setattr("server.services.free_creation_workspace.list_reference_uploads", lambda _path: uploads)
+    monkeypatch.setattr(
+        free_creation_merge_module, "resolve_merge_video_paths", lambda *_args: [generated_path, upload_path]
+    )
+    monkeypatch.setattr(free_creation_merge_module, "merge_video_creations", _merge)
+    monkeypatch.setattr(free_creation_tasks_module, "extract_video_thumbnail", _thumbnail)
+    monkeypatch.setattr(free_creation_tasks_module, "VersionManager", FakeVersionManager)
+
+    result = await execute_free_video_merge_task(
+        "demo",
+        output_id,
+        {"item_ids": [generated_id, upload_id]},
+        user_id="user-1",
+        task_id="task-merge",
+    )
+
+    assert result["status"] == "succeeded"
+    assert result["effective_mode"] == "video_merge"
+    assert result["reference_claims"] == [
+        {"type": "creation", "creation_id": generated_id, "version": 3, "role": "reference_video"},
+        {"type": "reference", "reference_id": upload_id, "role": "reference_video"},
+    ]
+    assert (tmp_path / "creations" / f"{output_id}.mp4").read_bytes() == b"merged"
+    assert load_creation_metadata(tmp_path, output_id) == result
+
+
 def test_audio_composite_resolves_one_manifested_video_and_voice(tmp_path: Path) -> None:
     video_id = "c_0123456789abcdef0123"
     audio_id = "c_0123456789abcdef0124"
@@ -1463,28 +1639,15 @@ async def test_audio_composite_and_subtitle_render_create_derived_canvas_videos(
     )
     commands: list[tuple[object, ...]] = []
 
-    class FakeProcess:
-        returncode = 0
-
-        async def communicate(self):
-            return b"", b""
-
-        def kill(self) -> None:
-            return None
-
-        async def wait(self) -> int:
-            return 0
-
-    async def fake_create_subprocess_exec(*args, **_kwargs):
-        commands.append(args)
+    async def fake_run_ffmpeg(args, **_kwargs):
+        commands.append(tuple(args))
         Path(str(args[-1])).write_bytes(b"derived-video")
-        return FakeProcess()
 
     async def fake_thumbnail(_video_path: Path, _cover_path: Path):
         return None
 
     monkeypatch.setattr(free_creation_merge_module.shutil, "which", lambda _name: "ffmpeg")
-    monkeypatch.setattr(free_creation_merge_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(free_creation_merge_module, "run_ffmpeg", fake_run_ffmpeg)
     monkeypatch.setattr(free_creation_merge_module, "extract_video_thumbnail", fake_thumbnail)
 
     composited = await composite_creation_audio(

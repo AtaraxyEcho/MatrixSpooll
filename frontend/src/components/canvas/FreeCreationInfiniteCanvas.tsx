@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
+  ArrowUpRight,
   Clapperboard,
   Download,
   Eye,
@@ -20,6 +21,7 @@ import {
   Trash2,
   Ungroup,
   UploadCloud,
+  Waypoints,
   ZoomIn,
   ZoomOut,
   XCircle,
@@ -31,7 +33,14 @@ import type { FreeCreationPreviewTarget } from "@/components/canvas/FreeCreation
 import {
   CanvasSceneLayer,
   type CanvasRenderNode,
+  type CanvasRenderRelation,
 } from "@/components/canvas/free-creation/CanvasSceneLayer";
+import {
+  createCanvasRelationGraph,
+  type CanvasRelation,
+  type CanvasRelationMode,
+  type CanvasRelationRole,
+} from "@/components/canvas/free-creation/canvas-relations";
 import { CanvasMediaThumbnail } from "@/components/canvas/free-creation/CanvasMediaThumbnail";
 import {
   CanvasNodeLabel,
@@ -87,6 +96,7 @@ interface FreeCreationInfiniteCanvasProps {
   onEdit: (creationId: string) => void;
   onReference: (reference: FreeCreationReferenceClaim, label: string) => void;
   onReferences?: (references: Array<{ claim: FreeCreationReferenceClaim; label: string }>) => void;
+  onContinue?: (creationId: string) => void;
   onPreview?: (target: FreeCreationPreviewTarget) => void;
   onEditSubtitle?: (creationId: string) => void;
   onDeleteItems?: (selection: {
@@ -100,6 +110,7 @@ interface FreeCreationInfiniteCanvasProps {
   onMerge?: (creationIds: string[]) => void;
   onCompositeAudio?: (videoCreationId: string, audioCreationId: string) => void;
   onUploadFiles?: (files: readonly File[]) => Promise<FreeCreationUpload[]>;
+  bottomInset?: number;
 }
 
 type PointerOperation =
@@ -137,6 +148,49 @@ const SUBTITLE_NODE_GAP = 32;
 const DESKTOP_DRAG_THRESHOLD = 4;
 const TOUCH_DRAG_THRESHOLD = 8;
 const TOUCH_DRAG_HOLD_MS = 240;
+const RELATION_RENDER_LIMIT = 1_000;
+const CANVAS_VIEW_PREFERENCES_KEY = "matrixspooll:freeCreationCanvasView";
+const CANVAS_VIEW_PREFERENCES_VERSION = 2;
+const RELATION_ROLE_KEYS: Record<CanvasRelationRole, string> = {
+  first_frame: "free_creation_relation_role_first_frame",
+  last_frame: "free_creation_relation_role_last_frame",
+  reference_image: "free_creation_relation_role_reference_image",
+  reference_video: "free_creation_relation_role_reference_video",
+  reference_audio: "free_creation_relation_role_reference_audio",
+  prompt_context: "free_creation_relation_role_prompt_context",
+  edit_source: "free_creation_relation_role_edit_source",
+  reference: "free_creation_relation_role_reference",
+};
+
+function canvasViewPreferenceKey(projectName: string): string {
+  return `${CANVAS_VIEW_PREFERENCES_KEY}:${encodeURIComponent(projectName)}`;
+}
+
+function readRelationMode(projectName: string): CanvasRelationMode | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(canvasViewPreferenceKey(projectName));
+    if (!raw) return null;
+    const preference = JSON.parse(raw) as { relationMode?: unknown; version?: unknown };
+    const mode = preference.relationMode;
+    if (mode === "selected" && preference.version !== CANVAS_VIEW_PREFERENCES_VERSION) return "all";
+    return mode === "selected" || mode === "all" || mode === "off" ? mode : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeRelationMode(projectName: string, relationMode: CanvasRelationMode): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(canvasViewPreferenceKey(projectName), JSON.stringify({
+      relationMode,
+      version: CANVAS_VIEW_PREFERENCES_VERSION,
+    }));
+  } catch {
+    // View preferences remain in memory when browser storage is unavailable.
+  }
+}
 
 interface CanvasBounds {
   left: number;
@@ -234,23 +288,7 @@ function nodeBox(
 }
 
 export function buildCanvasDependencyEdges(creations: FreeCreation[]): CanvasDependencyEdge[] {
-  const edges = new Map<string, CanvasDependencyEdge>();
-  for (const creation of creations) {
-    const targets = [
-      ...(creation.parent_creation_id ? [creation.parent_creation_id] : []),
-      ...(creation.reference_claims ?? []).map((claim) => (
-        claim.type === "creation" ? claim.creation_id : claim.reference_id
-      )),
-    ];
-    for (const sourceId of targets) {
-      if (sourceId === creation.creation_id) continue;
-      const key = `${sourceId}->${creation.creation_id}`;
-      edges.set(key, { sourceId, targetId: creation.creation_id });
-    }
-  }
-  return [...edges.values()].sort((left, right) => (
-    `${left.sourceId}->${left.targetId}`.localeCompare(`${right.sourceId}->${right.targetId}`)
-  ));
+  return createCanvasRelationGraph(creations).relations.map(({ sourceId, targetId }) => ({ sourceId, targetId }));
 }
 
 export function createCanvasGroupId(): string {
@@ -510,6 +548,7 @@ export function FreeCreationInfiniteCanvas({
   onEdit,
   onReference,
   onReferences,
+  onContinue,
   onPreview,
   onEditSubtitle,
   onDeleteItems,
@@ -520,6 +559,7 @@ export function FreeCreationInfiniteCanvas({
   onMerge,
   onCompositeAudio,
   onUploadFiles,
+  bottomInset = 320,
 }: FreeCreationInfiniteCanvasProps) {
   const { t } = useTranslation("dashboard");
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -537,6 +577,7 @@ export function FreeCreationInfiniteCanvas({
   const disposedRef = useRef(false);
   const viewportAnimationTimerRef = useRef<number | null>(null);
   const nativeNodeDragRef = useRef(false);
+  const hasStoredRelationModeRef = useRef(readRelationMode(projectName) !== null);
   const mediaPlaybackRef = useRef(new Map<string, { currentTime: number; playing: boolean }>());
   const pointerFrameRef = useRef<number | null>(null);
   const touchHoldTimerRef = useRef<number | null>(null);
@@ -573,6 +614,10 @@ export function FreeCreationInfiniteCanvas({
   const [snapGuides, setSnapGuides] = useState<CanvasSnapGuide[]>([]);
   const [groups, setGroups] = useState<CanvasGroup[]>([]);
   const [showRelations, setShowRelations] = useState(true);
+  const [relationMode, setRelationMode] = useState<CanvasRelationMode>(() => readRelationMode(projectName) ?? "all");
+  const [relationMenuOpen, setRelationMenuOpen] = useState(false);
+  const [relationPanelNodeId, setRelationPanelNodeId] = useState<string | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [viewportAnimating, setViewportAnimating] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 1280, height: 720 });
   const [lod, setLod] = useState<CanvasLod>("detail");
@@ -703,6 +748,7 @@ export function FreeCreationInfiniteCanvas({
     () => new Map(creations.map((creation) => [creation.creation_id, creation])),
     [creations],
   );
+  const relationGraph = useMemo(() => createCanvasRelationGraph(creations), [creations]);
   const uploadsById = useMemo(
     () => new Map(uploads.map((upload) => [upload.reference_id, upload])),
     [uploads],
@@ -743,6 +789,10 @@ export function FreeCreationInfiniteCanvas({
     [orderedCreations, uploads],
   );
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const activeRelationIds = useMemo<ReadonlySet<string>>(() => {
+    if (selectedSet.size) return selectedSet;
+    return hoveredNodeId ? new Set([hoveredNodeId]) : new Set();
+  }, [hoveredNodeId, selectedSet]);
   const draggingSet = useMemo(() => new Set(draggingIds), [draggingIds]);
   const groupByMember = useMemo(() => {
     const result = new Map<string, CanvasGroup>();
@@ -844,6 +894,24 @@ export function FreeCreationInfiniteCanvas({
     }),
     [canvasNodesById, viewportNodes],
   );
+  const viewportRelationNodeIds = useMemo(
+    () => new Set(viewportRenderNodes.map((node) => node.id)),
+    [viewportRenderNodes],
+  );
+  const visibleRelationQuery = useMemo(() => relationGraph.query({
+    mode: relationMode,
+    selectedIds: activeRelationIds,
+    visibleIds: viewportRelationNodeIds,
+    maxRelations: RELATION_RENDER_LIMIT,
+  }), [activeRelationIds, relationGraph, relationMode, viewportRelationNodeIds]);
+  const sceneRelations = useMemo<CanvasRenderRelation[]>(() => visibleRelationQuery.relations.map((relation) => ({
+    id: relation.id,
+    sourceId: relation.sourceId,
+    targetId: relation.targetId,
+    active: relationMode === "selected"
+      || activeRelationIds.has(relation.sourceId)
+      || activeRelationIds.has(relation.targetId),
+  })), [activeRelationIds, relationMode, visibleRelationQuery.relations]);
   useEffect(() => {
     const nextLod = selectCanvasLod({
       projectedNodeWidth: NODE_WIDTH * scale,
@@ -895,13 +963,17 @@ export function FreeCreationInfiniteCanvas({
     )), [groupFrames, worldViewport]);
   const selectedMergeIds = useMemo(() => {
     if (selectedIds.length < 2) return [];
-    const selectedCreations = selectedIds
-      .map((id) => creations.find((creation) => creation.creation_id === id))
-      .filter((creation): creation is FreeCreation => Boolean(creation));
-    if (selectedCreations.length !== selectedIds.length) return [];
-    if (selectedCreations.some((creation) => creation.status !== "succeeded" || (creation.media_type !== "video" && creation.output_type !== "video"))) return [];
-    return selectedCreations.map((creation) => creation.creation_id);
-  }, [creations, selectedIds]);
+    const mergeIds = selectedIds.filter((id) => {
+      const creation = creationsById.get(id);
+      if (creation) {
+        return creation.status === "succeeded"
+          && Boolean(creation.media_path)
+          && creationMediaType(creation) === "video";
+      }
+      return uploadsById.get(id)?.media_type === "video";
+    });
+    return mergeIds.length === selectedIds.length ? mergeIds : [];
+  }, [creationsById, selectedIds, uploadsById]);
   const selectedReferences = useMemo<Array<{ claim: FreeCreationReferenceClaim; label: string }>>(() => selectedIds.reduce<Array<{ claim: FreeCreationReferenceClaim; label: string }>>((result, id) => {
     const upload = uploads.find((item) => item.reference_id === id);
     if (upload) {
@@ -925,21 +997,51 @@ export function FreeCreationInfiniteCanvas({
     return result;
   }, []), [creations, selectedIds, t, uploads]);
 
+  const relationNodeLabel = useCallback((nodeId: string): string | null => {
+    const creation = creationsById.get(nodeId);
+    if (creation) return creationLabel(creation, t(`free_creation_${creation.output_type}`));
+    return uploadsById.get(nodeId)?.original_filename ?? null;
+  }, [creationsById, t, uploadsById]);
+
+  const relationPanelData = useMemo(() => {
+    if (!relationPanelNodeId) return null;
+    const label = relationNodeLabel(relationPanelNodeId);
+    if (!label) return null;
+    return {
+      id: relationPanelNodeId,
+      label,
+      upstream: relationGraph.upstream(relationPanelNodeId),
+      downstream: relationGraph.downstream(relationPanelNodeId),
+    };
+  }, [relationGraph, relationNodeLabel, relationPanelNodeId]);
+
+  const changeRelationMode = useCallback((mode: CanvasRelationMode) => {
+    setRelationMode(mode);
+    writeRelationMode(projectName, mode);
+    setRelationMenuOpen(false);
+  }, [projectName]);
+
   const publishSelection = useCallback((ids: string[]) => {
     setSelectedIds(ids);
     const selectedCreations = creations.filter(
       (item) => ids.includes(item.creation_id) && item.status === "succeeded" && Boolean(item.media_path),
     );
     const requestIds = new Set(selectedCreations.map((item) => item.request_id).filter(Boolean));
-    const selectedVideoIds = selectedCreations
-      .filter((item) => creationMediaType(item) === "video")
-      .map((item) => item.creation_id);
+    const selectedVideoIds = ids.filter((id) => {
+      const creation = creations.find((item) => item.creation_id === id);
+      if (creation) {
+        return creation.status === "succeeded"
+          && Boolean(creation.media_path)
+          && creationMediaType(creation) === "video";
+      }
+      return uploads.find((item) => item.reference_id === id)?.media_type === "video";
+    });
     useFreeCreationStore.getState().setSelection(
       selectedCreations.map((item) => item.creation_id),
       requestIds.size === 1 ? [...requestIds][0] ?? null : null,
       selectedVideoIds,
     );
-  }, [creations]);
+  }, [creations, uploads]);
 
   const applyHistoryState = useCallback((state: CanvasHistoryState) => {
     applySharedState({
@@ -1054,6 +1156,12 @@ export function FreeCreationInfiniteCanvas({
         setHiddenUploadIds(shared.hiddenReferenceIds);
         setGroups(shared.groups);
         setShowRelations(shared.showRelations);
+        if (!hasStoredRelationModeRef.current) {
+          const migratedMode: CanvasRelationMode = shared.showRelations ? "all" : "off";
+          setRelationMode(migratedMode);
+          writeRelationMode(projectName, migratedMode);
+          hasStoredRelationModeRef.current = true;
+        }
         revisionRef.current = canvas.revision;
         nodeRevisionsRef.current = canvas.node_revisions ?? {};
         lastCanvasEventSequenceRef.current = useFreeCreationStore.getState().canvasEvents.at(-1)?.sequence ?? 0;
@@ -1083,14 +1191,14 @@ export function FreeCreationInfiniteCanvas({
     const width = surface?.clientWidth || 1280;
     const height = surface?.clientHeight || 720;
     const leftInset = width >= 900 ? 420 : 24;
-    const bottomInset = height >= 620 ? 292 : 80;
+    const safeBottomInset = height >= 620 ? bottomInset : Math.min(bottomInset, 80);
     return {
       left: (leftInset - pan.x) / scale,
       top: (64 - pan.y) / scale,
       right: (width - 24 - pan.x) / scale,
-      bottom: (height - bottomInset - pan.y) / scale,
+      bottom: (height - safeBottomInset - pan.y) / scale,
     };
-  }, [pan.x, pan.y, scale]);
+  }, [bottomInset, pan.x, pan.y, scale]);
 
   const arrangeNodes = useCallback((scope: "all" | "selected") => {
     if (readOnly) return;
@@ -1118,7 +1226,11 @@ export function FreeCreationInfiniteCanvas({
   const fitView = useCallback((scope: "all" | "selected") => {
     const bounds = scope === "selected" ? selectedBounds : contentBounds;
     if (!bounds) return;
-    const camera = fitCameraToBounds(bounds, viewportSize, {
+    const availableViewport = {
+      width: viewportSize.width,
+      height: Math.max(220, viewportSize.height - bottomInset),
+    };
+    const camera = fitCameraToBounds(bounds, availableViewport, {
       minScale: MIN_SCALE,
       maxScale: MAX_SCALE,
       padding: 72,
@@ -1128,20 +1240,21 @@ export function FreeCreationInfiniteCanvas({
     setScale(camera.scale);
     if (viewportAnimationTimerRef.current !== null) window.clearTimeout(viewportAnimationTimerRef.current);
     viewportAnimationTimerRef.current = window.setTimeout(() => setViewportAnimating(false), 240);
-  }, [contentBounds, selectedBounds, viewportSize]);
+  }, [bottomInset, contentBounds, selectedBounds, viewportSize]);
 
   const focusCanvasPosition = useCallback((position: Point, nodeHeight = NODE_HEIGHT) => {
     const surface = surfaceRef.current;
     const width = surface?.clientWidth || 1280;
     const height = surface?.clientHeight || 720;
+    const availableHeight = Math.max(220, height - bottomInset);
     setViewportAnimating(true);
     setPan({
       x: width / 2 - (position.x + NODE_WIDTH / 2) * scale,
-      y: height / 2 - (position.y + nodeHeight / 2) * scale,
+      y: availableHeight / 2 - (position.y + nodeHeight / 2) * scale,
     });
     if (viewportAnimationTimerRef.current !== null) window.clearTimeout(viewportAnimationTimerRef.current);
     viewportAnimationTimerRef.current = window.setTimeout(() => setViewportAnimating(false), 240);
-  }, [scale]);
+  }, [bottomInset, scale]);
 
   useEffect(() => {
     if (!canvasReady) return;
@@ -1889,6 +2002,36 @@ export function FreeCreationInfiniteCanvas({
     });
   };
 
+  const renderRelationItem = (relation: CanvasRelation, direction: "upstream" | "downstream") => {
+    const relatedId = direction === "upstream" ? relation.sourceId : relation.targetId;
+    const label = relationNodeLabel(relatedId);
+    const position = positions[relatedId];
+    const hidden = hiddenSet.has(relatedId) || hiddenUploadSet.has(relatedId);
+    const locatable = Boolean(label && position && (showHidden || !hidden));
+    return (
+      <button
+        key={`${direction}:${relation.id}`}
+        type="button"
+        disabled={!locatable}
+        onClick={() => {
+          if (!position || !locatable) return;
+          publishSelection([relatedId]);
+          focusCanvasPosition(position, nodeHeights[relatedId]);
+          setRelationPanelNodeId(relatedId);
+        }}
+        className="focus-ring flex min-h-11 w-full items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left hover:bg-white/[0.05] disabled:cursor-default disabled:opacity-55"
+      >
+        <span className="min-w-0">
+          <span className="block truncate text-xs text-[var(--color-text-2)]">{locatable ? label : t("free_creation_relation_unavailable")}</span>
+          <span className="mt-1 flex flex-wrap gap-1">
+            {relation.roles.map((role) => <span key={role} className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] leading-3 text-[var(--color-text-muted)]">{t(RELATION_ROLE_KEYS[role])}</span>)}
+          </span>
+        </span>
+        {locatable ? <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" aria-hidden /> : null}
+      </button>
+    );
+  };
+
   return (
     <div
       ref={surfaceRef}
@@ -1991,6 +2134,37 @@ export function FreeCreationInfiniteCanvas({
         <div className="relative">
           <button
             type="button"
+            onClick={() => setRelationMenuOpen((value) => !value)}
+            className={`focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${relationMode !== "off" ? "bg-white/[0.06] text-[var(--color-text)]" : ""}`}
+            title={t("free_creation_relations")}
+            aria-label={t("free_creation_relations")}
+            aria-expanded={relationMenuOpen}
+            aria-haspopup="menu"
+          >
+            <Waypoints className="h-4 w-4" aria-hidden />
+          </button>
+          {relationMenuOpen ? (
+            <div className="absolute right-0 top-[calc(100%+8px)] z-[210] w-48 rounded-md border border-[var(--color-hairline-strong)] bg-[var(--color-surface-2)] p-1.5 shadow-2xl" role="menu" aria-label={t("free_creation_relations")}>
+              {(["all", "selected", "off"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={relationMode === mode}
+                  onClick={() => changeRelationMode(mode)}
+                  className={`focus-ring flex min-h-8 w-full items-center justify-between gap-3 rounded px-2.5 text-left text-xs ${relationMode === mode ? "bg-white/[0.07] text-[var(--color-text)]" : "text-[var(--color-text-2)] hover:bg-white/[0.04]"}`}
+                >
+                  <span>{t(`free_creation_relations_${mode}`)}</span>
+                  {relationMode === mode ? <span className="h-1.5 w-1.5 rounded-full bg-white" aria-hidden /> : null}
+                </button>
+              ))}
+              {visibleRelationQuery.omitted ? <p className="px-2.5 pb-1 pt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">{t("free_creation_relations_limited", { count: visibleRelationQuery.omitted })}</p> : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="relative">
+          <button
+            type="button"
             onClick={() => setShortcutsOpen((value) => !value)}
             className={`focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${shortcutsOpen ? "bg-[var(--color-accent-dim)] text-[var(--color-accent-2)]" : ""}`}
             title={t("free_creation_shortcuts")}
@@ -2033,6 +2207,7 @@ export function FreeCreationInfiniteCanvas({
         viewport={viewportSize}
         nodes={viewportRenderNodes}
         groups={sceneGroups}
+        relations={sceneRelations}
         selectedIds={selectedSet}
         lod={lod}
       />
@@ -2062,6 +2237,8 @@ export function FreeCreationInfiniteCanvas({
           const selected = selectedSet.has(upload.reference_id);
           const hidden = hiddenUploadSet.has(upload.reference_id);
           const dragging = draggingSet.has(upload.reference_id);
+          const upstreamCount = relationGraph.upstream(upload.reference_id).length;
+          const downstreamCount = relationGraph.downstream(upload.reference_id).length;
           const claim: FreeCreationReferenceClaim = {
             type: "upload",
             reference_id: upload.reference_id,
@@ -2094,6 +2271,8 @@ export function FreeCreationInfiniteCanvas({
                 if (event.button === 0 && !isNodeControlTarget(event.target)) beginUploadDrag(event, upload.reference_id);
               }}
               onClick={(event) => handleReferenceShortcut(event, claim, upload.original_filename)}
+              onPointerEnter={() => setHoveredNodeId(upload.reference_id)}
+              onPointerLeave={() => setHoveredNodeId((current) => current === upload.reference_id ? null : current)}
               onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onPreview?.({ kind: "upload", upload }); }}
               onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (readOnly) return; if (!selectedSet.has(upload.reference_id)) publishSelection([upload.reference_id]); const rect = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "upload", nodeId: upload.reference_id, x: Math.min(Math.max(4, event.clientX - (rect?.left ?? 0)), (rect?.width ?? 260) - 196), y: Math.min(Math.max(4, event.clientY - (rect?.top ?? 0)), (rect?.height ?? 200) - 156) }); }}
             >
@@ -2115,6 +2294,7 @@ export function FreeCreationInfiniteCanvas({
                   onVideoPause={(video) => rememberVideoPlayback(upload.reference_id, video)}
                   onVideoTimeUpdate={(video) => rememberVideoPlayback(upload.reference_id, video)}
                 />
+                {selected && upstreamCount + downstreamCount > 0 ? <button type="button" className="focus-ring absolute left-2 top-2 z-30 inline-flex h-7 max-w-[170px] items-center gap-1.5 rounded-md bg-black/60 px-2 text-[10px] text-white/90 backdrop-blur-sm hover:bg-black/75" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setRelationPanelNodeId(upload.reference_id); }} aria-label={t("free_creation_relation_summary", { upstream: upstreamCount, downstream: downstreamCount })} title={t("free_creation_relation_summary", { upstream: upstreamCount, downstream: downstreamCount })}><Waypoints className="h-3 w-3 shrink-0" aria-hidden /><span className="truncate">{t("free_creation_relation_summary_short", { upstream: upstreamCount, downstream: downstreamCount })}</span></button> : null}
                 {!readOnly ? <div className="canvas-node-actions absolute bottom-2 right-2 z-30 rounded-md bg-black/55 p-0.5 backdrop-blur-sm" onPointerDown={(event) => event.stopPropagation()}><button type="button" className="focus-ring grid h-7 w-7 place-items-center rounded text-[var(--color-text-2)] hover:bg-white/10 hover:text-[var(--color-text)]" onClick={(event) => openNodeMenu(event, "upload", upload.reference_id)} aria-label={t("free_creation_more_actions")} title={t("free_creation_more_actions")}><MoreHorizontal className="h-4 w-4" aria-hidden /></button></div> : null}
               </div>
             </div>
@@ -2131,6 +2311,8 @@ export function FreeCreationInfiniteCanvas({
           const referenceRole = creationReferenceRole(creation);
           const statusLabel = t(`free_creation_status_${creation.status}`);
           const label = creationLabel(creation, t(`free_creation_${creation.output_type}`));
+          const upstreamCount = relationGraph.upstream(creation.creation_id).length;
+          const downstreamCount = relationGraph.downstream(creation.creation_id).length;
           const claim: FreeCreationReferenceClaim = {
             type: "creation",
             creation_id: creation.creation_id,
@@ -2179,6 +2361,8 @@ export function FreeCreationInfiniteCanvas({
               onClick={(event) => {
                 if (creation.status === "succeeded" && creation.media_path) handleReferenceShortcut(event, claim, label);
               }}
+              onPointerEnter={() => setHoveredNodeId(creation.creation_id)}
+              onPointerLeave={() => setHoveredNodeId((current) => current === creation.creation_id ? null : current)}
               onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); if (creation.status === "succeeded" && creation.media_path) onPreview?.({ kind: "creation", creation }); }}
               onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (readOnly) return; if (!selectedSet.has(creation.creation_id)) publishSelection([creation.creation_id]); const rect = surfaceRef.current?.getBoundingClientRect(); setContextMenu({ kind: "creation", nodeId: creation.creation_id, x: Math.min(Math.max(4, event.clientX - (rect?.left ?? 0)), (rect?.width ?? 260) - 196), y: Math.min(Math.max(4, event.clientY - (rect?.top ?? 0)), (rect?.height ?? 200) - 156) }); }}
             >
@@ -2202,6 +2386,7 @@ export function FreeCreationInfiniteCanvas({
                   onVideoTimeUpdate={(video) => rememberVideoPlayback(creation.creation_id, video)}
                 />
                 <CanvasNodeStatusDot status={creation.status} label={statusLabel} />
+                {selected && upstreamCount + downstreamCount > 0 ? <button type="button" className="focus-ring absolute left-2 top-2 z-30 inline-flex h-7 max-w-[170px] items-center gap-1.5 rounded-md bg-black/60 px-2 text-[10px] text-white/90 backdrop-blur-sm hover:bg-black/75" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setRelationPanelNodeId(creation.creation_id); }} aria-label={t("free_creation_relation_summary", { upstream: upstreamCount, downstream: downstreamCount })} title={t("free_creation_relation_summary", { upstream: upstreamCount, downstream: downstreamCount })}><Waypoints className="h-3 w-3 shrink-0" aria-hidden /><span className="truncate">{t("free_creation_relation_summary_short", { upstream: upstreamCount, downstream: downstreamCount })}</span></button> : null}
                 {!readOnly ? <div className="canvas-node-actions absolute bottom-2 right-2 z-30 flex items-center gap-0.5 rounded-md bg-black/55 p-0.5 backdrop-blur-sm" onPointerDown={(event) => event.stopPropagation()}>{renderActions(creation)}<button type="button" className="focus-ring grid h-8 w-8 place-items-center rounded text-[var(--color-text-2)] hover:bg-white/10 hover:text-[var(--color-text)]" onClick={(event) => openNodeMenu(event, "creation", creation.creation_id)} aria-label={t("free_creation_more_actions")} title={t("free_creation_more_actions")}><MoreHorizontal className="h-4 w-4" aria-hidden /></button></div> : null}
               </div>
             </div>
@@ -2257,6 +2442,7 @@ export function FreeCreationInfiniteCanvas({
             {onCompositeAudio && audioCompositePair ? <button type="button" role="menuitem" onClick={() => { onCompositeAudio(audioCompositePair.videoId, audioCompositePair.audioId); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><AudioLines className="h-3.5 w-3.5" aria-hidden />{t("free_creation_composite_audio")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path && creationMediaType(activeContextCreation) === "image" ? <button type="button" role="menuitem" onClick={() => { onEdit(activeContextCreation.creation_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Pencil className="h-3.5 w-3.5" aria-hidden />{t("free_creation_use_as_parent")}</button> : null}
             {activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onPreview?.({ kind: "creation", creation: activeContextCreation }); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_preview")}</button> : null}
+            {onContinue && contextSelectionIds.length < 2 && activeContextCreation.status === "succeeded" && activeContextCreation.media_path && creationMediaType(activeContextCreation) !== "audio" ? <button type="button" role="menuitem" onClick={() => { onContinue(activeContextCreation.creation_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><ArrowUpRight className="h-3.5 w-3.5" aria-hidden />{t("free_creation_continue_from_result")}</button> : null}
             {contextSelectionIds.length < 2 && activeContextCreation.status === "succeeded" && activeContextCreation.media_path ? <button type="button" role="menuitem" onClick={() => { onReference({ type: "creation", creation_id: activeContextCreation.creation_id, version: activeContextCreation.version, role: creationReferenceRole(activeContextCreation) }, activeContextCreation.prompt || t("free_creation")); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button> : null}
             {contextSelectionIds.length < 2 ? (hiddenSet.has(activeContextCreation.creation_id) ? <button type="button" role="menuitem" onClick={() => restoreCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore")}</button> : <button type="button" role="menuitem" onClick={() => hideCreation(activeContextCreation.creation_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide")}</button>) : null}
             {showBatchDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes(deletableCreationIds, selectedUploadIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete_selected", { count: contextSelectionIds.length })}</button> : null}
@@ -2268,6 +2454,7 @@ export function FreeCreationInfiniteCanvas({
             {canGroupSelection ? <button type="button" role="menuitem" onClick={groupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Group className="h-3.5 w-3.5" aria-hidden />{t("free_creation_group_selected")}</button> : null}
             {activeContextGroup ? <button type="button" role="menuitem" onClick={ungroupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Ungroup className="h-3.5 w-3.5" aria-hidden />{t("free_creation_ungroup")}</button> : null}
             {selectedReferences.length >= 2 && selectedSet.has(activeContextUpload.reference_id) ? <button type="button" role="menuitem" onClick={() => { if (onReferences) onReferences(selectedReferences); else selectedReferences.forEach(({ claim, label }) => onReference(claim, label)); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_selected_references", { count: selectedReferences.length })}</button> : null}
+            {onMerge && selectedMergeIds.length >= 2 && selectedMergeIds.includes(activeContextUpload.reference_id) ? <button type="button" role="menuitem" onClick={() => { onMerge(selectedMergeIds); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Clapperboard className="h-3.5 w-3.5" aria-hidden />{t("free_creation_merge_selected")}</button> : null}
             <button type="button" role="menuitem" onClick={() => { onPreview?.({ kind: "upload", upload: activeContextUpload }); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_preview")}</button>
             {contextSelectionIds.length < 2 ? <button type="button" role="menuitem" onClick={() => { onReference({ type: "upload", reference_id: activeContextUpload.reference_id, role: freeCreationUploadRole(activeContextUpload.media_type) }, activeContextUpload.original_filename); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Link2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_add_reference")}</button> : null}
             {contextSelectionIds.length < 2 && (hiddenUploadSet.has(activeContextUpload.reference_id) ? <button type="button" role="menuitem" onClick={() => restoreUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore")}</button> : <button type="button" role="menuitem" onClick={() => hideUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide")}</button>)}
@@ -2275,6 +2462,28 @@ export function FreeCreationInfiniteCanvas({
             {showSingleUploadDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes([], [activeContextUpload.reference_id])} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete")}</button> : null}
           </> : null}
         </div>
+      ) : null}
+
+      {relationPanelData ? (
+        <aside className="absolute right-4 top-16 z-[180] flex max-h-[min(62vh,560px)] w-[min(360px,calc(100vw-32px))] flex-col overflow-hidden rounded-md border border-[var(--color-hairline-strong)] bg-[var(--color-surface-2)]/98 shadow-2xl backdrop-blur-md" aria-labelledby="free-creation-relation-panel-title">
+          <div className="flex items-start justify-between gap-3 border-b border-[var(--color-hairline)] px-3 py-2.5">
+            <div className="min-w-0">
+              <h2 id="free-creation-relation-panel-title" className="text-xs font-semibold text-[var(--color-text)]">{t("free_creation_relation_details")}</h2>
+              <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">{relationPanelData.label}</p>
+            </div>
+            <button type="button" onClick={() => setRelationPanelNodeId(null)} className="focus-ring grid h-7 w-7 shrink-0 place-items-center rounded text-[var(--color-text-muted)] hover:bg-white/[0.05] hover:text-[var(--color-text)]" aria-label={t("free_creation_relation_close")} title={t("free_creation_relation_close")}><XCircle className="h-4 w-4" aria-hidden /></button>
+          </div>
+          <div className="min-h-0 overflow-y-auto p-2">
+            <section aria-labelledby="free-creation-relation-upstream">
+              <h3 id="free-creation-relation-upstream" className="px-2.5 py-1 text-[10px] font-medium text-[var(--color-text-muted)]">{t("free_creation_relation_upstream", { count: relationPanelData.upstream.length })}</h3>
+              {relationPanelData.upstream.length ? relationPanelData.upstream.map((relation) => renderRelationItem(relation, "upstream")) : <p className="px-2.5 py-2 text-[11px] text-[var(--color-text-muted)]">{t("free_creation_relation_no_upstream")}</p>}
+            </section>
+            <section className="mt-2 border-t border-[var(--color-hairline)] pt-2" aria-labelledby="free-creation-relation-downstream">
+              <h3 id="free-creation-relation-downstream" className="px-2.5 py-1 text-[10px] font-medium text-[var(--color-text-muted)]">{t("free_creation_relation_downstream", { count: relationPanelData.downstream.length })}</h3>
+              {relationPanelData.downstream.length ? relationPanelData.downstream.map((relation) => renderRelationItem(relation, "downstream")) : <p className="px-2.5 py-2 text-[11px] text-[var(--color-text-muted)]">{t("free_creation_relation_no_downstream")}</p>}
+            </section>
+          </div>
+        </aside>
       ) : null}
 
       {creations.length === 0 && uploads.length === 0 ? <div className="pointer-events-none absolute inset-0 grid place-items-center px-6 pb-44 text-center"><div className="max-w-sm"><LocateFixed className="mx-auto mb-3 h-5 w-5 text-[var(--color-text-muted)]" aria-hidden /><p className="text-sm text-[var(--color-text-muted)]">{t("free_creation_empty")}</p></div></div> : null}

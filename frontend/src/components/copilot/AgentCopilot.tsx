@@ -1,6 +1,21 @@
 import { useState, useRef, useCallback, useEffect, useId, type ReactNode } from "react";
 import { voidCall, voidPromise } from "@/utils/async";
-import { Bot, Send, Square, Plus, ChevronDown, Trash2, MessageSquare, PanelRightClose, Paperclip, X } from "lucide-react";
+import {
+  AudioLines,
+  Bot,
+  ChevronDown,
+  FileText,
+  Image as ImageIcon,
+  MessageSquare,
+  PanelRightClose,
+  Paperclip,
+  Plus,
+  Send,
+  Square,
+  Trash2,
+  Video,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
@@ -8,7 +23,8 @@ import { useAssistantStore } from "@/stores/assistant-store";
 import { useProjectsStore } from "@/stores/projects-store";
 import { useAppStore } from "@/stores/app-store";
 import { useAssistantSession } from "@/hooks/useAssistantSession";
-import type { ImagePayload } from "@/types";
+import type { AgentGenerationPolicy, ImagePayload } from "@/types";
+import type { FreeCreationReferenceItem } from "@/components/generation/FreeCreationReferenceInput";
 import { MAX_ATTACHED_IMAGES, useImageAttachments } from "@/hooks/useImageAttachments";
 import { GlassPopover } from "@/components/ui/GlassPopover";
 import { ContextBanner } from "./ContextBanner";
@@ -170,14 +186,18 @@ interface AgentCopilotProps {
   embedded?: boolean;
   detachedComposer?: boolean;
   footerStart?: ReactNode;
-  messageContext?: string;
+  generationPolicy?: AgentGenerationPolicy;
+  contextReferences?: FreeCreationReferenceItem[];
+  onRemoveContextReference?: (id: string) => void;
 }
 
 export function AgentCopilot({
   embedded = false,
   detachedComposer = false,
   footerStart,
-  messageContext,
+  generationPolicy,
+  contextReferences = [],
+  onRemoveContextReference,
 }: AgentCopilotProps = {}) {
   const { t } = useTranslation(["dashboard", "common"]);
   const {
@@ -196,6 +216,7 @@ export function AgentCopilot({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashMenuRef = useRef<SlashCommandMenuHandle>(null);
   const [localInput, setLocalInput] = useState("");
+  const [handoffGenerationPolicy, setHandoffGenerationPolicy] = useState<AgentGenerationPolicy | null>(null);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const {
     images: attachedImages,
@@ -211,6 +232,7 @@ export function AgentCopilot({
   const allTurns = composeAllTurns(turns, draftTurn);
   const isRunning = sessionStatus === "running";
   const inputDisabled = Boolean(pendingQuestion) || answeringQuestion || isRunning || sending;
+  const effectiveGenerationPolicy = handoffGenerationPolicy ?? generationPolicy;
   const attachDisabled = inputDisabled || isReadingImages || attachedImages.length >= MAX_ATTACHED_IMAGES;
   const inputPlaceholder = pendingQuestion
     ? t("answer_above_hint")
@@ -261,8 +283,9 @@ export function AgentCopilot({
     // 发送期间输入锁定（sending 置位）；受理成功才清空，失败保留内容供重试
     voidCall(
       sendMessage(
-        messageContext ? `${localInput.trim()}\n\n${messageContext}` : localInput.trim(),
+        localInput.trim(),
         attachedImages.length > 0 ? attachedImages : undefined,
+        effectiveGenerationPolicy,
       ).then(
         (accepted) => {
           if (!accepted) return;
@@ -283,14 +306,14 @@ export function AgentCopilot({
     sendMessage,
     invalidatePendingReaders,
     resetImages,
-    messageContext,
+    effectiveGenerationPolicy,
   ]);
 
   // 改写成功后由会话切换重建时间线（编辑态随 resetTimeline 清空）；失败保留编辑态，
   // 用户可以改完再试，错误经消息区上方的错误条呈现
   const handleSubmitEdit = useCallback((turnUuid: string, text: string, images: ImagePayload[]) => {
-    voidCall(rewriteMessage(turnUuid, text, images));
-  }, [rewriteMessage]);
+    voidCall(rewriteMessage(turnUuid, text, images, effectiveGenerationPolicy));
+  }, [effectiveGenerationPolicy, rewriteMessage]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Delegate to slash menu when open
@@ -409,14 +432,17 @@ export function AgentCopilot({
     if (!handoff) return;
 
     let active = true;
-    const outgoing = handoff.context
-      ? `${handoff.content.trim()}\n\n${handoff.context}`
-      : handoff.content.trim();
     void Promise.resolve().then(() => {
       if (!active) return;
+      setHandoffGenerationPolicy(handoff.generationPolicy ?? null);
       setLocalInput(handoff.content);
-      voidCall(sendMessage(outgoing, undefined).then((accepted) => {
-        if (!active || !accepted) return;
+      voidCall(sendMessage(handoff.content.trim(), undefined, handoff.generationPolicy).then((accepted) => {
+        if (!active) return;
+        if (!accepted) {
+          useAssistantStore.getState().queueHandoff(handoff);
+          return;
+        }
+        setHandoffGenerationPolicy(null);
         setLocalInput("");
         requestAnimationFrame(() => textareaRef.current?.focus());
       }));
@@ -608,6 +634,43 @@ export function AgentCopilot({
         className={`p-3${detachedComposer ? " agent-copilot-composer--detached" : ""}`}
         style={{ borderTop: "1px solid var(--color-hairline-soft)" }}
       >
+        {contextReferences.length > 0 ? (
+          <div
+            className="mb-2 flex max-h-[76px] flex-wrap gap-1.5 overflow-y-auto"
+            aria-label={t("free_creation_reference_content")}
+          >
+            {contextReferences.map((reference) => {
+              const ReferenceIcon = reference.mediaType === "video"
+                ? Video
+                : reference.mediaType === "audio"
+                  ? AudioLines
+                  : reference.mediaType === "text"
+                    ? FileText
+                    : ImageIcon;
+              return (
+                <span
+                  key={reference.id}
+                  className="free-reference-chip inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-md border border-[var(--color-hairline-strong)] bg-[var(--color-surface-2)] pl-2 pr-1 text-[11px] text-[var(--color-text-2)]"
+                  title={reference.name}
+                >
+                  <ReferenceIcon className="h-3.5 w-3.5 shrink-0 text-[var(--color-accent-2)]" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate">{reference.name}</span>
+                  {onRemoveContextReference ? (
+                    <button
+                      type="button"
+                      onClick={() => onRemoveContextReference(reference.id)}
+                      className="focus-ring grid h-5 w-5 shrink-0 place-items-center rounded-full text-[var(--color-text-muted)] hover:bg-[oklch(1_0_0_/_0.06)] hover:text-[var(--color-text)]"
+                      aria-label={`${t("free_creation_remove_reference")}: ${reference.name}`}
+                    >
+                      <X className="h-3 w-3" aria-hidden />
+                    </button>
+                  ) : null}
+                </span>
+              );
+            })}
+          </div>
+        ) : null}
+
         {/* Thumbnail strip */}
         {attachedImages.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">

@@ -14,7 +14,7 @@ const imageUpload: FreeCreationUpload = {
 };
 
 describe("FreeCreationPreviewDialog", () => {
-  it("lets visual media determine the dialog width within viewport limits", () => {
+  it("contains ultrawide visual media inside a bounded preview viewport", () => {
     render(
       <FreeCreationPreviewDialog
         projectName="demo"
@@ -24,9 +24,12 @@ describe("FreeCreationPreviewDialog", () => {
     );
 
     const dialog = screen.getByRole("dialog");
+    const viewport = screen.getByTestId("free-creation-visual-preview");
     const image = screen.getByRole("img", { name: "portrait.png" });
-    expect(dialog).toHaveClass("w-fit");
+    expect(dialog).toHaveClass("w-[min(92vw,1200px)]");
     expect(dialog).not.toHaveClass("w-full");
-    expect(image).toHaveClass("h-auto", "w-auto");
+    expect(viewport).toHaveClass("overflow-hidden", "items-center", "justify-center");
+    expect(viewport).not.toHaveClass("overflow-auto");
+    expect(image).toHaveClass("max-h-full", "max-w-full", "object-contain");
   });
 });

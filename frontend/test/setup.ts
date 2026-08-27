@@ -22,9 +22,13 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 
 if (typeof HTMLCanvasElement !== "undefined") {
   const contextStub = {
+    arc: vi.fn(),
+    bezierCurveTo: vi.fn(),
     beginPath: vi.fn(),
     clearRect: vi.fn(),
+    closePath: vi.fn(),
     drawImage: vi.fn(),
+    fill: vi.fn(),
     fillRect: vi.fn(),
     fillText: vi.fn(),
     lineTo: vi.fn(),

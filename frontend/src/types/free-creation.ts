@@ -21,6 +21,23 @@ export type FreeCreationReferenceClaim =
   | { type: "upload"; reference_id: string; role?: FreeCreationReferenceRole }
   | { type: "creation"; creation_id: string; version?: number; role?: FreeCreationReferenceRole };
 
+export type AgentGenerationControlMode = "auto" | "custom";
+export type AgentGenerationPreference = "image" | "video";
+
+/**
+ * Server-authored context for one Agent turn. It is transported separately
+ * from the user's text so UI preferences never appear as user-written copy.
+ */
+export interface AgentGenerationPolicy {
+  schema_version: 1;
+  mode: AgentGenerationControlMode;
+  output_type?: AgentGenerationPreference;
+  aspect_ratio?: string;
+  model?: string;
+  resolution?: string;
+  references?: FreeCreationReferenceClaim[];
+}
+
 export interface FreeCreationUpload {
   reference_id: string;
   type: "upload";

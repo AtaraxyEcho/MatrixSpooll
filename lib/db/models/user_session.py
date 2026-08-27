@@ -21,7 +21,11 @@ class UserSession(TimestampMixin, Base):
     token_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     ip_address: Mapped[str | None] = mapped_column(String, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    __table_args__ = (Index("idx_user_sessions_device", "user_id", "device_id"),)
+    __table_args__ = (
+        Index("idx_user_sessions_device", "user_id", "device_id"),
+        Index("idx_user_sessions_last_seen", "last_seen_at"),
+    )

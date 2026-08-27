@@ -152,7 +152,7 @@ describe("AgentCopilot", () => {
       which: 13,
     });
 
-    expect(sendMessage).toHaveBeenCalledWith("你好", undefined);
+    expect(sendMessage).toHaveBeenCalledWith("你好", undefined, undefined);
   });
 
   it("consumes a one-shot prefill dispatched via the assistant store's input field", async () => {
@@ -185,15 +185,21 @@ describe("AgentCopilot", () => {
     useAssistantStore.getState().queueHandoff({
       projectName: "demo",
       content: "Plan a short launch video",
-      context: "Prefer video at 16:9",
+      generationPolicy: {
+        schema_version: 1,
+        mode: "custom",
+        output_type: "video",
+        aspect_ratio: "16:9",
+      },
     });
 
     render(<AgentCopilot embedded />);
 
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith(
-        "Plan a short launch video\n\nPrefer video at 16:9",
+        "Plan a short launch video",
         undefined,
+        expect.objectContaining({ mode: "custom", output_type: "video", aspect_ratio: "16:9" }),
       );
     });
     await waitFor(() => expect(screen.getByLabelText("助手输入")).toHaveValue(""));
@@ -218,15 +224,20 @@ describe("AgentCopilot", () => {
     useAssistantStore.getState().queueHandoff({
       projectName: "demo",
       content: "Plan a launch video",
-      context: "Prefer video",
+      generationPolicy: { schema_version: 1, mode: "auto" },
     });
 
     render(<AgentCopilot embedded />);
 
     await waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith("Plan a launch video\n\nPrefer video", undefined);
+      expect(sendMessage).toHaveBeenCalledWith(
+        "Plan a launch video",
+        undefined,
+        { schema_version: 1, mode: "auto" },
+      );
     });
     expect(screen.getByLabelText("助手输入")).toHaveValue("Plan a launch video");
+    expect(useAssistantStore.getState().pendingHandoff).not.toBeNull();
   });
 
   it("detaches only the composer while leaving the conversation in its panel", () => {
@@ -260,9 +271,27 @@ describe("AgentCopilot", () => {
               videoLabel="视频"
               ratioLabel="比例"
               preference="video"
+              modelLabel="Model"
+              resolutionLabel="Resolution"
+              autoLabel="Auto"
+              customLabel="Custom"
+              smartLabel="Smart"
+              recommendedLabel="Recommended"
+              modelAutoLabel="Automatic model"
+              resolutionAutoLabel="Automatic resolution"
+              modelSearchPlaceholder="Search models"
+              noModelsLabel="No models"
+              controlMode="auto"
+              model="auto"
+              resolution="auto"
               ratio="16:9"
+              modelOptions={[]}
+              resolutionOptions={[]}
               ratioOptions={[{ value: "16:9", label: "16:9" }]}
+              onControlModeChange={vi.fn()}
               onPreferenceChange={vi.fn()}
+              onModelChange={vi.fn()}
+              onResolutionChange={vi.fn()}
               onRatioChange={vi.fn()}
               hideLabel
               placement="top"
@@ -279,6 +308,27 @@ describe("AgentCopilot", () => {
     fireEvent.click(screen.getByRole("button", { name: "Agent 参数" }));
     expect(screen.getByRole("dialog", { name: "Agent 参数" })).toBeInTheDocument();
     expect(parameterStrip).toContainElement(screen.getByRole("button", { name: "Agent 参数" }));
+  });
+
+  it("shows structured canvas references as removable context bubbles", () => {
+    const onRemove = vi.fn();
+    render(
+      <AgentCopilot
+        embedded
+        detachedComposer
+        contextReferences={[{
+          id: "creation:c_0123456789abcdef0123:1",
+          name: "launch-reference.mp4",
+          mediaType: "video",
+          role: "reference_video",
+        }]}
+        onRemoveContextReference={onRemove}
+      />,
+    );
+
+    expect(screen.getByLabelText("参考内容")).toHaveTextContent("launch-reference.mp4");
+    fireEvent.click(screen.getByRole("button", { name: "移除引用: launch-reference.mp4" }));
+    expect(onRemove).toHaveBeenCalledWith("creation:c_0123456789abcdef0123:1");
   });
 
 });

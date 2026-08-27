@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useLayoutEffect,
   type CSSProperties,
   type ReactNode,
@@ -20,6 +21,7 @@ interface FloatingParameterPopoverProps {
   className?: string;
   role: "dialog" | "listbox" | "menu";
   ariaLabel: string;
+  onRequestClose: () => void;
   children: ReactNode;
 }
 
@@ -34,8 +36,44 @@ export function FloatingParameterPopover({
   className = "",
   role,
   ariaLabel,
+  onRequestClose,
   children,
 }: FloatingParameterPopoverProps) {
+  useEffect(() => {
+    if (!open) return;
+
+    const isWithinPopover = (event: Event) => {
+      const path = event.composedPath();
+      const trigger = triggerRef.current;
+      const panel = panelRef.current;
+      return Boolean(
+        (trigger && path.includes(trigger))
+        || (panel && path.includes(panel)),
+      );
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!isWithinPopover(event)) onRequestClose();
+    };
+    const handleFocusIn = (event: FocusEvent) => {
+      if (!isWithinPopover(event)) onRequestClose();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onRequestClose();
+      triggerRef.current?.focus();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("focusin", handleFocusIn, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("focusin", handleFocusIn, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [onRequestClose, open, panelRef, triggerRef]);
+
   useLayoutEffect(() => {
     if (!open) return;
     const trigger = triggerRef.current;

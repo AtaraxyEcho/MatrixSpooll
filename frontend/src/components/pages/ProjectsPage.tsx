@@ -7,7 +7,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { errMsg, voidCall, voidPromise } from "@/utils/async";
+import { errMsg, voidCall } from "@/utils/async";
 import { formatDate } from "@/utils/date-format";
 import { Link, useLocation } from "wouter";
 import {
@@ -38,6 +38,8 @@ import { WARM_TONE } from "@/utils/severity-tone";
 import { getProjectDisplayName } from "@/utils/project-display";
 import { CreateProjectModal } from "./CreateProjectModal";
 import { UserMenu } from "@/components/layout/UserMenu";
+import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher";
+import { useAuthStore } from "@/stores/auth-store";
 import { rememberAssetLibraryReturnTo } from "./AssetLibraryPage";
 import {
   Poster,
@@ -394,7 +396,7 @@ interface TopBarProps {
   onSearch: (v: string) => void;
   onImport: () => void;
   onCreate: () => void;
-  onSettings: () => void;
+  onSettings?: () => void;
   onAssets: () => void;
   importing: boolean;
   configIncomplete: boolean;
@@ -469,7 +471,7 @@ function TopBar({
           />
           <kbd
             aria-hidden
-            className="hidden rounded border border-hairline-soft px-1.5 py-px font-mono text-[9.5px] text-text-3 sm:inline"
+            className="hidden shrink-0 items-center rounded-[5px] border border-hairline-soft bg-bg-grad-a/60 px-1.5 py-0.5 font-mono text-[10px] font-medium leading-none text-text-3 sm:inline-flex"
           >
             {t("dashboard:lobby_search_kbd")}
           </kbd>
@@ -479,18 +481,18 @@ function TopBar({
           <button
             type="button"
             onClick={onAssets}
-            className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-accent/25 bg-accent-dim px-2.5 text-[11.5px] text-text-2 transition hover:scale-105 hover:border-accent/50 hover:bg-accent-soft hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md border border-accent/25 bg-accent-dim px-2.5 text-[11.5px] text-text-2 transition hover:scale-105 hover:border-accent/50 hover:bg-accent-soft hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             title={t("assets:library_title")}
             aria-label={t("assets:library_title")}
           >
             <Library className="h-4 w-4 shrink-0" aria-hidden />
-            <span className="hidden md:inline">{t("assets:library_title")}</span>
+            <span className="hidden whitespace-nowrap lg:inline">{t("assets:library_title")}</span>
           </button>
           <button
             type="button"
             onClick={onImport}
             disabled={importing}
-            className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-hairline bg-bg-grad-a/60 px-2.5 text-[11.5px] text-text-2 transition hover:scale-105 hover:border-accent/40 hover:bg-accent-dim hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100"
+            className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md border border-hairline bg-bg-grad-a/60 px-2.5 text-[11.5px] text-text-2 transition hover:scale-105 hover:border-accent/40 hover:bg-accent-dim hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100"
             aria-label={importing ? t("dashboard:importing") : t("dashboard:import_zip")}
           >
             {importing ? (
@@ -498,7 +500,7 @@ function TopBar({
             ) : (
               <Upload className="h-4 w-4 shrink-0 text-accent-2" aria-hidden />
             )}
-            <span className="hidden lg:inline">
+            <span className="hidden whitespace-nowrap lg:inline">
               {importing ? t("dashboard:importing") : t("dashboard:import_zip")}
             </span>
           </button>
@@ -506,30 +508,31 @@ function TopBar({
             type="button"
             onClick={onCreate}
             data-onboarding={ONBOARDING_ANCHORS.lobbyCreateProject}
-            className="inline-flex h-[30px] items-center gap-1.5 rounded-md px-2.5 text-[11.5px] font-semibold transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[11.5px] font-semibold transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             style={ACCENT_BUTTON_STYLE}
             aria-label={t("dashboard:create_project")}
           >
             <Plus className="h-4 w-4 shrink-0" aria-hidden />
-            <span className="hidden sm:inline">{t("dashboard:create_project")}</span>
+            <span className="hidden whitespace-nowrap sm:inline">{t("dashboard:create_project")}</span>
           </button>
-          <button
+          {onSettings ? <button
             type="button"
             onClick={onSettings}
             data-onboarding={ONBOARDING_ANCHORS.lobbySettings}
-            className="relative inline-flex h-[30px] items-center gap-1.5 rounded-md border border-hairline bg-bg-grad-a/60 px-2.5 text-[11.5px] text-text-2 transition hover:scale-105 hover:border-accent/40 hover:bg-accent-dim hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="relative inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md border border-hairline bg-bg-grad-a/60 px-2.5 text-[11.5px] text-text-2 transition hover:scale-105 hover:border-accent/40 hover:bg-accent-dim hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             title={t("system_settings")}
             aria-label={t("system_settings")}
           >
             <Settings className="h-4 w-4 shrink-0 text-accent-2" aria-hidden />
-            <span className="hidden sm:inline">{t("system_settings")}</span>
+            <span className="hidden whitespace-nowrap sm:inline">{t("system_settings")}</span>
             {configIncomplete ? (
               <span
                 aria-label={t("config_incomplete")}
                 className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-warm-bright"
               />
             ) : null}
-          </button>
+          </button> : null}
+          <LanguageSwitcher />
           <UserMenu />
         </div>
       </div>
@@ -964,9 +967,14 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [pagination, setPagination] = useState<ProjectListPagination | null>(null);
+  const [hasLoadedProjects, setHasLoadedProjects] = useState(() => projects.length > 0);
+  const [projectsRefreshing, setProjectsRefreshing] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const hasLoadedProjectsRef = useRef(projects.length > 0);
+  const projectsRequestRef = useRef<AbortController | null>(null);
   const isConfigComplete = useConfigStatusStore((s) => s.isComplete);
+  const authRole = useAuthStore((s) => s.role);
 
   const phaseLabels = usePhaseLabels();
   const pageSize = mode === "list" ? 12 : 24;
@@ -980,7 +988,12 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
   }, [searchQuery]);
 
   const fetchProjects = useCallback(async () => {
-    setProjectsLoading(true);
+    projectsRequestRef.current?.abort();
+    const controller = new AbortController();
+    projectsRequestRef.current = controller;
+    const initialLoad = !hasLoadedProjectsRef.current;
+    if (initialLoad) setProjectsLoading(true);
+    else setProjectsRefreshing(true);
     try {
       const res = await API.listProjects({
         page: currentPage,
@@ -988,17 +1001,33 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
         query: appliedSearchQuery,
         contentMode: contentModeFilter,
         phase: phaseFilter,
+        signal: controller.signal,
       });
+      if (controller.signal.aborted) return;
       setProjects(res.projects);
       setPagination(res.pagination ?? null);
+      hasLoadedProjectsRef.current = true;
+      setHasLoadedProjects(true);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        useAppStore.getState().pushToast(t("dashboard:project_load_failed", { message: errMsg(error) }), "warning");
+      }
     } finally {
-      setProjectsLoading(false);
+      if (projectsRequestRef.current === controller) {
+        projectsRequestRef.current = null;
+        if (initialLoad) setProjectsLoading(false);
+        setProjectsRefreshing(false);
+      }
     }
-  }, [appliedSearchQuery, contentModeFilter, currentPage, pageSize, phaseFilter, setProjects, setProjectsLoading]);
+  }, [appliedSearchQuery, contentModeFilter, currentPage, pageSize, phaseFilter, setProjects, setProjectsLoading, t]);
 
   useEffect(() => {
+    // Server-backed project filters trigger a controlled list refresh when their request parameters change.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchProjects();
   }, [fetchProjects]);
+
+  useEffect(() => () => projectsRequestRef.current?.abort(), []);
 
   useEffect(() => {
     function handler(e: KeyboardEvent) {
@@ -1014,6 +1043,11 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".zip")) {
+      useAppStore.getState().pushToast(t("dashboard:import_project_zip_only"), "warning");
+      e.target.value = "";
+      return;
+    }
     await doImport(file);
     e.target.value = "";
   };
@@ -1062,6 +1096,12 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
         });
         return;
       }
+      useAppStore.getState().pushToast(
+        t("dashboard:import_success", {
+          title: getProjectDisplayName(result.project.title, t("dashboard:untitled_project")),
+        }),
+        "success",
+      );
       navigate(navigateTo);
     } catch (err) {
       const error = err as Error & {
@@ -1080,12 +1120,22 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
         return;
       }
 
-      if (error.diagnostics) {
-        setImportDiagnostics({ source: "failure", diagnostics: error.diagnostics });
+      const diagnostics = error.diagnostics;
+      const hasDiagnostics = Boolean(
+        diagnostics &&
+          (diagnostics.blocking.length > 0 ||
+            diagnostics.auto_fixable.length > 0 ||
+            diagnostics.warnings.length > 0),
+      );
+      if (hasDiagnostics && diagnostics) {
+        setImportDiagnostics({ source: "failure", diagnostics });
       } else {
         useAppStore
           .getState()
-          .pushToast(`${t("dashboard:import_failed")}: ${error.message}`, "warning");
+          .pushToast(
+            `${t("dashboard:import_failed")}: ${error.message || t("errors:unknown_error")}`,
+            "warning",
+          );
       }
     } finally {
       setImportingProject(false);
@@ -1156,7 +1206,7 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
         onSearch={setSearchQuery}
         onImport={() => importInputRef.current?.click()}
         onCreate={() => setShowCreateModal(true)}
-        onSettings={() => navigate("/app/settings")}
+        onSettings={authRole === "member" ? undefined : () => navigate("/app/settings")}
         onAssets={() => {
           rememberAssetLibraryReturnTo(window.location.pathname);
           navigate("/app/assets");
@@ -1170,7 +1220,7 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
         type="file"
         accept=".zip,application/zip"
         aria-label={t("dashboard:import_project_file_aria")}
-        onChange={voidPromise(handleImport)}
+        onChange={(event) => voidCall(handleImport(event))}
         className="hidden"
       />
 
@@ -1194,11 +1244,20 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
         />
       ) : null}
 
-      <main className="mx-auto w-full pt-2">
+      <main className="relative mx-auto w-full pt-2" aria-busy={projectsRefreshing}>
+        {projectsRefreshing ? (
+          <div
+            role="status"
+            aria-label={t("dashboard:loading_projects")}
+            className="pointer-events-none absolute inset-x-0 top-0 z-20 h-px overflow-hidden bg-hairline-soft"
+          >
+            <span className="block h-full w-full bg-accent/75 motion-safe:animate-pulse" />
+          </div>
+        ) : null}
         {/* 引导运行期间才挂，退出即卸载。放在加载/空态分支之外——首次使用时项目列表通常是空的，
             而演示卡正是那一刻最需要讲的东西。 */}
         {mode === "home" && tourActive ? <OnboardingDemoCard /> : null}
-        {projectsLoading ? (
+        {projectsLoading && !hasLoadedProjects ? (
           <div className="flex items-center justify-center px-6 py-20">
             <Loader2 className="h-6 w-6 motion-safe:animate-spin text-accent" />
             <span className="ml-2 text-text-3">{t("dashboard:loading_projects")}</span>

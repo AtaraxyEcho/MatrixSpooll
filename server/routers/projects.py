@@ -462,11 +462,14 @@ async def import_project_archive(
             "warnings": [warning.render(_t) for warning in result.warnings],
             "conflict_resolution": result.conflict_resolution,
             "diagnostics": result.diagnostics,
+            "archive_type": result.archive_type,
+            "format_version": result.format_version,
         }
     except ProjectArchiveValidationError as exc:
         return JSONResponse(
             status_code=exc.status_code,
             content={
+                "code": exc.code,
                 "detail": exc.detail.render(_t),
                 "errors": exc.render_errors(_t),
                 "warnings": exc.render_warnings(_t),

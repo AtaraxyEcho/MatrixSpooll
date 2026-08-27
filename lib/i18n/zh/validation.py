@@ -173,6 +173,8 @@ MESSAGES = {
     "arch_import_validation_failed": "导入包校验失败",
     "arch_artifact_activation_failed": "导入项目的产物状态不一致",
     "arch_not_a_zip": "上传文件不是有效的 ZIP 归档",
+    "arch_creation_bundle_not_project": "所选文件是自由创作作品包，不能恢复项目；请改用项目导出功能生成的项目 ZIP 备份",
+    "arch_format_version_unsupported": "项目备份格式版本 {version} 不受支持，当前支持版本为 {supported}",
     "arch_zip_encrypted_entry": "ZIP 包含加密条目，无法导入: {name}",
     "arch_zip_absolute_path_entry": "ZIP 包含绝对路径条目: {name}",
     "arch_zip_traversal_entry": "ZIP 包含路径穿越条目: {name}",

@@ -9,6 +9,7 @@ from lib.db.models.audit import AuditEvent
 from lib.db.models.config import ProviderConfig, SystemSetting
 from lib.db.models.credential import ProviderCredential
 from lib.db.models.custom_provider import CustomProvider, CustomProviderModel
+from lib.db.models.login_event import LoginEvent
 from lib.db.models.project import ProjectMember, ProjectRegistry
 from lib.db.models.session import AgentSession
 from lib.db.models.session_event import AgentSessionEventLogEntry
@@ -32,6 +33,7 @@ __all__ = [
     "SystemSetting",
     "User",
     "UserSession",
+    "LoginEvent",
     "ProviderCredential",
     "CustomProvider",
     "CustomProviderModel",

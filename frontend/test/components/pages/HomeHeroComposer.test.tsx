@@ -19,7 +19,7 @@ describe("HomeHeroComposer", () => {
       output_type: outputType,
       model: outputType === "video" ? "ark/video-model" : "ark/image-model",
       ratios: ["16:9", "9:16", "1:1"],
-      resolutions: outputType === "video" ? ["720p", "1080p"] : ["1.5k", "2k", "4k"],
+      resolutions: outputType === "video" ? ["720p", "1080p"] : ["512px", "1.5k", "2k", "4k"],
       durations: outputType === "video" ? [4, 5, 6, 8, 10, 12, 15] : [],
       max_reference_images: outputType === "video" ? 9 : null,
       max_reference_videos: outputType === "video" ? 0 : null,
@@ -58,18 +58,46 @@ describe("HomeHeroComposer", () => {
     fireEvent.click(screen.getByRole("button", { name: t("aspect_ratio_1_1") }));
     fireEvent.click(screen.getByRole("button", { name: "2K" }));
 
-    const widthInput = screen.getByRole("spinbutton", { name: t("home_width") });
-    const heightInput = screen.getByRole("spinbutton", { name: t("home_height") });
-    expect(widthInput).toHaveValue(2048);
-    expect(heightInput).toHaveValue(2048);
-
-    fireEvent.change(widthInput, { target: { value: "1600" } });
-    fireEvent.change(heightInput, { target: { value: "1200" } });
+    expect(screen.queryByRole("button", { name: "512PX" })).not.toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: t("home_width") })).toHaveValue(1440);
+    expect(screen.getByRole("spinbutton", { name: t("home_height") })).toHaveValue(1440);
+    expect(screen.getByRole("button", { name: t("home_image_settings") })).toHaveTextContent("1440");
     fireEvent.pointerDown(document.body);
     fireEvent.click(screen.getByRole("button", { name: t("home_image_settings") }));
-    expect(screen.getByRole("spinbutton", { name: t("home_width") })).toHaveValue(1600);
-    expect(screen.getByRole("spinbutton", { name: t("home_height") })).toHaveValue(1200);
+    expect(screen.getByRole("button", { name: "2K" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("spinbutton", { name: t("home_width") })).toHaveValue(1440);
+    expect(screen.getByRole("spinbutton", { name: t("home_height") })).toHaveValue(1440);
     expect(screen.queryByRole("button", { name: t("home_duration") })).not.toBeInTheDocument();
+  });
+
+  it("submits a manual image size after linking the other edge to the active ratio", async () => {
+    const create = vi.spyOn(API, "createFreeProject").mockResolvedValue({
+      success: true,
+      name: "manual-size-project",
+      creation_id: "c_0123456789abcdef0123",
+      task_id: "task-manual-size",
+    });
+    render(<HomeHeroComposer onCreated={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_mode") }));
+    fireEvent.click(screen.getByRole("option", { name: t("free_creation_mode_image") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("home_image_settings") }));
+    fireEvent.click(await screen.findByRole("button", { name: "2K" }));
+    const width = screen.getByRole("spinbutton", { name: t("home_width") });
+    fireEvent.change(width, { target: { value: "1600" } });
+    fireEvent.blur(width);
+
+    expect(screen.getByRole("spinbutton", { name: t("home_width") })).toHaveValue(1536);
+    expect(screen.getByRole("spinbutton", { name: t("home_height") })).toHaveValue(864);
+    fireEvent.change(screen.getByLabelText(t("home_prompt_label")), {
+      target: { value: "A clean product photograph" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("home_generate") }));
+
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      creation: expect.objectContaining({ resolution: "2k", size: "1536x864" }),
+    }));
   });
 
   it("groups video ratio, resolution, and quantity in one compact control", async () => {
@@ -85,6 +113,25 @@ describe("HomeHeroComposer", () => {
     expect(screen.getByRole("button", { name: "1080P" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "1" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: t("home_image_settings") })).not.toBeInTheDocument();
+  });
+
+  it("keeps grouped parameters open for internal clicks and closes only outside or from the trigger", async () => {
+    render(<HomeHeroComposer onCreated={vi.fn()} />);
+
+    const trigger = screen.getByRole("button", { name: t("home_video_settings") });
+    fireEvent.click(trigger);
+    const panel = screen.getByRole("dialog", { name: t("home_video_settings") });
+
+    fireEvent.pointerDown(within(panel).getByText(t("home_ratio")));
+    fireEvent.blur(trigger, { relatedTarget: null });
+    expect(screen.getByRole("dialog", { name: t("home_video_settings") })).toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("dialog", { name: t("home_video_settings") })).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("dialog", { name: t("home_video_settings") })).not.toBeInTheDocument();
   });
 
   it("orders the four primary video controls consistently", async () => {
@@ -193,6 +240,7 @@ describe("HomeHeroComposer", () => {
     fireEvent.click(screen.getByRole("button", { name: t("free_creation_mode") }));
     fireEvent.click(screen.getByRole("option", { name: t("free_creation_mode_agent") }));
     fireEvent.click(screen.getByRole("button", { name: t("free_creation_agent_parameters") }));
+    fireEvent.click(screen.getByRole("switch", { name: t("free_creation_agent_auto_mode") }));
     fireEvent.click(screen.getByRole("button", { name: t("free_creation_agent_preference_image") }));
     fireEvent.click(screen.getByRole("button", { name: t("aspect_ratio_1_1") }));
     fireEvent.change(screen.getByLabelText(t("home_prompt_label")), {
@@ -211,9 +259,208 @@ describe("HomeHeroComposer", () => {
     expect(useAssistantStore.getState().pendingHandoff).toEqual(expect.objectContaining({
       projectName: "agent-project",
       content: "Plan a short launch video",
-      context: expect.stringContaining("1:1"),
+      generationPolicy: expect.objectContaining({
+        schema_version: 1,
+        mode: "custom",
+        output_type: "image",
+        aspect_ratio: "1:1",
+      }),
     }));
     expect(onCreated).toHaveBeenCalledWith("agent-project", "agent");
+  });
+
+  it("defaults Agent model and resolution to automatic and allows manual capability-aware overrides", async () => {
+    vi.mocked(API.getModelCandidates).mockResolvedValue({
+      image: { default: ["ark/seedream-image"], buckets: {} },
+      video: { default: ["ark/seedance-video"], buckets: {} },
+      provider_names: {},
+    });
+    vi.mocked(API.getSystemConfig).mockResolvedValue({ settings: {} } as never);
+    vi.mocked(API.getFreeCreationCapabilities).mockImplementation(async ({ outputType, model }) => ({
+      output_type: outputType,
+      model: model ?? (outputType === "image" ? "ark/seedream-image" : "ark/seedance-video"),
+      ratios: ["16:9"],
+      resolutions: outputType === "image" ? ["1K", "2K"] : ["720p", "1080p"],
+      durations: outputType === "video" ? [4] : [],
+      max_reference_images: 0,
+      max_reference_videos: 0,
+      max_reference_media_count: 0,
+    }));
+    vi.spyOn(API, "createProject").mockResolvedValue({
+      success: true,
+      name: "agent-manual-project",
+      project: {} as never,
+    });
+    render(<HomeHeroComposer onCreated={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_mode") }));
+    fireEvent.click(screen.getByRole("option", { name: t("free_creation_mode_agent") }));
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_agent_parameters") }));
+
+    expect(screen.getByRole("switch", { name: t("free_creation_agent_auto_mode") })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("switch", { name: t("free_creation_agent_auto_mode") }));
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_agent_model") }));
+
+    fireEvent.change(screen.getByRole("searchbox", { name: t("free_creation_agent_model_search") }), {
+      target: { value: "seedance" },
+    });
+    fireEvent.click(await screen.findByRole("option", { name: /seedance-video/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "1080P" }));
+    fireEvent.change(screen.getByLabelText(t("home_prompt_label")), {
+      target: { value: "Create a product reveal" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("home_generate") }));
+
+    await waitFor(() => expect(useAssistantStore.getState().pendingHandoff).not.toBeNull());
+    expect(useAssistantStore.getState().pendingHandoff?.generationPolicy).toEqual(expect.objectContaining({
+      mode: "custom",
+      output_type: "video",
+      model: "ark/seedance-video",
+      resolution: "1080p",
+    }));
+  });
+
+  it("builds an automatic Agent handoff from mixed mock references without leaking manual defaults", async () => {
+    vi.mocked(API.getModelCandidates).mockResolvedValue({
+      image: { default: ["mock/image-model"], buckets: {} },
+      video: { default: ["mock/video-model"], buckets: {} },
+      provider_names: { mock: "Mock Provider" },
+    });
+    vi.mocked(API.getSystemConfig).mockResolvedValue({ settings: {} } as never);
+    vi.mocked(API.getFreeCreationCapabilities).mockImplementation(async ({ outputType }) => ({
+      output_type: outputType,
+      model: outputType === "video" ? "mock/video-model" : "mock/image-model",
+      ratios: ["16:9", "9:16"],
+      resolutions: outputType === "video" ? ["720p", "1080p"] : ["1K", "2K"],
+      durations: outputType === "video" ? [5, 10] : [],
+      max_reference_images: 4,
+      max_reference_videos: 2,
+      max_reference_media_count: 8,
+      modes: ["t2v", "reference_image", "reference_video"],
+      input_slots: [
+        { role: "reference_image", accepted_types: ["image"], max_count: 4 },
+        { role: "reference_video", accepted_types: ["video"], max_count: 2 },
+        { role: "reference_audio", accepted_types: ["audio"], max_count: 1 },
+        { role: "prompt_context", accepted_types: ["text"], max_count: 1 },
+      ],
+    }));
+    vi.spyOn(API, "createProject").mockResolvedValue({
+      success: true,
+      name: "mock-agent-project",
+      project_id: "11111111-1111-4111-8111-111111111111",
+      project: {} as never,
+    });
+    const referenceIds: Record<string, string> = {
+      "character.png": "r_11111111111111111111",
+      "motion.mp4": "r_22222222222222222222",
+      "voice.mp3": "r_33333333333333333333",
+      "story.md": "r_44444444444444444444",
+    };
+    const upload = vi.spyOn(API, "uploadFreeCreationReference").mockImplementation(async (_project, file) => ({
+      success: true,
+      reference: {
+        reference_id: referenceIds[file.name]!,
+        type: "upload",
+        original_filename: file.name,
+        media_type: file.type.startsWith("image/")
+          ? "image"
+          : file.type.startsWith("video/")
+            ? "video"
+            : file.type.startsWith("audio/") ? "audio" : "text",
+        path: `references/${file.name}`,
+        size_bytes: file.size,
+        created_at: "2026-08-27T00:00:00Z",
+      },
+      url: `/mock/${file.name}`,
+    }));
+    const onCreated = vi.fn();
+    render(<HomeHeroComposer onCreated={onCreated} />);
+
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_mode") }));
+    fireEvent.click(screen.getByRole("option", { name: t("free_creation_mode_agent") }));
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: t("free_creation_upload_reference") }),
+    ).toBeEnabled());
+    const references = [
+      new File(["image"], "character.png", { type: "image/png", lastModified: 1 }),
+      new File(["video"], "motion.mp4", { type: "video/mp4", lastModified: 2 }),
+      new File(["audio"], "voice.mp3", { type: "audio/mpeg", lastModified: 3 }),
+      new File(["# Story"], "story.md", { type: "text/markdown", lastModified: 4 }),
+    ];
+    fireEvent.change(screen.getByLabelText(t("free_creation_upload_reference"), { selector: "input" }), {
+      target: { files: references },
+    });
+    for (const reference of references) {
+      expect(screen.getByTitle(reference.name)).toBeInTheDocument();
+    }
+    fireEvent.change(screen.getByLabelText(t("home_prompt_label")), {
+      target: { value: "Use the supplied mock material to plan a launch clip" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("home_generate") }));
+
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(4));
+    expect(useAssistantStore.getState().pendingHandoff).toEqual({
+      projectName: "11111111-1111-4111-8111-111111111111",
+      content: "Use the supplied mock material to plan a launch clip",
+      generationPolicy: {
+        schema_version: 1,
+        mode: "auto",
+        references: [
+          { type: "upload", reference_id: "r_11111111111111111111", role: "reference_image" },
+          { type: "upload", reference_id: "r_22222222222222222222", role: "reference_video" },
+          { type: "upload", reference_id: "r_33333333333333333333", role: "reference_audio" },
+          { type: "upload", reference_id: "r_44444444444444444444", role: "prompt_context" },
+        ],
+      },
+    });
+    expect(onCreated).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", "agent");
+  });
+
+  it("recomputes image dimensions when a model narrows its resolution capabilities", async () => {
+    vi.mocked(API.getModelCandidates).mockResolvedValue({
+      image: { default: ["ark/image-wide", "ark/image-small"], buckets: {} },
+      video: { default: [], buckets: {} },
+      provider_names: {},
+    });
+    vi.mocked(API.getSystemConfig).mockResolvedValue({ settings: {} } as never);
+    vi.mocked(API.getFreeCreationCapabilities).mockImplementation(async ({ outputType, model }) => ({
+      output_type: outputType,
+      model: model ?? "ark/image-wide",
+      ratios: ["16:9"],
+      resolutions: model === "ark/image-small" ? ["1K"] : ["1K", "2K"],
+      durations: outputType === "video" ? [4] : [],
+      max_reference_images: null,
+      max_reference_videos: null,
+      max_reference_media_count: null,
+    }));
+    const create = vi.spyOn(API, "createFreeProject").mockResolvedValue({
+      success: true,
+      name: "small-image-project",
+      creation_id: "c_0123456789abcdef0123",
+      task_id: "task-1",
+    });
+    render(<HomeHeroComposer onCreated={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_mode") }));
+    fireEvent.click(screen.getByRole("option", { name: t("free_creation_mode_image") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("home_model") }));
+    fireEvent.click(await screen.findByRole("option", { name: "image-wide" }));
+    fireEvent.click(screen.getByRole("button", { name: t("home_image_settings") }));
+    fireEvent.click(await screen.findByRole("button", { name: "2K" }));
+    fireEvent.click(screen.getByRole("button", { name: t("home_image_settings") }));
+
+    fireEvent.click(screen.getByRole("button", { name: t("home_model") }));
+    fireEvent.click(await screen.findByRole("option", { name: "image-small" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: t("home_image_settings") })).toHaveTextContent("1K"));
+    expect(screen.getByRole("button", { name: t("home_image_settings") })).toHaveTextContent("1792 × 1008");
+
+    fireEvent.change(screen.getByLabelText(t("home_prompt_label")), { target: { value: "Small capability image" } });
+    fireEvent.click(screen.getByRole("button", { name: t("home_generate") }));
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      creation: expect.objectContaining({ resolution: "1K" }),
+    }));
+    expect(create.mock.calls[0]?.[0].creation).not.toHaveProperty("size");
   });
 
   it("uploads homepage references before creating the first free task", async () => {

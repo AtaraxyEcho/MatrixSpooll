@@ -73,6 +73,7 @@ import type {
   FreeCreationCanvasPatch,
   FreeCreationCanvasState,
   FreeCreationUpload,
+  AgentGenerationPolicy,
   FreeStoryboardPlan,
   FreeStoryboardShot,
   FreeStoryboardBatchResult,
@@ -85,6 +86,8 @@ import type {
   WorkflowStatus,
   AdminAuditEventFilters,
   AdminAuditEventsResponse,
+  AdminLoginEventFilters,
+  AdminLoginEventsResponse,
   AdminSessionsResponse,
   AdminTaskListResponse,
   AdminTaskResponse,
@@ -342,6 +345,7 @@ export class ConflictError extends Error {
 
 /** Error payload from the import project endpoint (extends ErrorResponse with import-specific fields). */
 interface ImportErrorPayload {
+  code?: string;
   detail?: string | { msg?: string }[];
   errors?: string[];
   warnings?: string[];
@@ -488,13 +492,16 @@ function normalizeDiagnosticsBucket(value: unknown): { code: string; message: st
     }));
 }
 
-function normalizeImportFailureDiagnostics(value: unknown): ImportFailureDiagnostics {
+function normalizeImportFailureDiagnostics(value: unknown): ImportFailureDiagnostics | undefined {
   const payload = (value && typeof value === "object") ? value as Record<string, unknown> : {};
-  return {
+  const diagnostics = {
     blocking: normalizeDiagnosticsBucket(payload.blocking),
     auto_fixable: normalizeDiagnosticsBucket(payload.auto_fixable),
     warnings: normalizeDiagnosticsBucket(payload.warnings),
   };
+  return diagnostics.blocking.length || diagnostics.auto_fixable.length || diagnostics.warnings.length
+    ? diagnostics
+    : undefined;
 }
 
 function normalizeExportDiagnostics(value: unknown): ExportDiagnostics {
@@ -944,6 +951,18 @@ class API {
     return this.request(`/admin/sessions?${query.toString()}`);
   }
 
+  static async listAdminLoginEvents(
+    filters: AdminLoginEventFilters = {},
+  ): Promise<AdminLoginEventsResponse> {
+    const query = new URLSearchParams({
+      page: String(filters.page ?? 1),
+      page_size: String(filters.pageSize ?? 10),
+    });
+    if (filters.username?.trim()) query.set("username", filters.username.trim());
+    if (filters.outcome) query.set("outcome", filters.outcome);
+    return this.request(`/admin/login-events?${query.toString()}`);
+  }
+
   static async revokeAdminSession(sessionId: string): Promise<void> {
     await this.request(`/admin/sessions/${encodeURIComponent(sessionId)}/revoke`, { method: "POST" });
   }
@@ -1001,6 +1020,7 @@ class API {
     query?: string;
     contentMode?: string;
     phase?: string;
+    signal?: AbortSignal;
   } = {}): Promise<ProjectListResponse> {
     const params = new URLSearchParams();
     if (filters.page != null) params.set("page", String(filters.page));
@@ -1009,7 +1029,8 @@ class API {
     if (filters.contentMode && filters.contentMode !== "all") params.set("content_mode", filters.contentMode);
     if (filters.phase && filters.phase !== "all") params.set("phase", filters.phase);
     const suffix = params.toString();
-    return this.request(`/projects${suffix ? `?${suffix}` : ""}`);
+    const path = `/projects${suffix ? `?${suffix}` : ""}`;
+    return filters.signal ? this.request(path, { signal: filters.signal }) : this.request(path);
   }
 
   static async createProject(
@@ -1416,16 +1437,12 @@ class API {
 
   static async mergeFreeCreationVideos(
     projectName: string,
-    creationIds: string[],
-  ): Promise<Blob> {
-    const url = `/projects/${encodeURIComponent(projectName)}/free-creation-merge`;
-    const response = await fetch(`${API_BASE}${url}`, withAuth(url, {
+    itemIds: string[],
+  ): Promise<{ success: boolean; task_id: string; creation_id: string; status: string }> {
+    return this.request(`/projects/${encodeURIComponent(projectName)}/free-creation-merge`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ creation_ids: creationIds }),
-    }));
-    await throwIfNotOk(response, `HTTP ${response.status}`);
-    return response.blob();
+      body: JSON.stringify({ item_ids: itemIds }),
+    });
   }
 
   static async compositeFreeCreationAudio(
@@ -1632,6 +1649,7 @@ class API {
       const error = new Error(
         typeof payload.detail === "string" ? payload.detail : "导入失败"
       ) as Error & {
+        code?: string;
         status?: number;
         detail?: string;
         errors?: string[];
@@ -1639,6 +1657,9 @@ class API {
         conflict_project_name?: string;
         diagnostics?: ImportFailureDiagnostics;
       };
+      if (typeof payload.code === "string") {
+        error.code = payload.code;
+      }
       error.status = response.status;
       error.detail = typeof payload.detail === "string" ? payload.detail : "导入失败";
       error.errors = Array.isArray(payload.errors) ? payload.errors : [];
@@ -1646,7 +1667,10 @@ class API {
       if (typeof payload.conflict_project_name === "string") {
         error.conflict_project_name = payload.conflict_project_name;
       }
-      error.diagnostics = normalizeImportFailureDiagnostics(payload.diagnostics);
+      const diagnostics = normalizeImportFailureDiagnostics(payload.diagnostics);
+      if (diagnostics) {
+        error.diagnostics = diagnostics;
+      }
       throw error;
     }
 
@@ -2921,7 +2945,8 @@ class API {
     content: string,
     sessionId?: string | null,
     images?: ImagePayload[],
-    clientKey?: string
+    clientKey?: string,
+    generationPolicy?: AgentGenerationPolicy,
   ): Promise<{ session_id: string; status: string; entry: TimelineEntry | null }> {
     return this.request(`${this.assistantBase(projectName)}/sessions/send`, {
       method: "POST",
@@ -2930,6 +2955,7 @@ class API {
         session_id: sessionId || undefined,
         images: images || [],
         client_key: clientKey || undefined,
+        generation_policy: generationPolicy,
       }),
     });
   }
@@ -2949,7 +2975,8 @@ class API {
     anchorEntryUuid: string,
     content: string,
     images?: ImagePayload[],
-    clientKey?: string
+    clientKey?: string,
+    generationPolicy?: AgentGenerationPolicy,
   ): Promise<{ status: string; session_id: string; origin_session_id: string | null; entry: TimelineEntry | null }> {
     return this.request(
       `${this.assistantBase(projectName)}/sessions/${encodeURIComponent(sessionId)}/rewrite`,
@@ -2960,6 +2987,7 @@ class API {
           content,
           images: images || [],
           client_key: clientKey || undefined,
+          generation_policy: generationPolicy,
         }),
       }
     );

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  AgentGenerationPolicy,
   DraftDeltaPayload,
   DraftState,
   FailureObservation,
@@ -26,7 +27,33 @@ export type StartupFailureOrigin = "send" | "rewrite";
 export interface AssistantHandoff {
   projectName: string;
   content: string;
-  context?: string;
+  generationPolicy?: AgentGenerationPolicy;
+}
+
+const ASSISTANT_HANDOFF_KEY = "matrixspooll:assistantHandoff";
+
+function persistHandoff(handoff: AssistantHandoff | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (handoff) window.sessionStorage.setItem(ASSISTANT_HANDOFF_KEY, JSON.stringify(handoff));
+    else window.sessionStorage.removeItem(ASSISTANT_HANDOFF_KEY);
+  } catch {
+    // In-memory delivery remains available when session storage is blocked.
+  }
+}
+
+function readPersistedHandoff(): AssistantHandoff | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(ASSISTANT_HANDOFF_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<AssistantHandoff>;
+    return typeof value.projectName === "string" && typeof value.content === "string"
+      ? value as AssistantHandoff
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 interface AssistantState {
@@ -267,10 +294,14 @@ export const useAssistantStore = create<AssistantState>((set, get) => {
 
     setMessagesLoading: (loading) => set({ messagesLoading: loading }),
     setInput: (input) => set({ input }),
-    queueHandoff: (handoff) => set({ pendingHandoff: handoff }),
+    queueHandoff: (handoff) => {
+      persistHandoff(handoff);
+      set({ pendingHandoff: handoff });
+    },
     consumeHandoff: (projectName) => {
-      const handoff = get().pendingHandoff;
+      const handoff = get().pendingHandoff ?? readPersistedHandoff();
       if (!handoff || handoff.projectName !== projectName) return null;
+      persistHandoff(null);
       set({ pendingHandoff: null });
       return handoff;
     },

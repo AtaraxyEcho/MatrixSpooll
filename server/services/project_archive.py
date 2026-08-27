@@ -106,6 +106,14 @@ class ArchiveMember:
 
 
 @dataclass(frozen=True)
+class ArchiveInspection:
+    """Classification of an uploaded ZIP before project extraction."""
+
+    archive_type: str
+    format_version: int | None = None
+
+
+@dataclass(frozen=True)
 class ArchiveDiagnostic:
     """一条归档诊断。``message`` 是 locale-neutral 的结构化消息，渲染发生在消费边界。"""
 
@@ -196,6 +204,8 @@ class ProjectImportResult:
     warnings: list[ValidationMessage]
     conflict_resolution: str
     diagnostics: dict[str, list[dict[str, Any]]]
+    archive_type: str
+    format_version: int | None
 
 
 class ProjectArchiveValidationError(ValueError):
@@ -211,6 +221,7 @@ class ProjectArchiveValidationError(ValueError):
         warnings: list[ValidationMessage] | None = None,
         diagnostics: ArchiveDiagnostics | None = None,
         extra: dict[str, Any] | None = None,
+        code: str | None = None,
     ):
         super().__init__(detail.render())
         self.detail = detail
@@ -219,6 +230,7 @@ class ProjectArchiveValidationError(ValueError):
         self.warnings = warnings or []
         self.diagnostics = diagnostics
         self.extra = dict(extra or {})
+        self.code = code or detail.key
 
     def render_errors(self, translate: Callable[..., str] | None = None) -> list[str]:
         return [error.render(translate) for error in self.errors]
@@ -229,7 +241,10 @@ class ProjectArchiveValidationError(ValueError):
     def diagnostics_payload(self, translate: Callable[..., str] | None = None) -> dict[str, list[dict[str, Any]]]:
         """导入失败响应里的诊断三桶；无诊断来源时给空桶，保持响应形状恒定。"""
         if self.diagnostics is None:
-            return {"blocking": [], "auto_fixable": [], "warnings": []}
+            diagnostics = ArchiveDiagnostics()
+            for message in self.errors or [self.detail]:
+                diagnostics.add("blocking", self.code, message)
+            return diagnostics.to_import_error_payload(translate)
         return self.diagnostics.to_import_error_payload(translate)
 
 
@@ -316,7 +331,7 @@ class ProjectArchiveService:
             if temp_dir is not None:
                 temp_dir.cleanup()
 
-        download_name = f"{project_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+        download_name = f"{project_name}-project-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
         return archive_path, download_name
 
     @staticmethod
@@ -353,6 +368,44 @@ class ProjectArchiveService:
         try:
             with zipfile.ZipFile(archive_path) as archive:
                 members = self._scan_archive_members(archive)
+                inspection = self._inspect_archive(archive, members)
+                if inspection.archive_type == "creation_bundle":
+                    message = ValidationMessage("arch_creation_bundle_not_project")
+                    diagnostics = ArchiveDiagnostics()
+                    diagnostics.add("blocking", "project_archive_type_unsupported", message)
+                    raise ProjectArchiveValidationError(
+                        message,
+                        status_code=422,
+                        errors=[message],
+                        diagnostics=diagnostics,
+                        code="project_archive_type_unsupported",
+                        extra={
+                            "archive_type": inspection.archive_type,
+                            "expected_archive_type": "project_archive",
+                        },
+                    )
+                if (
+                    inspection.archive_type == "project_archive_v2"
+                    and inspection.format_version != ARCHIVE_FORMAT_VERSION
+                ):
+                    message = ValidationMessage(
+                        "arch_format_version_unsupported",
+                        {"version": inspection.format_version, "supported": ARCHIVE_FORMAT_VERSION},
+                    )
+                    diagnostics = ArchiveDiagnostics()
+                    diagnostics.add("blocking", "project_archive_version_unsupported", message)
+                    raise ProjectArchiveValidationError(
+                        message,
+                        status_code=422,
+                        errors=[message],
+                        diagnostics=diagnostics,
+                        code="project_archive_version_unsupported",
+                        extra={
+                            "archive_type": inspection.archive_type,
+                            "format_version": inspection.format_version,
+                            "supported_format_version": ARCHIVE_FORMAT_VERSION,
+                        },
+                    )
                 root_parts, manifest = self._locate_project_root(archive, members)
 
                 with tempfile.TemporaryDirectory(prefix="matrixspooll-import-") as temp_dir:
@@ -452,12 +505,40 @@ class ProjectArchiveService:
                         warnings=diagnostics.warning_messages(),
                         conflict_resolution=conflict_resolution,
                         diagnostics=diagnostics.to_import_success_payload(translate),
+                        archive_type=inspection.archive_type,
+                        format_version=inspection.format_version,
                     )
         except zipfile.BadZipFile as exc:
             raise ProjectArchiveValidationError(
                 ValidationMessage("arch_not_a_zip"),
                 errors=[ValidationMessage.literal(str(exc))],
+                code="project_archive_not_zip",
             ) from exc
+
+    def _inspect_archive(self, archive: zipfile.ZipFile, members: list[ArchiveMember]) -> ArchiveInspection:
+        """Classify an archive from its central directory before extraction."""
+        visible = [member for member in members if not self._is_hidden_member(member.parts)]
+        official = [member for member in visible if member.parts[-1] == ARCHIVE_MANIFEST_NAME]
+        legacy = [member for member in visible if member.parts[-1] in LEGACY_ARCHIVE_MANIFEST_NAMES]
+        project_json = [member for member in visible if member.parts[-1] == self.project_manager.PROJECT_FILE]
+        creation_manifests = [member for member in visible if member.parts[-1] == "manifest.json"]
+
+        if official or legacy:
+            marker = (official or legacy)[0]
+            manifest = self._load_member_json(archive, marker, marker.parts[-1])
+            version = manifest.get("format_version") if isinstance(manifest, dict) else None
+            return ArchiveInspection(
+                "project_archive_v2" if official else "project_archive_legacy",
+                version if isinstance(version, int) else None,
+            )
+        if creation_manifests and not project_json:
+            for marker in creation_manifests:
+                payload = self._load_member_json(archive, marker, "manifest.json")
+                if isinstance(payload, dict) and isinstance(payload.get("creations"), list):
+                    return ArchiveInspection("creation_bundle")
+        if len(project_json) == 1:
+            return ArchiveInspection("project_archive_legacy")
+        return ArchiveInspection("unknown_zip")
 
     def _prepare_export_snapshot(
         self,
