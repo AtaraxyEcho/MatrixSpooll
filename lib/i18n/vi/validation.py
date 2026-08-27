@@ -200,6 +200,8 @@ MESSAGES = {
     "arch_import_validation_failed": "Kiểm tra gói nhập thất bại",
     "arch_artifact_activation_failed": "Trạng thái sản phẩm của dự án nhập không nhất quán",
     "arch_not_a_zip": "Tệp tải lên không phải gói ZIP hợp lệ",
+    "arch_creation_bundle_not_project": "Đây là gói tác phẩm sáng tạo tự do, không phải bản sao lưu dự án. Hãy chọn ZIP được tạo bởi chức năng xuất dự án.",
+    "arch_format_version_unsupported": "Phiên bản định dạng sao lưu dự án {version} không được hỗ trợ; bản phát hành này hỗ trợ phiên bản {supported}.",
     "arch_zip_encrypted_entry": "ZIP chứa mục đã mã hóa nên không thể nhập: {name}",
     "arch_zip_absolute_path_entry": "ZIP chứa mục có đường dẫn tuyệt đối: {name}",
     "arch_zip_traversal_entry": "ZIP chứa mục vượt cấp thư mục: {name}",

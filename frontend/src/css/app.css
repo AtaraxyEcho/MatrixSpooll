@@ -94,9 +94,9 @@ body {
 
 .app-lobby-topbar {
     display: grid;
-    grid-template-columns: auto minmax(220px, 420px) minmax(0, 1fr);
+    grid-template-columns: auto minmax(160px, 400px) minmax(0, 1fr);
     align-items: center;
-    gap: 18px;
+    gap: 14px;
     min-height: var(--app-topbar-height);
 }
 
@@ -116,7 +116,7 @@ body {
     min-width: 0;
     align-items: center;
     justify-content: flex-end;
-    gap: 18px;
+    gap: 12px;
 }
 
 .app-settings-topbar {
@@ -472,7 +472,214 @@ body {
 }
 
 .home-agent-parameters__popover {
-    width: min(320px, calc(100vw - 32px));
+    width: min(360px, calc(100vw - 32px));
+    gap: 0;
+    padding: 10px;
+    overflow: visible;
+}
+
+.home-agent-preference-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 2px 2px 11px;
+    border-bottom: 1px solid var(--color-hairline-soft);
+}
+
+.home-agent-preference-header > div {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+}
+
+.home-agent-preference-header strong {
+    color: var(--color-text);
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.home-agent-preference-header span {
+    color: var(--color-text-4);
+    font-size: 10px;
+}
+
+.home-agent-mode-switch {
+    position: relative;
+    width: 34px;
+    height: 19px;
+    flex: 0 0 auto;
+    border: 1px solid var(--color-hairline-strong);
+    border-radius: 999px;
+    background: oklch(0.24 0.01 265);
+    padding: 0;
+    transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.home-agent-mode-switch > span {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--color-text-3);
+    transition: transform 140ms ease, background-color 140ms ease;
+}
+
+.home-agent-mode-switch[aria-checked="true"] {
+    border-color: var(--color-accent);
+    background: var(--color-accent-dim);
+}
+
+.home-agent-mode-switch[aria-checked="true"] > span {
+    background: var(--color-accent-2);
+    transform: translateX(15px);
+}
+
+.home-agent-preference-fields {
+    display: grid;
+    gap: 12px;
+    padding-top: 12px;
+    transition: opacity 140ms ease;
+}
+
+.home-agent-preference-fields.is-disabled {
+    opacity: 0.42;
+}
+
+.home-agent-preference-fields fieldset:disabled {
+    pointer-events: none;
+}
+
+.home-agent-model-field {
+    display: flex;
+    width: 100%;
+    min-height: 38px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border: 1px solid var(--color-hairline-strong);
+    border-radius: 7px;
+    background: oklch(0.16 0.009 265 / 0.92);
+    color: var(--color-text-2);
+    padding: 8px 10px;
+    font-size: 11px;
+    text-align: left;
+}
+
+.home-agent-model-field > span {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 7px;
+}
+
+.home-agent-model-field > svg {
+    flex: 0 0 auto;
+    transition: transform 140ms ease;
+}
+
+.home-agent-model-field > svg.is-open {
+    transform: rotate(180deg);
+}
+
+.home-agent-model-field:hover,
+.home-agent-model-field:focus-visible {
+    border-color: var(--color-accent);
+    color: var(--color-text);
+    outline: none;
+}
+
+.home-agent-model-picker {
+    position: fixed;
+    z-index: 1100;
+    visibility: hidden;
+    max-height: min(430px, calc(100vh - 24px));
+    overflow: hidden;
+    border: 1px solid var(--color-hairline-strong);
+    border-radius: 8px;
+    background: oklch(0.145 0.009 265 / 0.99);
+    padding: 9px;
+    box-shadow: 0 22px 48px -24px oklch(0 0 0 / 0.92);
+    backdrop-filter: blur(14px);
+}
+
+.home-agent-auto-option,
+.home-agent-model-option {
+    display: flex;
+    width: 100%;
+    min-height: 34px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border: 1px solid var(--color-hairline-soft);
+    border-radius: 7px;
+    background: oklch(0.17 0.009 265 / 0.72);
+    color: var(--color-text-2);
+    padding: 7px 9px;
+    font-size: 11px;
+    text-align: left;
+    transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.home-agent-model-option > span {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.home-agent-model-option strong,
+.home-agent-model-option small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.home-agent-model-option strong {
+    color: inherit;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.home-agent-model-option small {
+    color: var(--color-text-4);
+    font-size: 9px;
+}
+
+.home-agent-auto-option {
+    justify-content: flex-start;
+}
+
+.home-agent-auto-option:hover,
+.home-agent-auto-option:focus-visible,
+.home-agent-model-option:hover,
+.home-agent-model-option:focus-visible {
+    border-color: var(--color-accent);
+    color: var(--color-text);
+    outline: none;
+}
+
+.home-agent-auto-option[aria-pressed="true"],
+.home-agent-model-option[aria-pressed="true"],
+.home-agent-model-option[aria-selected="true"] {
+    border-color: var(--color-accent);
+    background: var(--color-accent-dim);
+    color: var(--color-text);
+}
+
+.home-agent-model-search {
+    min-width: 0;
+    margin-top: 7px;
+}
+
+.home-agent-model-options {
+    display: grid;
+    max-height: min(350px, calc(100vh - 110px));
+    gap: 5px;
+    margin-top: 6px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .home-param-label {
@@ -873,13 +1080,22 @@ body {
     right: auto;
     bottom: 16px;
     left: 50%;
-    width: min(920px, calc(100vw - 24px));
+    width: clamp(360px, calc(100vw - 24px), 820px);
     border: 1px solid var(--color-hairline-strong);
-    border-radius: 8px;
+    border-radius: 10px;
     background: oklch(0.17 0.011 265 / 0.96);
-    box-shadow: 0 16px 36px -20px oklch(0 0 0 / 0.92);
+    box-shadow: 0 12px 28px -16px oklch(0 0 0 / 0.55), 0 2px 8px -4px oklch(0 0 0 / 0.35);
     backdrop-filter: blur(12px);
     transform: translateX(-50%);
+}
+
+/* The free canvas composer is anchored to the viewport bottom, so its
+   width follows the viewport with min/max clamp boundaries. */
+.free-creation-composer {
+    width: clamp(360px, calc(100vw - 24px), 820px);
+}
+.free-creation-composer--collapsed {
+    width: clamp(280px, calc(100vw - 24px), 460px);
 }
 
 /* The free canvas composer is anchored to the viewport bottom, so its

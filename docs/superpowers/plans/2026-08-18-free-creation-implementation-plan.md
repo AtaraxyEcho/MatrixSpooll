@@ -146,7 +146,7 @@
 
 - [x] 增加 `free_image`、`free_video` 和 `free_edit` 任务类型，复用 GenerationQueue 的排队、取消和重试能力；自由视频重启恢复仍待 checkpoint 支持。
 - [x] 图片任务解析 image lane；视频任务根据参考素材选择 T2V 或 R2V，不为视频任务无条件解析 image lane。
-- [x] 编辑任务根据父产物媒体类型选择 image 或 video lane，并记录 `parent_creation_id`；视频父产物作为视频参考输入，仅在模型声明视频引用能力时放行。
+- [x] 编辑任务只接受图片父产物并走 image lane，同时记录 `parent_creation_id`；视频结果可作为新视频请求的结构化参考，但不视为视频编辑。
 - [x] 通过 `GenerationContext` 一次解析实际 provider、model、resolution 和能力；禁止任务执行器重新读取另一套项目默认值。
 - [ ] provider 调用成功后，在同一正式提交边界写入 `creations/` 文件和 `artifact_manifest` 条目；当前已登记共享清单并补偿取消竞争，但文件、清单与状态 JSON 尚非单一原子事务。
 - [x] 任务 payload 保存原始请求和执行事实摘要，但不把完整聊天 transcript 塞入任务记录。
@@ -178,12 +178,12 @@ The homepage composer now performs lane/model/resolution preflight where the sel
 - [x] 创建向导增加第四种内容模式“自由创作”。选中后隐藏 source kind、target duration、speech rate、generation route 和 grid 控件。
 - [ ] 仍允许配置项目默认风格、默认模型和默认比例；自由项目增加默认媒体类型（图片/视频）但不锁定每次请求。
 - [ ] `FreeCreationCanvas` 提供：聊天输入、图片/视频/音频参考上传、图片/视频分段控制、比例、清晰度、视频时长、原文直送/提示词增强、生成按钮。
-- [x] 结果流显示任务状态、失败原因、重试、下载和“基于此版本继续编辑”。
+- [x] 结果流显示任务状态、失败原因、重试和下载；图片结果支持派生编辑，图片或视频结果支持带引用创建新作品。
 - [x] `StudioCanvasRouter` 在项目根路径将自由项目导向自由画布；剧集 URL 对自由项目不生成空壳页面。
 - [ ] `AgentCopilot` 的会话能力在自由项目继续复用，但自由画布负责承载媒体结果，不把结果埋在右侧聊天面板。
 - [x] 所有新增文本同步 `zh/en/vi` 翻译；错误提示也走现有 Translator/i18n 约束。
 
-**Exit criteria:** 用户可以从创建项目到输入 prompt、看到任务进度、查看生成结果、基于上一版继续编辑，全程不经过固定工作流页面。
+**Exit criteria:** 用户可以从创建项目到输入 prompt、看到任务进度、查看生成结果，并基于上一版图片派生编辑或基于已有结果创建新作品，全程不经过固定工作流页面。
 
 ## Phase 5: Make aspect ratios capability-driven
 
@@ -219,7 +219,7 @@ The homepage composer now performs lane/model/resolution preflight where the sel
 - 自由项目的 `full` 与 `current` 官方归档均可往返保留媒体、任务元数据和共享产物清单；排队、失败等尚无媒体的记录只作为任务证据保留，不会伪装成正式产物。
 - 自由图片、视频和编辑结果复用 `VersionManager`，结果卡可只读查看和下载历史版本；图片编辑延迟到父子关系写入后再一次性提交成功状态。
 - 直连接口当前只接受 `prompt_mode=original`，提示词原文直接进入媒体模型。`enhance` 在真正接入文本模型改写前不会暴露为可用能力。
-- Web 端已将自由项目路由到独立无限画布，支持输出类型、提示词、项目内图片/音频/视频参考路径、能力驱动的比例/分辨率/时长、状态轮询、预览、取消、重试、下载，以及基于图片或视频结果继续编辑。
+- Web 端已将自由项目路由到独立无限画布，支持输出类型、提示词、项目内图片/音频/视频参考路径、能力驱动的比例/分辨率/时长、状态轮询、预览、取消、重试、下载、图片派生编辑，以及基于图片或视频结果创建带引用的新作品。
 - Ark Seedance 与 DashScope `wan2.7-r2v` 已登记可核验的比例能力并在入队前拒绝不支持的比例；WAN 2.7 支持 `.mp4`/`.mov` 视频参考，图片与视频合计上限为 5。Ark 当前只接受 URL/资产 ID 形态的视频引用，项目内本地视频不会被伪装成支持。
 - 创建向导、项目设置与画幅容器已支持 `9:16`、`16:9`、`1:1`、`4:3`、`3:4`、`21:9`，后端对任意正整数 `width:height` 做严格语法校验，不再把新比例静默收窄到横屏或竖屏。
 - 默认产品名称、Web/PWA 入口、README、文档站配置和活动 SVG 标志已迁移为 MatrixSpooll；Git 远端已连接 `git@github.com:MockMine/MatrixSpooll.git`。内部 `MATRIXSPOOLL_*`、数据目录、旧容器名和历史协议继续保留兼容。
@@ -228,7 +228,7 @@ The homepage composer now performs lane/model/resolution preflight where the sel
 
 - 尚未登记 `supported_aspect_ratios` 的其他 provider/model 不会在自由视频入口中开放比例选择或入队；需先在其 backend 真相源登记并测试，不得用 Ark/WAN 的白名单代替。
 - 成本归属键、单产物删除一致性、导入时的请求摘要重算，以及文件、清单和状态 JSON 的原子提交；归档/导入基本往返与内容 hash 校验已经完成。
-- 独立“视频编辑”供应商接口尚未抽象；当前视频父产物编辑按 R2V 语义进入视频 lane，因此仅对声明视频引用能力的模型可用，不把普通 T2V/I2V 模型伪装成视频编辑模型。
+- 独立“视频编辑”供应商接口尚未抽象；当前 API 明确拒绝视频父产物的 `edit` 请求。视频结果只能作为模型能力允许的结构化参考创建新作品，不把普通 T2V/I2V/R2V 请求伪装成视频编辑。
 - 自由创作 MCP 工具、聊天入口自动工具调用、文本提示词增强，以及视频任务重启后的 provider checkpoint 恢复。
 - 浏览器上传参考素材和所有旧 raster 图标的位图替换；当前界面使用项目内相对路径，活动入口使用新 SVG，旧位图暂留兼容。
 
@@ -245,7 +245,7 @@ The homepage composer now performs lane/model/resolution preflight where the sel
 - [x] 型号时长：缺省值、可选档位和最大值来自所选型号能力，不设置自由创作全局最大秒数。
 - [x] 画布与引用：持久化视口/节点位置/隐藏集合，上传素材和既有产物通过结构化引用入队。
 - [x] 作品导出：按所选、请求组或全部范围导出清单中正式声明的已完成产物。
-- [x] 归档/导入：自由产物可在 `full`/`current` 范围往返，固定项目归档保持兼容。
+- [x] 归档/导入：完整项目备份包含自由产物并可往返恢复；`full`/`current` 作品 ZIP 仅用于媒体交付，不作为项目导入格式。项目导入会识别作品包并返回明确的类型错误。
 
 ### Frontend
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
 
@@ -15,12 +15,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from lib.db import get_async_session
 from lib.db.base import DEFAULT_USER_ID, utc_now
 from lib.db.models.audit import AuditEvent
+from lib.db.models.login_event import LoginEvent
 from lib.db.models.project import ProjectRegistry
 from lib.db.models.user import User
 from lib.db.models.user_session import UserSession
 from lib.generation_queue import get_generation_queue
 from lib.i18n import Translator
-from server.auth import AdminUser, generate_password, hash_password, revoke_all_user_sessions
+from server.auth import (
+    SESSION_ONLINE_WINDOW_SECONDS,
+    AdminUser,
+    generate_password,
+    hash_password,
+    revoke_all_user_sessions,
+)
 from server.routers.tasks import _localize_task
 from server.services.audit import AuditAction, AuditResourceType, record_audit_event
 from server.services.user_validation import NICKNAME_MAX_LENGTH, validate_nickname
@@ -102,6 +109,27 @@ class AdminAuditEventsResponse(BaseModel):
     page_size: int
 
 
+class AdminLoginEventSummary(BaseModel):
+    id: str
+    user_id: str | None
+    username: str | None
+    outcome: Literal["success", "failure", "rate_limited"]
+    reason: str | None
+    session_id: str | None
+    device_id: str | None
+    ip_address: str | None
+    user_agent: str | None
+    endpoint: str
+    created_at: datetime
+
+
+class AdminLoginEventsResponse(BaseModel):
+    events: list[AdminLoginEventSummary]
+    total: int
+    page: int
+    page_size: int
+
+
 class AdminSessionSummary(BaseModel):
     id: str
     user_id: str
@@ -110,6 +138,7 @@ class AdminSessionSummary(BaseModel):
     ip_address: str | None
     user_agent: str | None
     status: Literal["active", "expired", "revoked"]
+    last_seen_at: datetime
     created_at: datetime
     expires_at: datetime
     revoked_at: datetime | None
@@ -290,6 +319,52 @@ async def list_audit_events(
     )
 
 
+@router.get("/login-events", response_model=AdminLoginEventsResponse)
+async def list_login_events(
+    _admin: AdminUser,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    username: str | None = Query(default=None, min_length=1, max_length=80),
+    outcome: Literal["success", "failure", "rate_limited"] | None = Query(default=None),
+    session: AsyncSession = Depends(get_async_session),
+) -> AdminLoginEventsResponse:
+    filters = []
+    if username:
+        filters.append(LoginEvent.username.ilike(f"%{username.strip()}%"))
+    if outcome:
+        filters.append(LoginEvent.outcome == outcome)
+    total_result = await session.execute(select(func.count()).select_from(LoginEvent).where(*filters))
+    total = int(total_result.scalar_one())
+    result = await session.execute(
+        select(LoginEvent)
+        .where(*filters)
+        .order_by(LoginEvent.created_at.desc(), LoginEvent.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return AdminLoginEventsResponse(
+        events=[
+            AdminLoginEventSummary(
+                id=event.id,
+                user_id=event.user_id,
+                username=event.username,
+                outcome=event.outcome,  # type: ignore[arg-type]
+                reason=event.reason,
+                session_id=event.session_id,
+                device_id=event.device_id,
+                ip_address=event.ip_address,
+                user_agent=event.user_agent,
+                endpoint=event.endpoint,
+                created_at=event.created_at,
+            )
+            for event in result.scalars()
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
 def _session_status(row: UserSession, now: datetime) -> Literal["active", "expired", "revoked"]:
     if row.revoked_at is not None:
         return "revoked"
@@ -308,16 +383,24 @@ async def list_sessions(
     session: AsyncSession = Depends(get_async_session),
 ) -> AdminSessionsResponse:
     now = utc_now()
+    online_cutoff = now - timedelta(seconds=SESSION_ONLINE_WINDOW_SECONDS)
     filters = []
     if username:
         filters.append(User.username.ilike(f"%{username.strip()}%"))
-    filters.extend([UserSession.revoked_at.is_(None), UserSession.expires_at > now])
+    filters.extend(
+        [
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at > now,
+            UserSession.last_seen_at.is_not(None),
+            UserSession.last_seen_at >= online_cutoff,
+        ]
+    )
     count = await session.scalar(select(func.count()).select_from(UserSession).join(User).where(*filters))
     result = await session.execute(
         select(UserSession, User.username)
         .join(User, UserSession.user_id == User.id)
         .where(*filters)
-        .order_by(UserSession.created_at.desc())
+        .order_by(UserSession.last_seen_at.desc(), UserSession.created_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
@@ -330,6 +413,7 @@ async def list_sessions(
             ip_address=row.ip_address,
             user_agent=row.user_agent,
             status=_session_status(row, now),
+            last_seen_at=row.last_seen_at or row.created_at,
             created_at=row.created_at,
             expires_at=row.expires_at,
             revoked_at=row.revoked_at,

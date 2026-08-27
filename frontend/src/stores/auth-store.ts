@@ -8,6 +8,8 @@ interface SessionProfile {
   role?: unknown;
 }
 
+export type SessionEndReason = "replaced" | "revoked" | "expired" | "invalid";
+
 interface AuthState {
   username: string | null;
   nickname: string | null;
@@ -15,6 +17,7 @@ interface AuthState {
   role: "admin" | "member" | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  sessionEndReason: SessionEndReason | null;
   initialize: () => void;
   login: (
     username: string,
@@ -23,6 +26,7 @@ interface AuthState {
     avatarPath?: string | null,
   ) => void;
   logout: () => void;
+  endSession: (reason: SessionEndReason) => void;
   setLoading: (loading: boolean) => void;
 }
 
@@ -33,6 +37,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   role: null,
   isAuthenticated: false,
   isLoading: true,
+  sessionEndReason: null,
 
   initialize: () => {
     const controller = new AbortController();
@@ -65,6 +70,7 @@ export const useAuthStore = create<AuthState>((set) => ({
             avatarPath: typeof profile.avatar_path === "string" && profile.avatar_path ? profile.avatar_path : null,
             role: profile.role === "admin" || profile.role === "member" ? profile.role : null,
             isAuthenticated: true,
+            sessionEndReason: null,
           });
           return;
         }
@@ -82,7 +88,15 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   login: (username, role = null, nickname = null, avatarPath = null) => {
-    set({ username, nickname, avatarPath, role, isAuthenticated: true, isLoading: false });
+    set({
+      username,
+      nickname,
+      avatarPath,
+      role,
+      isAuthenticated: true,
+      isLoading: false,
+      sessionEndReason: null,
+    });
   },
 
   logout: () => {
@@ -93,6 +107,19 @@ export const useAuthStore = create<AuthState>((set) => ({
       avatarPath: null,
       role: null,
       isAuthenticated: false,
+      sessionEndReason: null,
+    });
+  },
+
+  endSession: (sessionEndReason) => {
+    set({
+      username: null,
+      nickname: null,
+      avatarPath: null,
+      role: null,
+      isAuthenticated: false,
+      isLoading: false,
+      sessionEndReason,
     });
   },
 

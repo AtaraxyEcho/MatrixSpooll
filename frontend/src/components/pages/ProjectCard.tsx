@@ -6,7 +6,7 @@
  * 形态：点进去是只读工作台，卡上不带操作菜单。
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link } from "wouter";
 import { MoreHorizontal, Settings, Trash2, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -332,6 +332,7 @@ export function ProjectCard(props: ProjectCardProps) {
   const { t } = useTranslation(["dashboard", "onboarding"]);
   const phaseLabels = usePhaseLabels();
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -354,6 +355,14 @@ export function ProjectCard(props: ProjectCardProps) {
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKey);
     };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [menuOpen]);
 
   const status = asProjectStatus(project.status);
@@ -497,10 +506,17 @@ export function ProjectCard(props: ProjectCardProps) {
   );
 
   return (
-    <article className="group relative overflow-hidden rounded-[12px] border border-hairline bg-bg-grad-a/85 transition-[transform,border-color,box-shadow] duration-150 motion-safe:hover:-translate-y-0.5 hover:border-accent/45 hover:shadow-[0_18px_40px_-22px_oklch(0_0_0_/_0.6),0_0_0_1px_var(--color-accent-soft)] focus-within:border-accent/60 focus-within:shadow-[0_0_0_2px_var(--color-accent-soft)]">
+    <article
+      className="group relative overflow-hidden rounded-[12px] border border-hairline bg-bg-grad-a/85 transition-[transform,border-color,box-shadow] duration-150 motion-safe:hover:-translate-y-0.5 hover:border-accent/45 hover:shadow-[0_18px_40px_-22px_oklch(0_0_0_/_0.6),0_0_0_1px_var(--color-accent-soft)] focus-within:border-accent/60 focus-within:shadow-[0_0_0_2px_var(--color-accent-soft)]"
+      onContextMenu={props.readOnly ? undefined : (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setMenuOpen(true);
+      }}
+    >
       {contentModeLabel ? (
         <span
-          className="pointer-events-none absolute right-4 top-4 z-[3] rounded-md border border-[var(--color-hairline-strong)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[9px] font-semibold tracking-[0.06em] text-[var(--color-text-2)] shadow-sm"
+          className="pointer-events-none absolute left-4 top-4 z-[3] rounded-md border border-[var(--color-hairline-strong)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[9px] font-semibold tracking-[0.06em] text-[var(--color-text-2)] shadow-sm"
           data-testid="project-content-mode"
         >
           {contentModeLabel}
@@ -515,10 +531,12 @@ export function ProjectCard(props: ProjectCardProps) {
       </Link>
 
       {props.readOnly ? null : (
-        <div className="absolute right-2.5 bottom-2.5 z-[2]">
+        <div className="absolute right-3 top-3 z-[4]">
           <button
             ref={triggerRef}
             type="button"
+            aria-haspopup="menu"
+            aria-controls={menuOpen ? menuId : undefined}
             aria-label={`${t("lobby_card_actions")} — ${projectDisplayName}`}
             aria-expanded={menuOpen}
             onClick={(e) => {
@@ -527,18 +545,19 @@ export function ProjectCard(props: ProjectCardProps) {
               setMenuOpen((v) => !v);
             }}
             className={
-              "grid h-8 w-8 place-items-center rounded-md border border-hairline-soft bg-bg/70 text-text-3 backdrop-blur transition-[opacity,color,background] hover:bg-bg hover:text-text-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
-              (menuOpen
-                ? "opacity-100"
-                : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100")
+              "grid h-9 w-9 place-items-center rounded-lg border bg-bg/90 text-text-2 shadow-[0_8px_20px_-10px_oklch(0_0_0_/_0.8)] backdrop-blur-md transition-[color,background,border-color,transform] hover:scale-105 hover:border-accent/55 hover:bg-bg hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
+              (menuOpen ? "border-accent/55 bg-accent-dim text-text" : "border-hairline-strong")
             }
           >
-            <MoreHorizontal className="h-3.5 w-3.5" />
+            <MoreHorizontal className="h-4 w-4" aria-hidden />
           </button>
           {menuOpen ? (
             <div
+              id={menuId}
               ref={menuRef}
-              className="absolute right-0 bottom-[calc(100%+6px)] min-w-[148px] overflow-hidden rounded-md border border-hairline bg-bg-grad-a/95 shadow-[0_18px_40px_-22px_oklch(0_0_0_/_0.7)] backdrop-blur"
+              role="menu"
+              aria-label={`${t("lobby_card_actions")} - ${projectDisplayName}`}
+              className="absolute right-0 top-[calc(100%+6px)] min-w-[164px] overflow-hidden rounded-md border border-hairline-strong bg-bg-grad-a/95 p-1 shadow-[0_18px_40px_-16px_oklch(0_0_0_/_0.82)] backdrop-blur-md"
             >
               {canOpenSettings ? (
                 <Link
@@ -547,6 +566,7 @@ export function ProjectCard(props: ProjectCardProps) {
                     e.stopPropagation();
                     setMenuOpen(false);
                   }}
+                  role="menuitem"
                   aria-label={`${t("project_settings")} — ${projectDisplayName}`}
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-text-2 transition-colors hover:bg-accent-dim hover:text-text focus-visible:bg-accent-dim focus-visible:outline-none"
                 >
@@ -556,6 +576,7 @@ export function ProjectCard(props: ProjectCardProps) {
               ) : null}
               <button
                 type="button"
+                role="menuitem"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -570,6 +591,7 @@ export function ProjectCard(props: ProjectCardProps) {
               </button>
               <button
                 type="button"
+                role="menuitem"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();

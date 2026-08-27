@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
@@ -18,9 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
 from lib.api_errors import BadRequestError, ConflictError, NotFoundError
-from lib.aspect_size import is_valid_aspect_ratio
+from lib.aspect_size import IMAGE_TIER_SHORT_EDGE, is_valid_aspect_ratio
 from lib.config.registry import model_info_for
 from lib.config.resolver import VideoBucketCapabilityError
+from lib.custom_provider import is_custom_provider
 from lib.db import async_session_factory, get_async_session
 from lib.generation_queue import free_video_capability, get_generation_queue
 from lib.generation_queue_client import TaskSpec
@@ -35,16 +36,17 @@ from server.auth import CurrentUser, CurrentUserFlexible, CurrentUserInfo, datab
 from server.services.audit import AuditAction, AuditResourceType, record_audit_event
 from server.services.free_creation_canvas import CanvasPatchConflict, apply_canvas_patch
 from server.services.free_creation_deletion import FreeCreationDeletionNotReadyError, delete_free_creation_items
-from server.services.free_creation_index import load_free_creation_index
+from server.services.free_creation_index import invalidate_free_creation_index, load_free_creation_index
 from server.services.free_creation_merge import (
     composite_creation_audio,
-    merge_video_creations,
     render_creation_subtitles,
+    resolve_merge_video_paths,
 )
 from server.services.free_creation_planner import effective_free_creation_mode
 from server.services.free_creation_previews import ensure_reference_video_cover
 from server.services.free_creation_proxies import ensure_video_proxy, find_video_proxy
 from server.services.free_creation_tasks import (
+    creation_metadata_path,
     delete_creation_metadata,
     list_creation_metadata,
     load_creation_metadata,
@@ -363,7 +365,20 @@ class FreeCreationExportRequest(BaseModel):
 
 
 class FreeCreationMergeRequest(BaseModel):
-    creation_ids: list[str] = Field(min_length=2, max_length=32)
+    item_ids: list[str] = Field(default_factory=list, max_length=32)
+    creation_ids: list[str] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode="after")
+    def validate_items(self) -> FreeCreationMergeRequest:
+        if self.item_ids and self.creation_ids:
+            raise ValueError("provide item_ids or creation_ids, not both")
+        items = self.item_ids or self.creation_ids
+        if len(items) < 2:
+            raise ValueError("at least two video items are required")
+        if len(set(items)) != len(items) or any(not item.startswith(("c_", "r_")) for item in items):
+            raise ValueError("video item ids must be unique creations or uploads")
+        self.item_ids = items
+        return self
 
 
 class FreeCreationAudioCompositeRequest(BaseModel):
@@ -1147,11 +1162,18 @@ async def _get_generation_capabilities(
         image_capability = "i2i" if reference_kind == "image" else "t2i"
         resolved = await resolver.resolve_image_backend(project, payload, capability=image_capability)
         info = model_info_for(resolved.provider_id, resolved.model_id)
+        resolutions = (
+            list(info.resolutions)
+            if info is not None
+            else list(IMAGE_TIER_SHORT_EDGE)
+            if is_custom_provider(resolved.provider_id)
+            else []
+        )
         return {
             "output_type": "image",
             "model": f"{resolved.provider_id}/{resolved.model_id}",
             "ratios": list(IMAGE_ASPECT_RATIO_PRESETS),
-            "resolutions": list(info.resolutions) if info is not None else [],
+            "resolutions": resolutions,
             "durations": [],
             "max_reference_images": None,
             "max_reference_videos": None,
@@ -1174,8 +1196,14 @@ async def _get_generation_capabilities(
         raise BadRequestError(code, **params) from exc
 
 
-@router.post("/projects/{project_name}/creations")
-async def create_free_creation(project_name: str, req: FreeCreationRequest, user: CurrentUser):
+async def submit_free_creation(
+    project_name: str,
+    req: FreeCreationRequest,
+    *,
+    user_id: str,
+    source: str = "webui",
+) -> dict[str, Any]:
+    """Validate and enqueue one direct creation request for any trusted adapter."""
     project, project_path = await asyncio.to_thread(_load_free_project, project_name)
     storyboard_plan: dict[str, Any] | None = None
     if req.storyboard_plan_id:
@@ -1264,7 +1292,7 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
         execution_req,
         media_type=media_type,
         reference_claims=execution_claims,
-        user_id=user.id,
+        user_id=user_id,
     )
     request_id = new_request_id()
     task_type = {"image": "free_image", "video": "free_video", "edit": "free_edit"}[execution_req.output_type]
@@ -1285,7 +1313,7 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
                 media_type=media_type,
                 resource_id=creation_id,
                 prompt=execution_req.prompt.strip(),
-                source="webui",
+                source=source,
                 extra_payload={
                     "output_type": execution_req.output_type,
                     **task_payload,
@@ -1298,7 +1326,7 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
                 resource_id=spec.resource_id,
                 payload=spec.payload,
                 source=spec.source,
-                user_id=user.id,
+                user_id=user_id,
             )
             task_id = str(queue_result["task_id"])
             metadata = {
@@ -1321,6 +1349,7 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
                 "storyboard_plan_id": execution_req.storyboard_plan_id,
                 "storyboard_shot_id": execution_req.storyboard_shot_id,
                 "sequence_index": execution_req.sequence_index,
+                "selection_source": source,
             }
             enqueued.append({"creation_id": creation_id, "task_id": task_id, "metadata": metadata})
             await asyncio.to_thread(
@@ -1357,6 +1386,7 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
                 "storyboard_plan_id": execution_req.storyboard_plan_id,
                 "storyboard_shot_id": execution_req.storyboard_shot_id,
                 "sequence_index": execution_req.sequence_index,
+                "selection_source": source,
                 "creation_ids": [item["creation_id"] for item in enqueued],
             },
         )
@@ -1371,6 +1401,11 @@ async def create_free_creation(project_name: str, req: FreeCreationRequest, user
         "task_id": created[0]["task_id"],
         "creations": created,
     }
+
+
+@router.post("/projects/{project_name}/creations")
+async def create_free_creation(project_name: str, req: FreeCreationRequest, user: CurrentUser):
+    return await submit_free_creation(project_name, req, user_id=user.id)
 
 
 @entry_router.post("/free-projects")
@@ -1436,7 +1471,7 @@ async def create_free_project(
             # Use the stable registry ID for queued-task ownership. The
             # project manager alias resolves it to ``storage_key`` for files.
             project_ref = registered_project_id or storage_key
-            result = await create_free_creation(project_ref, req.creation, user)
+            result = await submit_free_creation(project_ref, req.creation, user_id=user.id)
         except BaseException:
             if database_auth_initialized():
                 async with session.begin():
@@ -2173,24 +2208,59 @@ async def export_free_creations(project_name: str, req: FreeCreationExportReques
     )
 
 
-@router.post("/projects/{project_name}/free-creation-merge")
-async def merge_free_creation_videos(project_name: str, req: FreeCreationMergeRequest):
+@router.post("/projects/{project_name}/free-creation-merge", status_code=202)
+async def merge_free_creation_videos(project_name: str, req: FreeCreationMergeRequest, user: CurrentUser):
     _, project_path = await asyncio.to_thread(_load_free_project, project_name)
     creations = await asyncio.to_thread(list_creation_metadata, project_path, None)
+    uploads = await asyncio.to_thread(list_reference_uploads, project_path)
     try:
-        output, temporary_directory = await merge_video_creations(project_path, req.creation_ids, creations)
+        await asyncio.to_thread(resolve_merge_video_paths, project_path, req.item_ids, creations, uploads)
     except FileNotFoundError as exc:
         raise NotFoundError("free_creation_merge_input_not_found", id=str(exc)) from exc
     except ValueError as exc:
         raise BadRequestError("free_creation_merge_invalid", details=str(exc)) from exc
-    except RuntimeError as exc:
-        raise BadRequestError("free_creation_merge_unavailable") from exc
-    return FileResponse(
-        output,
-        media_type="video/mp4",
-        filename=f"{project_name}-merged.mp4",
-        background=BackgroundTask(shutil.rmtree, temporary_directory, ignore_errors=True),
-    )
+    output_creation_id = new_creation_id()
+    metadata = {
+        "creation_id": output_creation_id,
+        "status": "queued",
+        "output_type": "video",
+        "media_type": "video",
+        "prompt": "",
+        "prompt_mode": "original",
+        "model": "local/ffmpeg",
+        "references": [],
+        "reference_claims": [],
+        "effective_mode": "video_merge",
+        "quantity": 1,
+        "merge_item_ids": list(req.item_ids),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    await asyncio.to_thread(write_creation_metadata, project_path, output_creation_id, metadata)
+    queue = get_generation_queue()
+    try:
+        queue_result = await queue.enqueue_task(
+            project_name=project_name,
+            task_type="free_video_merge",
+            media_type="postprocess",
+            resource_id=output_creation_id,
+            payload={"item_ids": list(req.item_ids)},
+            source="webui",
+            user_id=user.id,
+        )
+    except BaseException:
+        await asyncio.to_thread(creation_metadata_path(project_path, output_creation_id).unlink, missing_ok=True)
+        await asyncio.to_thread(invalidate_free_creation_index, project_path)
+        raise
+    task_id = str(queue_result["task_id"])
+    metadata["task_id"] = task_id
+    try:
+        await asyncio.to_thread(write_creation_metadata, project_path, output_creation_id, metadata)
+    except BaseException:
+        await asyncio.shield(queue.cancel_task(task_id))
+        await asyncio.to_thread(creation_metadata_path(project_path, output_creation_id).unlink, missing_ok=True)
+        await asyncio.to_thread(invalidate_free_creation_index, project_path)
+        raise
+    return {"success": True, "task_id": task_id, "creation_id": output_creation_id, "status": "queued"}
 
 
 @router.post("/projects/{project_name}/free-creation-audio-composite")

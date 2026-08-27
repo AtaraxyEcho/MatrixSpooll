@@ -107,6 +107,20 @@ class _FakeSessionManager:
 
 
 class TestAssistantServiceMore:
+    def test_generation_policy_is_hidden_from_the_echoed_user_message(self):
+        service = AssistantService.__new__(AssistantService)
+
+        text, sdk_prompt, echo_blocks = service._prepare_prompt(
+            "create a launch clip",
+            generation_policy={"schema_version": 1, "mode": "auto"},
+        )
+
+        assert text == "create a launch clip"
+        assert echo_blocks is None
+        assert sdk_prompt is not None
+        assert '"mode":"auto"' in sdk_prompt
+        assert "matrixspooll_generation_policy" in sdk_prompt
+
     @pytest.mark.asyncio
     async def test_service_init_interrupts_stale_running_sessions(self, tmp_path):
         # Create an in-memory async store and seed data

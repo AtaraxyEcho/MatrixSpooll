@@ -6,6 +6,7 @@ import { uid } from "@/utils/id";
 import type { AttachedImage } from "@/hooks/useImageAttachments";
 import { useAssistantStore } from "@/stores/assistant-store";
 import type {
+  AgentGenerationPolicy,
   DraftDeltaPayload,
   DraftState,
   ImagePayload,
@@ -427,7 +428,11 @@ export function useAssistantSession(projectName: string | null) {
 
   // 发送消息。返回是否受理成功——失败时调用方保留输入内容。
   const sendMessage = useCallback(
-    async (content: string, images?: AttachedImage[]): Promise<boolean> => {
+    async (
+      content: string,
+      images?: AttachedImage[],
+      generationPolicy?: AgentGenerationPolicy,
+    ): Promise<boolean> => {
       if ((!content.trim() && (!images || images.length === 0)) || store.getState().sending) {
         return false;
       }
@@ -449,7 +454,13 @@ export function useAssistantSession(projectName: string | null) {
       // 签名纳入 projectName：面板为长生命周期单例，切换项目不卸载，失败缓存
       // （clientKey + 签名）跨项目存活；含项目维度后旧项目缓存的 clientKey 自然
       // 失效，不再被其他项目的同内容重发复用。
-      const signature = JSON.stringify([projectName, sessionId, content.trim(), imagePayload ?? []]);
+      const signature = JSON.stringify([
+        projectName,
+        sessionId,
+        content.trim(),
+        imagePayload ?? [],
+        generationPolicy ?? null,
+      ]);
       const clientKey =
         failedSendRef.current?.signature === signature
           ? failedSendRef.current.clientKey
@@ -462,6 +473,7 @@ export function useAssistantSession(projectName: string | null) {
           sessionId,  // null for new session
           imagePayload,
           clientKey,
+          generationPolicy,
         );
 
         if (pendingSendVersionRef.current !== sendVersion) return false;
@@ -624,7 +636,12 @@ export function useAssistantSession(projectName: string | null) {
   // 原会话已被取代 409），被拒时用户仍留在原会话，时间线原样。受理之后才整体
   // 切换到承接改写的新会话——时间线重建、SSE 重连，不做增量缝合。
   const rewriteMessage = useCallback(
-    async (anchorEntryUuid: string, content: string, images?: ImagePayload[]): Promise<boolean> => {
+    async (
+      anchorEntryUuid: string,
+      content: string,
+      images?: ImagePayload[],
+      generationPolicy?: AgentGenerationPolicy,
+    ): Promise<boolean> => {
       const originSessionId = store.getState().currentSessionId;
       if (!projectName || !originSessionId) return false;
       // 与发送同口径：图片附件本身就是内容，正文被改空的带图消息仍可提交
@@ -648,6 +665,7 @@ export function useAssistantSession(projectName: string | null) {
         anchorEntryUuid,
         content.trim(),
         images ?? [],
+        generationPolicy ?? null,
       ]);
       const clientKey =
         failedRewriteRef.current?.signature === signature
@@ -662,6 +680,7 @@ export function useAssistantSession(projectName: string | null) {
           content,
           images,
           clientKey,
+          generationPolicy,
         );
 
         // 本轮已被作废：不把用户从他已切去的会话拽回分支，sending 也由作废方复位。

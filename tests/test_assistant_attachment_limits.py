@@ -47,6 +47,45 @@ def test_rewrite_request_rejects_images_above_total_base64_character_limit():
     assert exc_info.value.errors()[0]["type"] == "assistant_images_total_too_large"
 
 
+def test_generation_policy_accepts_auto_mode_without_overrides():
+    request = assistant.SendRequest(
+        content="create a launch clip",
+        generation_policy={
+            "schema_version": 1,
+            "mode": "auto",
+            "references": [
+                {
+                    "type": "upload",
+                    "reference_id": "r_0123456789abcdef0123",
+                    "role": "reference_image",
+                }
+            ],
+        },
+    )
+
+    assert request.generation_policy is not None
+    assert request.generation_policy.mode == "auto"
+    assert request.generation_policy.references[0].reference_id == "r_0123456789abcdef0123"
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"schema_version": 1, "mode": "auto", "output_type": "video"},
+        {"schema_version": 1, "mode": "custom"},
+        {
+            "schema_version": 1,
+            "mode": "custom",
+            "output_type": "video",
+            "references": [{"type": "creation", "reference_id": "r_0123456789abcdef0123"}],
+        },
+    ],
+)
+def test_generation_policy_rejects_ambiguous_or_mismatched_constraints(policy: dict[str, object]):
+    with pytest.raises(ValidationError):
+        assistant.SendRequest(content="create a launch clip", generation_policy=policy)
+
+
 @pytest.mark.parametrize(
     ("path", "body", "service_method"),
     [

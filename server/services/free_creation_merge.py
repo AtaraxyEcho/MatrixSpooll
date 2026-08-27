@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import os
 import shutil
 import tempfile
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 from lib.artifact_manifest import ArtifactKey, ProjectArtifactManifestAdapter
+from lib.ffmpeg_runner import MediaProcessError, find_media_tool, run_ffmpeg, run_ffprobe_json
 from lib.path_safety import safe_join
 from lib.thumbnail import extract_video_thumbnail
 from lib.version_manager import VersionManager
@@ -17,6 +23,29 @@ from server.services.free_creation_tasks import commit_free_creation_state, crea
 from server.services.free_creation_workspace import subtitle_track_webvtt
 
 _FFMPEG_TIMEOUT_SECONDS = 30 * 60
+_FFPROBE_TIMEOUT_SECONDS = 30
+_MAX_MERGE_INPUT_BYTES = int(os.environ.get("MATRIXSPOOLL_MERGE_MAX_INPUT_BYTES", str(2 * 1024**3)))
+_MAX_MERGE_DURATION_SECONDS = int(os.environ.get("MATRIXSPOOLL_MERGE_MAX_DURATION_SECONDS", str(30 * 60)))
+_MERGE_SLOT = asyncio.Semaphore(1)
+logger = logging.getLogger(__name__)
+
+
+class FreeCreationMergeError(RuntimeError):
+    """Stable failure reason for a local video merge task."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+        self.params: dict[str, Any] = {}
+
+
+@dataclass(frozen=True)
+class _VideoStreamInfo:
+    width: int
+    height: int
+    frame_rate: str
+    duration: float
+    has_audio: bool
 
 
 def _now() -> str:
@@ -31,49 +60,155 @@ def _project_temp_directory(project_path: Path, prefix: str) -> Path:
 
 def resolve_merge_video_paths(
     project_path: Path,
-    creation_ids: list[str],
+    item_ids: list[str],
     creations: list[dict[str, Any]],
+    uploads: list[dict[str, Any]] | None = None,
 ) -> list[Path]:
-    """Resolve an ordered, manifest-backed list of succeeded video files."""
+    """Resolve ordered generated or uploaded video files selected on the canvas."""
 
-    if len(creation_ids) < 2:
-        raise ValueError("at least two video creations are required")
-    if len(set(creation_ids)) != len(creation_ids):
-        raise ValueError("creation ids must be unique")
+    if len(item_ids) < 2:
+        raise ValueError("at least two video items are required")
+    if len(set(item_ids)) != len(item_ids):
+        raise ValueError("video item ids must be unique")
 
     creations_by_id = {str(item["creation_id"]): item for item in creations if isinstance(item.get("creation_id"), str)}
+    uploads_by_id = {
+        str(item["reference_id"]): item for item in uploads or [] if isinstance(item.get("reference_id"), str)
+    }
     manifest = ProjectArtifactManifestAdapter(project_path)
     paths: list[Path] = []
-    for creation_id in creation_ids:
-        creation = creations_by_id.get(creation_id)
-        if not isinstance(creation, dict):
-            raise FileNotFoundError(creation_id)
-        if creation.get("status") != "succeeded":
-            raise ValueError("all selected creations must be succeeded")
-        if creation.get("media_type") != "video" and creation.get("output_type") != "video":
-            raise ValueError("only video creations can be merged")
-        media_path = creation.get("media_path")
-        if not isinstance(media_path, str):
-            raise FileNotFoundError(creation_id)
-        entry = manifest.get_entry(ArtifactKey.free_creation(creation_id))
-        path = safe_join(project_path, media_path)
-        if entry is None or entry.artifact_path != media_path or not path.is_file():
-            raise FileNotFoundError(creation_id)
+    for item_id in item_ids:
+        if item_id.startswith("c_"):
+            creation = creations_by_id.get(item_id)
+            if not isinstance(creation, dict):
+                raise FileNotFoundError(item_id)
+            if creation.get("status") != "succeeded":
+                raise ValueError("all selected creations must be succeeded")
+            if creation.get("media_type") != "video" and creation.get("output_type") != "video":
+                raise ValueError("only video items can be merged")
+            media_path = creation.get("media_path")
+            if not isinstance(media_path, str):
+                raise FileNotFoundError(item_id)
+            entry = manifest.get_entry(ArtifactKey.free_creation(item_id))
+            path = safe_join(project_path, media_path)
+            if entry is None or entry.artifact_path != media_path or not path.is_file():
+                raise FileNotFoundError(item_id)
+        elif item_id.startswith("r_"):
+            upload = uploads_by_id.get(item_id)
+            if not isinstance(upload, dict):
+                raise FileNotFoundError(item_id)
+            if upload.get("media_type") != "video":
+                raise ValueError("only video items can be merged")
+            media_path = upload.get("path")
+            if not isinstance(media_path, str):
+                raise FileNotFoundError(item_id)
+            path = safe_join(project_path, media_path)
+            if not path.is_file():
+                raise FileNotFoundError(item_id)
+        else:
+            raise ValueError("video item ids must identify creations or uploads")
         paths.append(path)
     return paths
 
 
-def _concat_file_path(path: Path) -> str:
-    # FFmpeg concat files use single-quoted paths; normalize Windows separators
-    # so the same manifest works on Windows and POSIX workers.
-    value = path.resolve().as_posix()
-    return value.replace("\\", "\\\\").replace("'", "'\\''")
+def _positive_float(value: object) -> float | None:
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _frame_rate(value: object) -> str:
+    if not isinstance(value, str):
+        return "30"
+    try:
+        parsed = Fraction(value)
+    except (ValueError, ZeroDivisionError):
+        return "30"
+    if parsed <= 0 or parsed > 120:
+        return "30"
+    return f"{parsed.numerator}/{parsed.denominator}"
+
+
+async def _probe_video(path: Path) -> _VideoStreamInfo:
+    try:
+        payload = await run_ffprobe_json(
+            [
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,width,height,r_frame_rate,duration:format=duration",
+                "-of",
+                "json",
+                str(path),
+            ],
+            timeout=_FFPROBE_TIMEOUT_SECONDS,
+        )
+    except MediaProcessError as exc:
+        detail = f": {exc.detail[:300]}" if exc.detail else ""
+        raise RuntimeError(f"ffprobe failed for {path.name}{detail}") from exc
+    try:
+        streams = payload.get("streams") if isinstance(payload, dict) else None
+        if not isinstance(streams, list):
+            raise ValueError("streams are missing")
+        video = next(
+            (stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"),
+            None,
+        )
+        if not isinstance(video, dict):
+            raise ValueError("video stream is missing")
+        width = int(video.get("width") or 0)
+        height = int(video.get("height") or 0)
+        format_data = payload.get("format")
+        format_duration = format_data.get("duration") if isinstance(format_data, dict) else None
+        duration = _positive_float(video.get("duration")) or _positive_float(format_duration)
+        if width <= 0 or height <= 0 or duration is None:
+            raise ValueError("video dimensions or duration are invalid")
+        return _VideoStreamInfo(
+            width=width,
+            height=height,
+            frame_rate=_frame_rate(video.get("r_frame_rate")),
+            duration=duration,
+            has_audio=any(isinstance(stream, dict) and stream.get("codec_type") == "audio" for stream in streams),
+        )
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"ffprobe returned invalid metadata for {path.name}") from exc
+
+
+def _merge_filter(infos: list[_VideoStreamInfo]) -> str:
+    first = infos[0]
+    target_width = max(2, first.width - (first.width % 2))
+    target_height = max(2, first.height - (first.height % 2))
+    filters: list[str] = []
+    for index, info in enumerate(infos):
+        duration = f"{info.duration:.6f}"
+        filters.append(
+            f"[{index}:v:0]scale={target_width}:{target_height}:force_original_aspect_ratio=decrease:"
+            f"force_divisible_by=2,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"setsar=1,fps={first.frame_rate},format=yuv420p,setpts=PTS-STARTPTS[v{index}]"
+        )
+        if info.has_audio:
+            filters.append(
+                f"[{index}:a:0]aresample=48000:async=1:first_pts=0,"
+                f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
+                f"atrim=duration={duration},asetpts=PTS-STARTPTS[a{index}]"
+            )
+        else:
+            filters.append(
+                "anullsrc=channel_layout=stereo:sample_rate=48000,"
+                f"atrim=duration={duration},asetpts=PTS-STARTPTS[a{index}]"
+            )
+    inputs = "".join(f"[v{index}][a{index}]" for index in range(len(infos)))
+    filters.append(f"{inputs}concat=n={len(infos)}:v=1:a=1[outv][outa]")
+    return ";".join(filters)
 
 
 async def merge_video_creations(
     project_path: Path,
-    creation_ids: list[str],
+    item_ids: list[str],
     creations: list[dict[str, Any]],
+    uploads: list[dict[str, Any]] | None = None,
 ) -> tuple[Path, Path]:
     """Merge selected clips and return ``(output_path, temporary_directory)``.
 
@@ -81,63 +216,60 @@ async def merge_video_creations(
     response has finished streaming the output file.
     """
 
-    paths = resolve_merge_video_paths(project_path, creation_ids, creations)
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise RuntimeError("ffmpeg is not available")
+    paths = resolve_merge_video_paths(project_path, item_ids, creations, uploads)
+    try:
+        find_media_tool("ffmpeg")
+        find_media_tool("ffprobe")
+    except MediaProcessError as exc:
+        raise FreeCreationMergeError("free_creation_merge_tools_missing") from exc
+
+    try:
+        infos = await asyncio.gather(*(_probe_video(path) for path in paths))
+    except (MediaProcessError, RuntimeError) as exc:
+        raise FreeCreationMergeError("free_creation_merge_input_unreadable") from exc
+    total_bytes = sum(path.stat().st_size for path in paths)
+    total_duration = sum(info.duration for info in infos)
+    if total_bytes > _MAX_MERGE_INPUT_BYTES or total_duration > _MAX_MERGE_DURATION_SECONDS:
+        raise FreeCreationMergeError("free_creation_merge_limits_exceeded")
 
     temporary_directory = _project_temp_directory(project_path, "matrixspooll-free-merge-")
-    concat_file = temporary_directory / "inputs.txt"
     output_file = temporary_directory / "merged.mp4"
-    concat_file.write_text("".join(f"file '{_concat_file_path(path)}'\n" for path in paths), encoding="utf-8")
-    process: asyncio.subprocess.Process | None = None
     try:
-        process = await asyncio.create_subprocess_exec(
-            ffmpeg,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(concat_file),
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a:0?",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            "-y",
-            str(output_file),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await asyncio.wait_for(process.communicate(), timeout=_FFMPEG_TIMEOUT_SECONDS)
-    except TimeoutError as exc:
-        if process is not None:
-            process.kill()
-            await process.wait()
+        async with _MERGE_SLOT:
+            command = ["-hide_banner", "-loglevel", "error"]
+            for path in paths:
+                command.extend(["-i", str(path)])
+            command.extend(
+                [
+                    "-filter_complex",
+                    _merge_filter(infos),
+                    "-map",
+                    "[outv]",
+                    "-map",
+                    "[outa]",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    "-movflags",
+                    "+faststart",
+                    "-max_muxing_queue_size",
+                    "2048",
+                    "-shortest",
+                    "-y",
+                    str(output_file),
+                ]
+            )
+            await run_ffmpeg(command, timeout=_FFMPEG_TIMEOUT_SECONDS)
+    except MediaProcessError as exc:
         shutil.rmtree(temporary_directory, ignore_errors=True)
-        raise RuntimeError("ffmpeg merge timed out") from exc
-    except OSError as exc:
-        shutil.rmtree(temporary_directory, ignore_errors=True)
-        raise RuntimeError("ffmpeg merge could not start") from exc
-
-    if process.returncode != 0:
-        detail = (stderr or b"").decode("utf-8", errors="replace").strip()
-        shutil.rmtree(temporary_directory, ignore_errors=True)
-        raise RuntimeError(f"ffmpeg merge failed: {detail[:500]}")
+        logger.warning("FFmpeg video merge failed code=%s detail=%s", exc.code, exc.detail[:2000])
+        raise FreeCreationMergeError("free_creation_merge_unavailable") from exc
     if not output_file.is_file() or output_file.stat().st_size <= 0:
         shutil.rmtree(temporary_directory, ignore_errors=True)
-        raise RuntimeError("ffmpeg merge produced no output")
+        raise FreeCreationMergeError("free_creation_merge_unavailable")
     return output_file, temporary_directory
 
 
@@ -192,47 +324,40 @@ async def composite_creation_audio(
         audio_creation_id,
         creations,
     )
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise RuntimeError("ffmpeg is not available")
+    find_media_tool("ffmpeg")
 
     temporary_directory = _project_temp_directory(project_path, "matrixspooll-free-audio-composite-")
     staged_file = temporary_directory / "composite.mp4"
     cover_path = project_path / "free_creation" / "covers" / f"{output_creation_id}.jpg"
-    process: asyncio.subprocess.Process | None = None
     committed = False
     try:
-        process = await asyncio.create_subprocess_exec(
-            ffmpeg,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            str(video_path),
-            "-i",
-            str(audio_path),
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0",
-            "-c:v",
-            "copy",
-            "-c:a",
-            "aac",
-            "-af",
-            "apad",
-            "-shortest",
-            "-movflags",
-            "+faststart",
-            "-y",
-            str(staged_file),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+        await run_ffmpeg(
+            [
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(video_path),
+                "-i",
+                str(audio_path),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-af",
+                "apad",
+                "-shortest",
+                "-movflags",
+                "+faststart",
+                "-y",
+                str(staged_file),
+            ],
+            timeout=_FFMPEG_TIMEOUT_SECONDS,
         )
-        _, stderr = await asyncio.wait_for(process.communicate(), timeout=_FFMPEG_TIMEOUT_SECONDS)
-        if process.returncode != 0:
-            detail = (stderr or b"").decode("utf-8", errors="replace").strip()
-            raise RuntimeError(f"ffmpeg audio composite failed: {detail[:500]}")
         if not staged_file.is_file() or staged_file.stat().st_size <= 0:
             raise RuntimeError("ffmpeg audio composite produced no output")
 
@@ -290,13 +415,8 @@ async def composite_creation_audio(
         )
         committed = True
         return metadata
-    except TimeoutError as exc:
-        if process is not None:
-            process.kill()
-            await process.wait()
-        raise RuntimeError("ffmpeg audio composite timed out") from exc
-    except OSError as exc:
-        raise RuntimeError("ffmpeg audio composite could not start") from exc
+    except MediaProcessError as exc:
+        raise RuntimeError(f"ffmpeg audio composite failed: {exc.detail[:500]}") from exc
     finally:
         shutil.rmtree(temporary_directory, ignore_errors=True)
         if not committed:
@@ -337,49 +457,42 @@ async def render_creation_subtitles(
     webvtt = subtitle_track_webvtt(track)
     if "-->" not in webvtt:
         raise ValueError("subtitle track has no valid cues")
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise RuntimeError("ffmpeg is not available")
+    find_media_tool("ffmpeg")
 
     temporary_directory = _project_temp_directory(project_path, "matrixspooll-free-subtitles-")
     subtitle_file = temporary_directory / "subtitles.vtt"
     subtitle_file.write_text(webvtt, encoding="utf-8")
     staged_file = temporary_directory / "subtitled.mp4"
     cover_path = project_path / "free_creation" / "covers" / f"{output_creation_id}.jpg"
-    process: asyncio.subprocess.Process | None = None
     committed = False
     try:
-        process = await asyncio.create_subprocess_exec(
-            ffmpeg,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            str(source_path),
-            "-vf",
-            "subtitles=subtitles.vtt",
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a:0?",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            "-y",
-            str(staged_file),
-            cwd=str(temporary_directory),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+        await run_ffmpeg(
+            [
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source_path),
+                "-vf",
+                "subtitles=subtitles.vtt",
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0?",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                "-y",
+                str(staged_file),
+            ],
+            timeout=_FFMPEG_TIMEOUT_SECONDS,
+            cwd=temporary_directory,
         )
-        _, stderr = await asyncio.wait_for(process.communicate(), timeout=_FFMPEG_TIMEOUT_SECONDS)
-        if process.returncode != 0:
-            detail = (stderr or b"").decode("utf-8", errors="replace").strip()
-            raise RuntimeError(f"ffmpeg subtitle render failed: {detail[:500]}")
         if not staged_file.is_file() or staged_file.stat().st_size <= 0:
             raise RuntimeError("ffmpeg subtitle render produced no output")
 
@@ -430,13 +543,8 @@ async def render_creation_subtitles(
         )
         committed = True
         return metadata
-    except TimeoutError as exc:
-        if process is not None:
-            process.kill()
-            await process.wait()
-        raise RuntimeError("ffmpeg subtitle render timed out") from exc
-    except OSError as exc:
-        raise RuntimeError("ffmpeg subtitle render could not start") from exc
+    except MediaProcessError as exc:
+        raise RuntimeError(f"ffmpeg subtitle render failed: {exc.detail[:500]}") from exc
     finally:
         shutil.rmtree(temporary_directory, ignore_errors=True)
         if not committed:

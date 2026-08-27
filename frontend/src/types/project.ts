@@ -288,6 +288,8 @@ export interface ImportProjectResponse {
   warnings: string[];
   conflict_resolution: "none" | "renamed" | "overwritten";
   diagnostics: ImportSuccessDiagnostics;
+  archive_type?: "project_archive_v2" | "project_archive_legacy";
+  format_version?: number | null;
 }
 
 /**

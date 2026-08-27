@@ -194,6 +194,7 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
   const [styleValue, setStyleValue] = useState<StylePickerValue | null>(null);
   const [savingStyle, setSavingStyle] = useState(false);
   const initialRef = useRef({
+    projectTitle: "",
     videoBackend: "", videoProviderI2V: "", videoProviderR2V: "",
     imageBackendDefault: "", imageBackendT2I: "", imageBackendI2I: "",
     audioOverride: null as boolean | null,
@@ -342,6 +343,7 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
       setStyleValue(derivedStyle);
       initialStyleRef.current = derivedStyle;
       initialRef.current = {
+        projectTitle: typeof project.title === "string" ? project.title : "",
         videoBackend: vb, videoProviderI2V: vpi2v, videoProviderR2V: vpr2v,
         imageBackendDefault: ibDefault, imageBackendT2I: ibt2i, imageBackendI2I: ibi2i,
         audioOverride: ao,
@@ -387,6 +389,7 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
       || initialStyleRef.current.uploadedPreview !== null);
 
   const isDirty =
+    projectTitle !== initialRef.current.projectTitle ||
     videoBackend !== initialRef.current.videoBackend ||
     videoProviderI2V !== initialRef.current.videoProviderI2V ||
     videoProviderR2V !== initialRef.current.videoProviderR2V ||
@@ -407,6 +410,7 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
     videoResolution !== initialRef.current.videoResolution ||
     imageResolution !== initialRef.current.imageResolution ||
     styleIsDirty;
+  const projectTitleValid = projectTitle.trim().length > 0;
   /* eslint-enable react-hooks/refs */
 
   useWarnUnsaved(isDirty);
@@ -483,6 +487,7 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
+      const trimmedProjectTitle = projectTitle.trim();
       // resolution 的 key 用执行模型（细分项 ‖ 项目默认 ‖ 全局细分 ‖ 全局默认），与读侧一致；
       // 后端按执行模型查这张表，键位对不上分辨率会被静默忽略。
       // 音色与后端 .strip() 对齐：保存时去首尾空白，避免本地基线带空格而磁盘值不带导致 isDirty 误报
@@ -502,6 +507,7 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
       }
 
       await API.updateProject(projectName, {
+        title: trimmedProjectTitle,
         video_backend: videoBackend || null,
         video_provider_i2v: videoProviderI2V || null,
         video_provider_r2v: videoProviderR2V || null,
@@ -526,8 +532,10 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
         model_settings: newModelSettings,
       });
       setModelSettings(newModelSettings);
+      setProjectTitle(trimmedProjectTitle);
       setNarrationVoice(trimmedVoice);
       initialRef.current = {
+        projectTitle: trimmedProjectTitle,
         videoBackend, videoProviderI2V, videoProviderR2V,
         imageBackendDefault, imageBackendT2I, imageBackendI2I, audioOverride,
         audioBackend, narrationVoice: trimmedVoice, narrationSpeed,
@@ -544,7 +552,7 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
     } finally {
       setSaving(false);
     }
-  }, [modelSettings, videoBackend, videoProviderI2V, videoProviderR2V, imageBackendDefault, imageBackendT2I, imageBackendI2I, audioOverride, audioBackend, narrationVoice, narrationSpeed, textDefault, textSimple, textComplex, aspectRatio, generationRoute, gridStoryboard, gridToggleVisible, defaultDuration, speechRate, contentMode, videoResolution, imageResolution, projectName, t, globalDefaults]);
+  }, [modelSettings, projectTitle, videoBackend, videoProviderI2V, videoProviderR2V, imageBackendDefault, imageBackendT2I, imageBackendI2I, audioOverride, audioBackend, narrationVoice, narrationSpeed, textDefault, textSimple, textComplex, aspectRatio, generationRoute, gridStoryboard, gridToggleVisible, defaultDuration, speechRate, contentMode, videoResolution, imageResolution, projectName, t, globalDefaults]);
 
   const handleResetAgentProfile = useCallback(async () => {
     if (profileResetProject !== projectName) {
@@ -788,10 +796,44 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
             </div>
 
             {/* 右栏：输出形态 / 管线 / 语速 / 配音 */}
-            <div className="min-w-0 space-y-5 lg:col-span-5 xl:col-span-4">
+            <div
+              className="min-w-0 space-y-5 lg:col-span-5 xl:col-span-4"
+              data-testid="project-settings-right-column"
+            >
               {options && (
                 <>
+              <SectionCard
+                kicker={t("project_identity_kicker")}
+                title={t("project_identity_title")}
+              >
+                <div>
+                  <label
+                    htmlFor="project-settings-title"
+                    className="mb-1.5 block font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3"
+                  >
+                    {t("project_name")}
+                  </label>
+                  <input
+                    id="project-settings-title"
+                    type="text"
+                    maxLength={120}
+                    value={projectTitle}
+                    onChange={(event) => setProjectTitle(event.target.value)}
+                    aria-invalid={!projectTitleValid}
+                    aria-describedby="project-settings-title-hint"
+                    className="w-full rounded-[8px] border border-hairline bg-bg-grad-a/55 px-3 py-2 text-[12.5px] text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  />
+                  <p
+                    id="project-settings-title-hint"
+                    className={`mt-1 text-[11px] ${projectTitleValid ? "text-text-4" : "text-danger"}`}
+                  >
+                    {projectTitleValid ? t("project_title_hint") : t("project_title_required")}
+                  </p>
+                </div>
+              </SectionCard>
+
               {/* Aspect ratio */}
+              <div data-testid="project-aspect-ratio-settings-section">
               <SectionCard kicker="Frame Aspect">
                 <fieldset>
                   <legend className="mb-2.5 block font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">
@@ -811,6 +853,17 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
                   />
                 </fieldset>
               </SectionCard>
+              </div>
+
+              <div data-testid="project-members-settings-section">
+                <SectionCard
+                  kicker={t("project_members_kicker")}
+                  title={t("project_members_title")}
+                  description={t("project_members_description")}
+                >
+                  <ProjectMembersSection project={projectName} currentRole={projectRole} />
+                </SectionCard>
+              </div>
 
               {/* Generation route — fixed workflow projects only. */}
               {contentMode !== "free" && (
@@ -926,16 +979,6 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
 
             </div>
 
-            <div className="min-w-0 lg:col-span-12" data-testid="project-members-settings-section">
-              <SectionCard
-                kicker={t("project_members_kicker")}
-                title={t("project_members_title")}
-                description={t("project_members_description")}
-              >
-                <ProjectMembersSection project={projectName} currentRole={projectRole} />
-              </SectionCard>
-            </div>
-
           </div>
         </div>
       </div>
@@ -980,7 +1023,7 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
               // eslint-disable-next-line react-hooks/refs
               onClick={voidPromise(handleSave)}
               // 口播语速越界时不放行保存（区间与后端同一把尺），行内提示已说明原因
-              disabled={saving || !isValidSpeechRate(speechRate)}
+              disabled={saving || !projectTitleValid || !isValidSpeechRate(speechRate)}
               className={`${ACCENT_BTN_CLS} px-5`}
               style={ACCENT_BUTTON_STYLE}
             >

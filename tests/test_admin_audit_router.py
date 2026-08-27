@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from lib.db import get_async_session
 from lib.db.models.audit import AuditEvent
+from lib.db.models.login_event import LoginEvent
 from lib.db.models.user import User
 from lib.db.models.user_session import UserSession
 from server.auth import CurrentUserInfo, get_current_user
@@ -195,6 +196,7 @@ async def test_admin_can_list_and_filter_login_sessions(db_factory) -> None:
                     device_id="browser-a",
                     token_id="token-active",
                     ip_address="192.0.2.10",
+                    last_seen_at=now,
                     expires_at=now + timedelta(hours=1),
                 ),
                 UserSession(
@@ -202,8 +204,25 @@ async def test_admin_can_list_and_filter_login_sessions(db_factory) -> None:
                     user_id=user.id,
                     device_id="browser-b",
                     token_id="token-revoked",
+                    last_seen_at=now,
                     expires_at=now + timedelta(hours=1),
                     revoked_at=now,
+                ),
+                UserSession(
+                    id="session-expired",
+                    user_id=user.id,
+                    device_id="browser-c",
+                    token_id="token-expired",
+                    last_seen_at=now,
+                    expires_at=now - timedelta(seconds=1),
+                ),
+                UserSession(
+                    id="session-stale",
+                    user_id=user.id,
+                    device_id="browser-d",
+                    token_id="token-stale",
+                    last_seen_at=now - timedelta(minutes=10),
+                    expires_at=now + timedelta(hours=1),
                 ),
             ]
         )
@@ -217,7 +236,44 @@ async def test_admin_can_list_and_filter_login_sessions(db_factory) -> None:
     assert payload["total"] == 1
     assert payload["sessions"][0]["id"] == "session-active"
     assert payload["sessions"][0]["status"] == "active"
+    assert payload["sessions"][0]["last_seen_at"] is not None
     assert "token_id" not in payload["sessions"][0]
+
+
+async def test_admin_can_filter_and_page_login_events(db_factory) -> None:
+    async with db_factory() as session:
+        session.add_all(
+            [
+                LoginEvent(
+                    id="11111111111111111111111111111111",
+                    username="alice",
+                    outcome="failure",
+                    reason="invalid_credentials",
+                    ip_address="192.0.2.10",
+                    endpoint="/api/v1/auth/session",
+                ),
+                LoginEvent(
+                    id="22222222222222222222222222222222",
+                    username="bob",
+                    outcome="success",
+                    session_id="session-bob",
+                    endpoint="/api/v1/auth/session",
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with _client(db_factory) as client:
+        response = await client.get(
+            "/api/v1/admin/login-events",
+            params={"username": "ali", "outcome": "failure", "page": 1, "page_size": 10},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["events"][0]["username"] == "alice"
+    assert payload["events"][0]["reason"] == "invalid_credentials"
 
 
 async def test_admin_can_search_users_by_email_and_view_login_metadata(db_factory) -> None:

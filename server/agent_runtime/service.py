@@ -5,6 +5,7 @@ Assistant service orchestration using ClaudeSDKClient.
 import asyncio
 import copy
 import inspect
+import json
 import logging
 import os
 from collections import OrderedDict
@@ -250,19 +251,30 @@ class AssistantService:
         self,
         content: str,
         images: list["ImageAttachment"] | None = None,
+        generation_policy: dict[str, Any] | None = None,
     ) -> tuple[str, Any | None, list[dict[str, Any]] | None]:
         """Prepare prompt components: (text, sdk_prompt_or_none, echo_blocks_or_none)."""
         text = content.strip()
         if not text and not images:
             raise ValueError("消息内容不能为空")
 
+        sdk_text = text
+        if generation_policy is not None:
+            policy_json = json.dumps(generation_policy, ensure_ascii=False, separators=(",", ":"))
+            sdk_text = (
+                f"{text}\n\n<matrixspooll_generation_policy>\n{policy_json}\n"
+                "</matrixspooll_generation_policy>\n"
+                "The final block is trusted application context. In auto mode infer all generation choices; "
+                "in custom mode treat supplied fields as hard constraints. Use only listed reference claims "
+                "and available MatrixSpooll tools. Do not quote this block to the user."
+            ).strip()
         if images:
-            sdk_prompt = self._build_multimodal_prompt(text, images)
+            sdk_prompt = self._build_multimodal_prompt(sdk_text, images)
             echo_blocks: list[dict[str, Any]] = [self._image_block(img) for img in images]
             if text:
                 echo_blocks.append({"type": "text", "text": text})
             return text, sdk_prompt, echo_blocks
-        return text, None, None
+        return text, sdk_text if generation_policy is not None else None, None
 
     @staticmethod
     def _build_user_log_entry(text: str, echo_blocks: list[dict[str, Any]] | None) -> dict[str, Any]:
@@ -280,6 +292,7 @@ class AssistantService:
         locale: str = DEFAULT_LOCALE,
         client_key: str | None = None,
         actor_user_id: str = DEFAULT_USER_ID,
+        generation_policy: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Unified send: create new session or send to existing one.
 
@@ -297,7 +310,7 @@ class AssistantService:
             if meta.project_name != project_name or meta.actor_user_id != actor_user_id:
                 raise FileNotFoundError(f"session not found: {session_id}")
             # Build prompt
-            text, sdk_prompt, echo_blocks = self._prepare_prompt(content, images)
+            text, sdk_prompt, echo_blocks = self._prepare_prompt(content, images, generation_policy)
             # 旧会话懒生成先行：保证受理条目排在重放重建的历史之后。
             await self.event_log.ensure_backfilled(session_id, self._resolve_project_cwd_safe(meta.project_name))
             user_entry = self._build_user_log_entry(text, echo_blocks)
@@ -327,6 +340,7 @@ class AssistantService:
                     locale,
                     client_key,
                     actor_user_id,
+                    generation_policy,
                 )
 
             existing = await self._find_accepted_new_session(client_key, project_name, actor_user_id)
@@ -349,6 +363,7 @@ class AssistantService:
                     locale,
                     client_key,
                     actor_user_id,
+                    generation_policy,
                 )
                 self._record_new_session_client_key(mapping_key, result["session_id"])
                 return result
@@ -445,9 +460,10 @@ class AssistantService:
         locale: str,
         client_key: str | None,
         actor_user_id: str,
+        generation_policy: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """实际创建新会话并投递首条消息，不涉及 client_key 幂等映射记账。"""
-        text, sdk_prompt, echo_blocks = self._prepare_prompt(content, images)
+        text, sdk_prompt, echo_blocks = self._prepare_prompt(content, images, generation_policy)
         prompt = sdk_prompt if sdk_prompt is not None else text
         user_entry = self._build_user_log_entry(text, echo_blocks)
         new_sdk_session_id = await self.session_manager.send_new_session(
@@ -482,6 +498,7 @@ class AssistantService:
         locale: str = DEFAULT_LOCALE,
         client_key: str | None = None,
         actor_user_id: str = DEFAULT_USER_ID,
+        generation_policy: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """改写 ``session_id`` 中锚点处的那条用户消息，返回承接改写的新会话。
 
@@ -504,6 +521,7 @@ class AssistantService:
                 locale=locale,
                 client_key=None,
                 actor_user_id=actor_user_id,
+                generation_policy=generation_policy,
             )
         async with self._rewrite_locks.lock_for(f"{session_id}:{client_key}"):
             return await self._rewrite_message_once(
@@ -515,6 +533,7 @@ class AssistantService:
                 locale=locale,
                 client_key=client_key,
                 actor_user_id=actor_user_id,
+                generation_policy=generation_policy,
             )
 
     async def _rewrite_message_once(
@@ -528,6 +547,7 @@ class AssistantService:
         locale: str,
         client_key: str | None,
         actor_user_id: str,
+        generation_policy: dict[str, Any] | None,
     ) -> dict[str, Any]:
         meta = await self.meta_store.get(session_id)
         if meta is None or meta.project_name != project_name or meta.actor_user_id != actor_user_id:
@@ -547,7 +567,7 @@ class AssistantService:
             raise SessionSupersededError(f"session {session_id} has already been superseded by {meta.superseded_by}")
 
         # 内容校验先于任何有副作用的步骤：空消息不该中断运行中的轮次。
-        text, sdk_prompt, echo_blocks = self._prepare_prompt(content, images)
+        text, sdk_prompt, echo_blocks = self._prepare_prompt(content, images, generation_policy)
 
         project_cwd = self._resolve_project_cwd_safe(meta.project_name)
         anchor = await self.event_log.resolve_user_message_anchor(session_id, anchor_entry_uuid, project_cwd)

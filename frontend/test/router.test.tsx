@@ -11,6 +11,29 @@ import { useConfigStatusStore } from "@/stores/config-status-store";
 import { useProjectsStore } from "@/stores/projects-store";
 import { AppRoutes } from "@/router";
 
+class MockSessionEventSource {
+  static instances: MockSessionEventSource[] = [];
+
+  readonly url: string;
+  readonly close = vi.fn();
+  private readonly listeners = new Map<string, EventListener[]>();
+
+  constructor(url: string | URL) {
+    this.url = String(url);
+    MockSessionEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    if (typeof listener !== "function") return;
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+
+  emit(type: string, data: unknown) {
+    const event = new MessageEvent(type, { data: JSON.stringify(data) });
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
+
 vi.mock("@/components/layout", () => ({
   StudioLayout: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="studio-layout">{children}</div>
@@ -73,6 +96,7 @@ function resetStores(): void {
 describe("AppRoutes", () => {
   beforeEach(() => {
     resetStores();
+    useAuthStore.setState(useAuthStore.getInitialState(), true);
     useAuthStore.setState({ isAuthenticated: true, isLoading: false });
     // ConfigStatusLoader 在 AppRoutes 中始终挂载；预置 initialized 让其 fetch() 短路，
     // 路由测试无需关心配置状态，也避免触发未 mock 的供应商接口与退避重试。
@@ -83,6 +107,26 @@ describe("AppRoutes", () => {
   afterEach(() => {
     // 个别用例切到 fake timers,统一还原,避免污染其它用例。
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+    MockSessionEventSource.instances = [];
+  });
+
+  it("logs out the replaced browser session and keeps a clear reason on the login page", async () => {
+    vi.stubGlobal("EventSource", MockSessionEventSource as unknown as typeof EventSource);
+    useAuthStore.setState({ username: "alice", isAuthenticated: true, isLoading: false });
+
+    renderAt("/app");
+    await waitFor(() => expect(MockSessionEventSource.instances).toHaveLength(1));
+    expect(MockSessionEventSource.instances[0].url).toBe("/api/v1/auth/session/events");
+
+    act(() => {
+      MockSessionEventSource.instances[0].emit("session_ended", { reason: "replaced" });
+    });
+
+    expect(await screen.findByTestId("login-page")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("您的账号已在其他设备登录，当前会话已下线");
+    expect(useAuthStore.getState().sessionEndReason).toBe("replaced");
+    expect(MockSessionEventSource.instances[0].close).toHaveBeenCalledOnce();
   });
 
   it("redirects the root path to the home route", async () => {

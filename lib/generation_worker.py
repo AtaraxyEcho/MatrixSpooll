@@ -111,6 +111,10 @@ def _encode_task_failure_message(exc: Exception) -> str:
         # 结构化执行拒绝没有通用兜底 code 可退，退回 str(exc)（即 code 本身）——
         # 非结构化文本在读侧原样透传，不会丢失原因。
         return _try_encode_failure(exc.code, exc.params) or str(exc)
+    code = getattr(exc, "code", None)
+    params = getattr(exc, "params", {})
+    if isinstance(code, str) and isinstance(params, dict):
+        return _try_encode_failure(code, params) or str(exc)
     return str(exc)
 
 
@@ -160,7 +164,7 @@ class CapacityTable:
     """
 
     _limits: dict[str, dict[str, int]]  # provider_id → {media_type → 上限}
-    _defaults: dict[str, int]  # {"image": 5, "video": 3, "audio": 10}，未知 provider 懒默认
+    _defaults: dict[str, int]  # provider 未知时各 lane 的懒默认
 
     def get(self, provider_id: str, media_type: str) -> int:
         """返回 ``(provider, media)`` 的并发上限。
@@ -217,7 +221,10 @@ class CapacityTable:
             )
             for pid, meta in PROVIDER_REGISTRY.items()
         }
-        return cls(_limits=limits, _defaults={"image": image_max, "video": video_max, "audio": audio_max})
+        return cls(
+            _limits=limits,
+            _defaults={"image": image_max, "video": video_max, "audio": audio_max, "postprocess": 1},
+        )
 
     @classmethod
     async def from_db(cls) -> CapacityTable:
@@ -266,7 +273,7 @@ class CapacityTable:
         logger.info("从 DB 加载供应商容量表: %s", limits)
         return cls(
             _limits=limits,
-            _defaults={"image": default_image, "video": default_video, "audio": default_audio},
+            _defaults={"image": default_image, "video": default_video, "audio": default_audio, "postprocess": 1},
         )
 
 
@@ -394,6 +401,9 @@ async def _extract_provider(task: dict[str, Any]) -> str:
     再按同一最新状态物化请求。
     解析失败（未配置供应商）时回退到 DEFAULT_PROVIDER 仅供限流，不阻断认领。
     """
+    if task.get("task_type") == "free_video_merge":
+        return "postprocess"
+
     project_name = task.get("project_name")
     raw_payload = task.get("payload")
     payload = raw_payload if isinstance(raw_payload, dict) else {}
@@ -597,7 +607,7 @@ class GenerationWorker:
         """
         claimed_any = False
 
-        for media_type in ("image", "video", "audio"):
+        for media_type in ("image", "video", "audio", "postprocess"):
             attempted_current_state_tasks: set[str] = set()
             while True:
                 # 每轮重算池满集合：刚 claim 的任务可能让某 provider 进入满状态
@@ -775,7 +785,9 @@ class GenerationWorker:
         """
         task_id = task["task_id"]
         task_type = task.get("task_type", "unknown")
-        provider_id = claimed_provider_id or await _extract_provider(task)
+        provider_id = (
+            "postprocess" if task_type == "free_video_merge" else claimed_provider_id or await _extract_provider(task)
+        )
         logger.info("开始处理任务 %s (type=%s, provider=%s)", task_id, task_type, provider_id)
 
         from server.services.generation_tasks import execute_generation_task
@@ -824,7 +836,7 @@ class GenerationWorker:
                 if rows == 0:
                     await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
                     await self._sync_free_creation_metadata(task, status="cancelled", discard_result=True)
-                elif task_type in ("free_image", "free_video", "free_edit"):
+                elif task_type in ("free_image", "free_video", "free_edit", "free_video_merge"):
                     await self._sync_free_creation_metadata(
                         task,
                         status="failed",
@@ -846,9 +858,10 @@ class GenerationWorker:
             return
         except Exception as exc:
             logger.exception("任务失败 %s (type=%s, provider=%s)", task_id, task_type, provider_id)
-            from server.services.custom_model_availability import quarantine_custom_model
+            if task_type != "free_video_merge":
+                from server.services.custom_model_availability import quarantine_custom_model
 
-            await asyncio.shield(quarantine_custom_model(task, provider_id, exc))
+                await asyncio.shield(quarantine_custom_model(task, provider_id, exc))
             rows = await asyncio.shield(self.queue.mark_task_failed(task_id, _encode_task_failure_message(exc)))
             if rows == 0:
                 # 外部已抢先翻 cancelling → 落地 cancelled 终态
@@ -1063,7 +1076,7 @@ class GenerationWorker:
         discard_result: bool = False,
     ) -> None:
         """Keep project-local free creation metadata aligned with queue terminal state."""
-        if task.get("task_type") not in {"free_image", "free_video", "free_edit", "free_audio"}:
+        if task.get("task_type") not in {"free_image", "free_video", "free_edit", "free_audio", "free_video_merge"}:
             return
         project_name = task.get("project_name")
         resource_id = task.get("resource_id")
@@ -1223,6 +1236,15 @@ class GenerationWorker:
                     error=failure if rows else None,
                     discard_result=True,
                 )
+                continue
+
+            # 本地后处理没有供应商扣费，进程重启后可安全回队重跑。
+            if media_type == "postprocess":
+                if await self._requeue_single_task(task_id):
+                    await self._sync_free_creation_metadata(task, status="queued", discard_result=True)
+                else:
+                    await self.queue.mark_task_cancelled(task_id, cancelled_by="user")
+                    await self._sync_free_creation_metadata(task, status="cancelled", discard_result=True)
                 continue
 
             checkpoint = None

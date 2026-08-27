@@ -1,15 +1,22 @@
-import type { FreeCreationMediaType } from "@/types";
-import type { AgentGenerationPreference } from "./GenerationComposer";
+import type {
+  AgentGenerationControlMode,
+  AgentGenerationPreference,
+  FreeCreationMediaType,
+} from "@/types";
 import type { FreeCreationReferenceMode } from "./FreeCreationReferenceInput";
 import type { GenerationModelPreferences } from "./generationModelPreference";
 
 export const FREE_CREATION_COMPOSER_PREFERENCES_KEY = "matrixspooll:freeCreationComposerPreferences";
 
 export interface FreeCreationComposerPreferences {
+  version?: 2;
   composerMode?: "agent" | FreeCreationMediaType;
   mediaType?: FreeCreationMediaType;
+  agentControlMode?: AgentGenerationControlMode;
   agentPreference?: AgentGenerationPreference;
   agentAspectRatio?: string;
+  agentModel?: string;
+  agentResolution?: string;
   referenceMode?: FreeCreationReferenceMode;
   aspectRatio?: string;
   resolution?: string;
@@ -18,14 +25,19 @@ export interface FreeCreationComposerPreferences {
   customSize?: boolean;
   quantity?: number;
   duration?: number;
+  collapsed?: boolean;
   modelPreferences?: GenerationModelPreferences;
 }
 
 const DEFAULT_PREFERENCES: FreeCreationComposerPreferences = {
+  version: 2,
   composerMode: "video",
   mediaType: "video",
+  agentControlMode: "auto",
   agentPreference: "video",
-  agentAspectRatio: "16:9",
+  agentAspectRatio: "smart",
+  agentModel: "auto",
+  agentResolution: "auto",
   referenceMode: "omni",
   aspectRatio: "16:9",
   resolution: "1080p",
@@ -34,6 +46,7 @@ const DEFAULT_PREFERENCES: FreeCreationComposerPreferences = {
   customSize: false,
   quantity: 1,
   duration: 4,
+  collapsed: false,
 };
 
 function storageKey(projectName: string): string {
@@ -50,6 +63,10 @@ function isComposerMode(value: unknown): value is FreeCreationComposerPreference
 
 function isAgentPreference(value: unknown): value is AgentGenerationPreference {
   return value === "image" || value === "video";
+}
+
+function isAgentControlMode(value: unknown): value is AgentGenerationControlMode {
+  return value === "auto" || value === "custom";
 }
 
 function isReferenceMode(value: unknown): value is FreeCreationReferenceMode {
@@ -80,10 +97,18 @@ function parsePreferences(value: unknown): FreeCreationComposerPreferences | nul
       }
     : undefined;
   return {
+    version: 2,
     composerMode: isComposerMode(record.composerMode) ? record.composerMode : undefined,
     mediaType: isMediaType(record.mediaType) ? record.mediaType : undefined,
+    agentControlMode: isAgentControlMode(record.agentControlMode)
+      ? record.agentControlMode
+      : isAgentPreference(record.agentPreference)
+        ? "custom"
+        : undefined,
     agentPreference: isAgentPreference(record.agentPreference) ? record.agentPreference : undefined,
     agentAspectRatio: typeof record.agentAspectRatio === "string" ? record.agentAspectRatio : undefined,
+    agentModel: typeof record.agentModel === "string" ? record.agentModel : undefined,
+    agentResolution: typeof record.agentResolution === "string" ? record.agentResolution : undefined,
     referenceMode: isReferenceMode(record.referenceMode) ? record.referenceMode : undefined,
     aspectRatio: typeof record.aspectRatio === "string" ? record.aspectRatio : undefined,
     resolution: typeof record.resolution === "string" ? record.resolution : undefined,
@@ -92,6 +117,7 @@ function parsePreferences(value: unknown): FreeCreationComposerPreferences | nul
     customSize: typeof record.customSize === "boolean" ? record.customSize : undefined,
     quantity: integerInRange(record.quantity, 1, 4),
     duration: positiveNumber(record.duration),
+    collapsed: typeof record.collapsed === "boolean" ? record.collapsed : undefined,
     modelPreferences,
   };
 }

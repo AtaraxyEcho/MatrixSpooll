@@ -667,6 +667,39 @@ describe("API", () => {
       expect(requestSpy).toHaveBeenCalledWith("/usage/projects");
     });
 
+    it("serializes Agent generation policy and reference claims in assistant requests", async () => {
+      const requestSpy = vi.spyOn(API, "request").mockResolvedValue({
+        session_id: "session-1",
+        status: "accepted",
+        entry: null,
+      } as never);
+      const policy = {
+        schema_version: 1 as const,
+        mode: "custom" as const,
+        output_type: "video" as const,
+        model: "mock/video-model",
+        resolution: "1080p",
+        references: [{
+          type: "upload" as const,
+          reference_id: "r_11111111111111111111",
+          role: "reference_image" as const,
+        }],
+      };
+
+      await API.sendAssistantMessage("demo project", "animate this", "session-1", [], "client-1", policy);
+
+      expect(requestSpy).toHaveBeenCalledWith("/projects/demo%20project/assistant/sessions/send", {
+        method: "POST",
+        body: JSON.stringify({
+          content: "animate this",
+          session_id: "session-1",
+          images: [],
+          client_key: "client-1",
+          generation_policy: policy,
+        }),
+      });
+    });
+
     it("builds static file and stream urls", () => {
       expect(API.getFileUrl("my project", "source/a.txt")).toBe(
         "/api/v1/files/my%20project/source/a.txt",
@@ -1037,6 +1070,60 @@ describe("API", () => {
         status: 409,
         conflict_project_name: "demo",
       });
+    });
+
+    it("does not manufacture diagnostics when an import failure has no diagnostic items", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockResponse({
+          ok: false,
+          status: 422,
+          statusText: "Unprocessable Entity",
+          jsonData: {
+            code: "project_archive_type_unsupported",
+            detail: "This archive cannot restore a project",
+            errors: ["Select a MatrixSpooll project backup"],
+            diagnostics: { blocking: [], auto_fixable: [], warnings: [] },
+          },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        await API.importProject(new File(["zip"], "creations.zip", { type: "application/zip" }));
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toMatchObject({ message: "This archive cannot restore a project" });
+        expect(error).not.toHaveProperty("diagnostics");
+      }
+    });
+
+    it("returns a queued creation when video merge is accepted", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockResponse({
+          status: 202,
+          jsonData: {
+            success: true,
+            task_id: "task-merge",
+            creation_id: "c_0123456789abcdef0123",
+            status: "queued",
+          },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(API.mergeFreeCreationVideos("demo", ["r_first", "r_second"])).resolves.toEqual({
+        success: true,
+        task_id: "task-merge",
+        creation_id: "c_0123456789abcdef0123",
+        status: "queued",
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/projects/demo/free-creation-merge",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ item_ids: ["r_first", "r_second"] }),
+        }),
+      );
     });
 
     it("reuses unauthorized handling for import requests", async () => {

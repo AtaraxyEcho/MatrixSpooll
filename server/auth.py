@@ -19,7 +19,7 @@ import string
 import time
 from collections import OrderedDict
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -29,7 +29,7 @@ from fastapi import Cookie, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -115,6 +115,9 @@ _cached_password_hash: str | None = None
 _database_auth_initialized = False
 
 SESSION_EXPIRY_SECONDS = 7 * 24 * 3600
+SESSION_ONLINE_WINDOW_SECONDS = 120
+SESSION_TOUCH_INTERVAL_SECONDS = 30
+SessionState = Literal["active", "replaced", "revoked", "expired", "invalid"]
 
 
 def hash_password(password: str) -> str:
@@ -245,16 +248,19 @@ async def create_user_session(
     ip_address: str | None,
     user_agent: str | None,
 ) -> UserSession:
-    """Replace the old session on one device and create a new session."""
+    """Replace an existing session from the same browser identity or source IP."""
     now = utc_now()
     session_id = uuid4().hex
+    same_client = UserSession.device_id == device_id
+    if ip_address:
+        same_client = or_(same_client, UserSession.ip_address == ip_address)
     async with async_session_factory() as db_session:
         async with db_session.begin():
             await db_session.execute(
                 update(UserSession)
                 .where(
                     UserSession.user_id == user.id,
-                    UserSession.device_id == device_id,
+                    same_client,
                     UserSession.revoked_at.is_(None),
                 )
                 .values(revoked_at=now, updated_at=now)
@@ -269,6 +275,7 @@ async def create_user_session(
                 token_id=session_id,
                 ip_address=ip_address,
                 user_agent=user_agent,
+                last_seen_at=now,
                 expires_at=now + timedelta(seconds=SESSION_EXPIRY_SECONDS),
             )
             db_session.add(row)
@@ -287,6 +294,49 @@ async def revoke_user_session(session_id: str, user_id: str | None = None) -> bo
                 stmt = stmt.where(UserSession.user_id == user_id)
             result = await db_session.execute(stmt.values(revoked_at=now, updated_at=now))
             return rowcount(result) > 0
+
+
+async def get_user_session_state(user_id: str, session_id: str) -> SessionState:
+    """Return the terminal reason for a browser session without touching its presence timestamp."""
+
+    now = utc_now()
+    async with async_session_factory() as db_session:
+        result = await db_session.execute(
+            select(User, UserSession)
+            .join(UserSession, UserSession.user_id == User.id)
+            .where(User.id == user_id, UserSession.id == session_id)
+        )
+        row = result.first()
+        if row is None:
+            return "invalid"
+
+        user, browser_session = row
+        if not user.is_active:
+            return "revoked"
+
+        expires_at = browser_session.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if expires_at <= now:
+            return "expired"
+        if browser_session.revoked_at is None:
+            return "active"
+
+        same_client = UserSession.device_id == browser_session.device_id
+        if browser_session.ip_address:
+            same_client = or_(same_client, UserSession.ip_address == browser_session.ip_address)
+        replacement = await db_session.scalar(
+            select(UserSession.id)
+            .where(
+                UserSession.user_id == user_id,
+                UserSession.id != session_id,
+                same_client,
+                UserSession.revoked_at.is_(None),
+                UserSession.expires_at > now,
+            )
+            .limit(1)
+        )
+        return "replaced" if replacement is not None else "revoked"
 
 
 async def revoke_all_user_sessions(
@@ -339,21 +389,30 @@ async def _session_user(payload: dict) -> CurrentUserInfo | None:
             .where(User.id == user_id, UserSession.id == session_id)
         )
         row = result.first()
-    if row is None:
-        return None
-    user, session = row
-    expires_at = session.expires_at
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=UTC)
-    if not user.is_active or session.revoked_at is not None or expires_at <= datetime.now(UTC):
-        return None
-    return CurrentUserInfo(
-        id=user.id,
-        sub=user.username,
-        role=user.role if user.role in {"admin", "member"} else "member",
-        session_id=session.id,
-        is_superadmin=user.is_superadmin,
-    )
+        if row is None:
+            return None
+        user, session = row
+        now = utc_now()
+        expires_at = session.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if not user.is_active or session.revoked_at is not None or expires_at <= now:
+            return None
+
+        last_seen_at = session.last_seen_at
+        if last_seen_at is not None and last_seen_at.tzinfo is None:
+            last_seen_at = last_seen_at.replace(tzinfo=UTC)
+        if last_seen_at is None or last_seen_at <= now - timedelta(seconds=SESSION_TOUCH_INTERVAL_SECONDS):
+            session.last_seen_at = now
+            await db_session.commit()
+
+        return CurrentUserInfo(
+            id=user.id,
+            sub=user.username,
+            role=user.role if user.role in {"admin", "member"} else "member",
+            session_id=session.id,
+            is_superadmin=user.is_superadmin,
+        )
 
 
 def create_token(

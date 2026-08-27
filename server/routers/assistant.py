@@ -128,11 +128,57 @@ class ImageRequest(BaseModel):
         return value
 
 
+class AgentReferenceClaim(BaseModel):
+    type: Literal["upload", "creation"]
+    reference_id: str | None = Field(default=None, pattern=r"^r_[a-f0-9]{20}$")
+    creation_id: str | None = Field(default=None, pattern=r"^c_[a-f0-9]{20}$")
+    version: int | None = Field(default=None, ge=1)
+    role: (
+        Literal[
+            "first_frame",
+            "last_frame",
+            "reference_image",
+            "reference_video",
+            "reference_audio",
+            "prompt_context",
+        ]
+        | None
+    ) = None
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "AgentReferenceClaim":
+        if self.type == "upload" and self.reference_id and self.creation_id is None:
+            return self
+        if self.type == "creation" and self.creation_id and self.reference_id is None:
+            return self
+        raise ValueError("reference identity does not match its type")
+
+
+class AgentGenerationPolicy(BaseModel):
+    schema_version: Literal[1] = 1
+    mode: Literal["auto", "custom"]
+    output_type: Literal["image", "video"] | None = None
+    aspect_ratio: str | None = Field(default=None, min_length=3, max_length=32)
+    model: str | None = Field(default=None, max_length=200)
+    resolution: str | None = Field(default=None, max_length=32)
+    references: list[AgentReferenceClaim] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> "AgentGenerationPolicy":
+        overrides = (self.output_type, self.aspect_ratio, self.model, self.resolution)
+        if self.mode == "auto" and any(value is not None for value in overrides):
+            raise ValueError("automatic policy cannot contain custom overrides")
+        if self.mode == "custom" and self.output_type is None:
+            raise ValueError("custom policy requires output_type")
+        return self
+
+
 class SendRequest(ImageRequest):
     content: str = ""
     session_id: str | None = None
     # 请求侧幂等键：同键重试返回既有权威条目，不产生重复。
     client_key: str | None = Field(default=None, max_length=128)
+    generation_policy: AgentGenerationPolicy | None = None
 
 
 class RewriteRequest(ImageRequest):
@@ -140,6 +186,7 @@ class RewriteRequest(ImageRequest):
     anchor_entry_uuid: str = Field(min_length=1, max_length=256)
     content: str = ""
     client_key: str | None = Field(default=None, max_length=128)
+    generation_policy: AgentGenerationPolicy | None = None
 
 
 class AnswerQuestionRequest(BaseModel):
@@ -166,6 +213,7 @@ async def send_message(
             locale=get_locale(request),
             client_key=req.client_key,
             actor_user_id=user.id,
+            generation_policy=req.generation_policy.model_dump(exclude_none=True) if req.generation_policy else None,
         )
         return result
     except HTTPException:
@@ -224,6 +272,7 @@ async def rewrite_message(
             locale=get_locale(request),
             client_key=req.client_key,
             actor_user_id=user.id,
+            generation_policy=req.generation_policy.model_dump(exclude_none=True) if req.generation_policy else None,
         )
     except HTTPException:
         raise

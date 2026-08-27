@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentFailureError, API } from "@/api";
 import { useAssistantStore } from "@/stores/assistant-store";
 import type { EntriesResponse, PendingQuestion, SessionMeta, SkillInfo, TimelineEntry } from "@/types";
+import type { AgentGenerationPolicy } from "@/types/free-creation";
 import { useAssistantSession } from "@/hooks/useAssistantSession";
 
 class MockEventSource {
@@ -377,6 +378,52 @@ describe("useAssistantSession", () => {
     expect(MockEventSource.instances[0].url).toContain("after=0");
     // client_key 随请求发送
     expect(sendSpy.mock.calls[0][4]).toEqual(expect.any(String));
+  });
+
+  it("forwards mock generation claims and changes the idempotency key when the policy changes", async () => {
+    mockIdleSession();
+    const sendSpy = vi
+      .spyOn(API, "sendAssistantMessage")
+      .mockRejectedValueOnce(new Error("mock network interruption"))
+      .mockResolvedValueOnce({ session_id: "session-1", status: "accepted", entry: userEntry(0, "create") });
+    const imagePolicy: AgentGenerationPolicy = {
+      schema_version: 1,
+      mode: "custom",
+      output_type: "image",
+      model: "mock/image-model",
+      resolution: "2K",
+      references: [{
+        type: "upload",
+        reference_id: "r_11111111111111111111",
+        role: "reference_image",
+      }],
+    };
+    const videoPolicy: AgentGenerationPolicy = {
+      schema_version: 1,
+      mode: "custom",
+      output_type: "video",
+      model: "mock/video-model",
+      resolution: "1080p",
+      references: [{
+        type: "creation",
+        creation_id: "c_22222222222222222222",
+        version: 2,
+        role: "reference_video",
+      }],
+    };
+    const { result } = renderHook(() => useAssistantSession("demo"));
+    await waitFor(() => expect(useAssistantStore.getState().currentSessionId).toBe("session-1"));
+
+    await act(async () => {
+      expect(await result.current.sendMessage("create", undefined, imagePolicy)).toBe(false);
+    });
+    await act(async () => {
+      expect(await result.current.sendMessage("create", undefined, videoPolicy)).toBe(true);
+    });
+
+    expect(sendSpy.mock.calls[0][5]).toEqual(imagePolicy);
+    expect(sendSpy.mock.calls[1][5]).toEqual(videoPolicy);
+    expect(sendSpy.mock.calls[1][4]).not.toBe(sendSpy.mock.calls[0][4]);
   });
 
   it("keeps timeline unchanged on send failure and reuses the idempotency key on retry", async () => {
@@ -1372,6 +1419,7 @@ describe("useAssistantSession", () => {
       "改写后的消息",
       undefined,
       expect.any(String),
+      undefined,
     );
 
     const state = useAssistantStore.getState();
@@ -1440,7 +1488,15 @@ describe("useAssistantSession", () => {
       expect(await result.current.rewriteMessage("u-0", "   ", images)).toBe(true);
     });
 
-    expect(rewriteSpy).toHaveBeenCalledWith("demo", "session-1", "u-0", "   ", images, expect.any(String));
+    expect(rewriteSpy).toHaveBeenCalledWith(
+      "demo",
+      "session-1",
+      "u-0",
+      "   ",
+      images,
+      expect.any(String),
+      undefined,
+    );
   });
 
   it("rejects a rewrite with neither text nor attachments", async () => {

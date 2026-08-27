@@ -19,6 +19,7 @@ import { ProjectMenu } from "./ProjectMenu";
 import { UserMenu } from "./UserMenu";
 import { PhaseStepper } from "./PhaseStepper";
 import { FreeCreationExportMenu } from "./FreeCreationExportMenu";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 
 import { API } from "@/api";
 import { ArchiveDiagnosticsDialog } from "@/components/shared/ArchiveDiagnosticsDialog";
@@ -484,6 +485,7 @@ export function GlobalHeader({ onNavigateBack, variant = "workflow" }: GlobalHea
               />
             )}
           </button> : null}
+          <LanguageSwitcher />
           <UserMenu />
         </div>
       </header>

@@ -250,6 +250,8 @@ async def _derive_execution_model_for_enqueue(
     但失败时返回 ``None``（不强行回 DEFAULT_PROVIDER）——让任务走 ``provider_id IS NULL``
     兜底分支，由 worker claim 后做二次校验，比硬塞一个可能错误的 provider 安全。
     """
+    if task_type == "free_video_merge":
+        return None
     is_video = media_type == "video" or task_type in ("video", "reference_video")
     is_audio = media_type == "audio" or task_type == "tts"
     video_capability: VideoCapability | None = None

@@ -1883,6 +1883,44 @@ class TestGenerationWorker:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_claim_tasks_dispatches_local_merge_to_postprocess_lane(self, monkeypatch):
+        class _PostprocessQueue(_FakeQueue):
+            def __init__(self):
+                super().__init__()
+                self._task = {
+                    "task_id": "merge1",
+                    "task_type": "free_video_merge",
+                    "media_type": "postprocess",
+                    "project_name": "demo",
+                    "resource_id": "c_0123456789abcdef0123",
+                    "payload": {"item_ids": ["r_a", "r_b"]},
+                }
+
+            async def claim_next_task(self, media_type, **_kwargs):  # type: ignore[override]
+                if media_type != "postprocess" or self._task is None:
+                    return None
+                task, self._task = self._task, None
+                return task
+
+        queue = _PostprocessQueue()
+        worker = GenerationWorker(
+            queue=queue,
+            capacity=CapacityTable(_limits={}, _defaults={"postprocess": 1}),
+        )
+
+        async def _fake_execute(task):
+            assert task["task_type"] == "free_video_merge"
+            return {"status": "succeeded"}
+
+        monkeypatch.setattr("server.services.generation_tasks.execute_generation_task", _fake_execute)
+
+        assert await worker._claim_tasks()
+        assert worker._slots.occupied("postprocess", "postprocess") == 1
+        await asyncio.gather(*worker._slots.all_active_tasks())
+        assert queue.succeeded == [("merge1", {"status": "succeeded"})]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_claim_requeue_on_full_pool_refreshes_provider_projection(self, monkeypatch):
         """池满回队前把重派生的 provider 刷回投影列。
 

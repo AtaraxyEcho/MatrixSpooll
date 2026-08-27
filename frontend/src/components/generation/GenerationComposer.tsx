@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { WheelEvent as ReactWheelEvent } from "react";
 import {
   Bot,
@@ -26,6 +26,9 @@ import { API } from "@/api";
 import { ASPECT_RATIO_OPTIONS } from "@/components/shared/AspectRatioPicker";
 import type {
   CreateFreeCreationRequest,
+  AgentGenerationControlMode,
+  AgentGenerationPolicy,
+  AgentGenerationPreference,
   FreeCreationReferenceClaim,
   FreeCreationReferenceRole,
   FreeCreationUploadMediaType,
@@ -37,6 +40,14 @@ import { useGenerationCapabilities } from "@/hooks/useModelCapabilities";
 import { referenceCompatibilityIssue } from "./FreeCreationReferenceRoleSelect";
 import { FreeCreationAssetPickerModal } from "./FreeCreationAssetPickerModal";
 import { FloatingParameterPopover } from "./FloatingParameterPopover";
+import { buildAgentGenerationPolicy } from "./agentGenerationPolicy";
+import {
+  imageDimensionRangeForPreset,
+  imageDimensionsForManualInput,
+  imageDimensionsForPreset,
+  selectableImageResolutionOptions,
+  type ImageDimensions,
+} from "./image-parameters";
 import {
   readGenerationModelPreferences,
   writeGenerationModelPreference,
@@ -58,18 +69,10 @@ interface HomeHeroComposerProps {
 }
 
 type HomeComposerMode = "agent" | "image" | "video";
-export type AgentGenerationPreference = "image" | "video";
 type ModelOptions = { image: string[]; video: string[] };
 type ModelTooltipState = { label: string; left: number; top: number; below: boolean; width: number };
 const EMPTY_MODEL_OPTIONS: ModelOptions = { image: [], video: [] };
-const IMAGE_RESOLUTION_PIXELS: Record<string, number> = {
-  "1.5k": 1536,
-  "2k": 2048,
-  "4k": 4096,
-};
 const QUANTITIES = [1, 2, 3, 4] as const;
-const MIN_IMAGE_DIMENSION = 256;
-const MAX_IMAGE_DIMENSION = 4096;
 
 function unique(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
@@ -93,37 +96,6 @@ export function videoDurationsForModel(model: string, durations: readonly number
   return [...new Set([...durations, ...Array.from({ length: 27 }, (_, index) => index + 4)])].sort(
     (left, right) => left - right,
   );
-}
-
-function dimensionsForPreset(resolution: string, ratio: string) {
-  const edge = IMAGE_RESOLUTION_PIXELS[resolution] ?? 1536;
-  const [ratioWidth = 1, ratioHeight = 1] = ratio.split(":").map(Number);
-  if (!Number.isFinite(ratioWidth) || !Number.isFinite(ratioHeight) || ratioWidth <= 0 || ratioHeight <= 0) {
-    return { width: edge, height: edge };
-  }
-
-  const align = (value: number) => Math.max(16, Math.round(value / 16) * 16);
-  return ratioWidth >= ratioHeight
-    ? { width: edge, height: align((edge * ratioHeight) / ratioWidth) }
-    : { width: align((edge * ratioWidth) / ratioHeight), height: edge };
-}
-
-function greatestCommonDivisor(left: number, right: number): number {
-  let a = Math.abs(left);
-  let b = Math.abs(right);
-  while (b) [a, b] = [b, a % b];
-  return a || 1;
-}
-
-function ratioForDimensions(width: number, height: number): string {
-  const divisor = greatestCommonDivisor(width, height);
-  return `${width / divisor}:${height / divisor}`;
-}
-
-function normalizeDimension(value: string, fallback: number): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(MAX_IMAGE_DIMENSION, Math.max(MIN_IMAGE_DIMENSION, parsed));
 }
 
 type HomeSelectValue = string | number;
@@ -207,7 +179,6 @@ export function HomeSelect<T extends HomeSelectValue>({
 }: HomeSelectProps<T>) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -281,16 +252,6 @@ export function HomeSelect<T extends HomeSelectValue>({
 
   useEffect(() => {
     if (!open) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
     if (searchable) searchRef.current?.focus();
     else optionRefs.current[selectedIndex]?.focus();
   }, [open, searchable, selectedIndex]);
@@ -326,14 +287,7 @@ export function HomeSelect<T extends HomeSelectValue>({
   };
 
   return (
-    <div
-      ref={rootRef}
-      className={`home-param-control${align === "right" ? " home-param-control--right" : ""}${placement === "top" ? " home-param-control--top" : ""}${className ? ` ${className}` : ""}`}
-      onBlur={(event) => {
-        const nextTarget = event.relatedTarget as Node | null;
-        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) setOpen(false);
-      }}
-    >
+    <div className={`home-param-control${align === "right" ? " home-param-control--right" : ""}${placement === "top" ? " home-param-control--top" : ""}${className ? ` ${className}` : ""}`}>
       <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
         ref={triggerRef}
@@ -383,6 +337,10 @@ export function HomeSelect<T extends HomeSelectValue>({
         className={searchable ? "home-model-popover" : ""}
         role={searchable ? "dialog" : "listbox"}
         ariaLabel={label}
+        onRequestClose={() => {
+          setOpen(false);
+          setQuery("");
+        }}
       >
           {searchable ? (
             <label className="home-param-search">
@@ -507,21 +465,10 @@ export function HomeMenu<T extends string>({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const menuId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
 
   const moveFocus = (start: number, direction: 1 | -1) => {
     for (let offset = 1; offset <= items.length; offset += 1) {
@@ -534,14 +481,7 @@ export function HomeMenu<T extends string>({
   };
 
   return (
-    <div
-      ref={rootRef}
-      className={`home-param-control home-tools-control${className ? ` ${className}` : ""}`}
-      onBlur={(event) => {
-        const nextTarget = event.relatedTarget as Node | null;
-        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) setOpen(false);
-      }}
-    >
+    <div className={`home-param-control home-tools-control${className ? ` ${className}` : ""}`}>
       <button
         ref={triggerRef}
         type="button"
@@ -568,6 +508,7 @@ export function HomeMenu<T extends string>({
         className="home-tools-popover"
         role="menu"
         ariaLabel={label}
+        onRequestClose={() => setOpen(false)}
       >
         {items.map((item, index) => {
           const ItemIcon = item.icon;
@@ -643,7 +584,8 @@ export interface ImageParameterControlProps {
   onRatioChange: (value: string) => void;
   onResolutionChange: (value: string) => void;
   onQuantityChange: (value: number) => void;
-  onDimensionsCommit: (width: number, height: number) => void;
+  onWidthChange: (value: number) => ImageDimensions;
+  onHeightChange: (value: number) => ImageDimensions;
   hideLabel?: boolean;
   placement?: "auto" | "top";
 }
@@ -667,56 +609,37 @@ export function ImageParameterControl({
   onRatioChange,
   onResolutionChange,
   onQuantityChange,
-  onDimensionsCommit,
+  onWidthChange,
+  onHeightChange,
   hideLabel = false,
   placement = "auto",
 }: ImageParameterControlProps) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const widthInputRef = useRef<HTMLInputElement>(null);
-  const heightInputRef = useRef<HTMLInputElement>(null);
   const panelId = useId();
+  const sizeHintId = `${panelId}-size-hint`;
+  const dimensionRange = useMemo(
+    () => imageDimensionRangeForPreset(resolution, ratio),
+    [ratio, resolution],
+  );
 
-  const commitDimensions = useCallback(() => {
-    const nextWidth = normalizeDimension(widthInputRef.current?.value ?? "", width);
-    const nextHeight = normalizeDimension(heightInputRef.current?.value ?? "", height);
-    onDimensionsCommit(nextWidth, nextHeight);
-  }, [height, onDimensionsCommit, width]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) {
-        commitDimensions();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [commitDimensions, open]);
-
-  const toggleOpen = () => {
-    if (open) {
-      commitDimensions();
+  const commitDimension = (
+    axis: "width" | "height",
+    input: HTMLInputElement,
+  ) => {
+    const onChange = axis === "width" ? onWidthChange : onHeightChange;
+    const parsed = input.valueAsNumber;
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      input.value = String(axis === "width" ? width : height);
+      return;
     }
-    setOpen((current) => !current);
+    const next = onChange(parsed);
+    input.value = String(axis === "width" ? next.width : next.height);
   };
 
   return (
-    <div
-      ref={rootRef}
-      className="home-param-control home-generation-parameters home-generation-parameters--image"
-      onBlur={(event) => {
-        const nextTarget = event.relatedTarget as Node | null;
-        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) {
-          commitDimensions();
-          setOpen(false);
-        }
-      }}
-    >
+    <div className="home-param-control home-generation-parameters home-generation-parameters--image">
       <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
         ref={triggerRef}
@@ -726,7 +649,7 @@ export function ImageParameterControl({
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         aria-haspopup="dialog"
-        onClick={toggleOpen}
+        onClick={() => setOpen((current) => !current)}
       >
         <span className="home-combined-trigger__segment">
           <Crop aria-hidden />
@@ -756,6 +679,7 @@ export function ImageParameterControl({
         className="home-image-parameters__popover"
         role="dialog"
         ariaLabel={label}
+        onRequestClose={() => setOpen(false)}
       >
           <fieldset className="home-popover-section">
             <legend>{ratioLabel}</legend>
@@ -809,21 +733,23 @@ export function ImageParameterControl({
             </div>
           </fieldset>
 
-          <fieldset key={`${width}x${height}`} className="home-popover-section">
+          <fieldset className="home-popover-section">
             <legend>{sizeLabel}</legend>
             <div className="home-size-inputs">
               <label>
                 <span>{widthLabel}</span>
                 <input
+                  key={`width-${width}`}
                   type="number"
                   inputMode="numeric"
-                  min={MIN_IMAGE_DIMENSION}
-                  max={MAX_IMAGE_DIMENSION}
+                  min={dimensionRange.minimum.width}
+                  max={dimensionRange.maximum.width}
                   step={16}
                   defaultValue={width}
-                  ref={widthInputRef}
+                  aria-describedby={sizeHintId}
+                  onBlur={(event) => commitDimension("width", event.currentTarget)}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") commitDimensions();
+                    if (event.key === "Enter") event.currentTarget.blur();
                   }}
                 />
               </label>
@@ -831,20 +757,22 @@ export function ImageParameterControl({
               <label>
                 <span>{heightLabel}</span>
                 <input
+                  key={`height-${height}`}
                   type="number"
                   inputMode="numeric"
-                  min={MIN_IMAGE_DIMENSION}
-                  max={MAX_IMAGE_DIMENSION}
+                  min={dimensionRange.minimum.height}
+                  max={dimensionRange.maximum.height}
                   step={16}
                   defaultValue={height}
-                  ref={heightInputRef}
+                  aria-describedby={sizeHintId}
+                  onBlur={(event) => commitDimension("height", event.currentTarget)}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") commitDimensions();
+                    if (event.key === "Enter") event.currentTarget.blur();
                   }}
                 />
               </label>
             </div>
-            <p className="home-popover-hint">{sizeHint}</p>
+            <p id={sizeHintId} className="home-popover-hint">{sizeHint}</p>
           </fieldset>
       </FloatingParameterPopover>
     </div>
@@ -887,31 +815,13 @@ export function VideoParameterControl({
   placement = "auto",
 }: VideoParameterControlProps) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
   const resolutionText = resolution === "auto" ? autoLabel : resolution.toUpperCase();
 
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
-
   return (
-    <div
-      ref={rootRef}
-      className="home-param-control home-generation-parameters home-generation-parameters--video"
-      onBlur={(event) => {
-        const nextTarget = event.relatedTarget as Node | null;
-        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) setOpen(false);
-      }}
-    >
+    <div className="home-param-control home-generation-parameters home-generation-parameters--video">
       <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
         ref={triggerRef}
@@ -947,6 +857,7 @@ export function VideoParameterControl({
         className="home-video-parameters__popover"
         role="dialog"
         ariaLabel={label}
+        onRequestClose={() => setOpen(false)}
       >
           <fieldset className="home-popover-section">
             <legend>{ratioLabel}</legend>
@@ -1020,11 +931,29 @@ export interface AgentParameterControlProps {
   preferenceLabel: string;
   imageLabel: string;
   videoLabel: string;
+  modelLabel: string;
+  resolutionLabel: string;
+  autoLabel: string;
+  customLabel: string;
+  smartLabel: string;
+  recommendedLabel: string;
+  modelAutoLabel: string;
+  resolutionAutoLabel: string;
+  modelSearchPlaceholder: string;
+  noModelsLabel: string;
   ratioLabel: string;
+  controlMode: AgentGenerationControlMode;
   preference: AgentGenerationPreference;
+  model: string;
+  resolution: string;
   ratio: string;
+  modelOptions: ReadonlyArray<{ value: string; label: string }>;
+  resolutionOptions: readonly string[];
   ratioOptions: ReadonlyArray<{ value: string; label: string }>;
+  onControlModeChange: (value: AgentGenerationControlMode) => void;
   onPreferenceChange: (value: AgentGenerationPreference) => void;
+  onModelChange: (value: string) => void;
+  onResolutionChange: (value: string) => void;
   onRatioChange: (value: string) => void;
   hideLabel?: boolean;
   placement?: "auto" | "top";
@@ -1035,40 +964,98 @@ export function AgentParameterControl({
   preferenceLabel,
   imageLabel,
   videoLabel,
+  modelLabel,
+  resolutionLabel,
+  autoLabel,
+  customLabel,
+  smartLabel,
+  recommendedLabel,
+  modelAutoLabel,
+  resolutionAutoLabel,
+  modelSearchPlaceholder,
+  noModelsLabel,
   ratioLabel,
+  controlMode,
   preference,
+  model,
+  resolution,
   ratio,
+  modelOptions,
+  resolutionOptions,
   ratioOptions,
+  onControlModeChange,
   onPreferenceChange,
+  onModelChange,
+  onResolutionChange,
   onRatioChange,
   hideLabel = false,
   placement = "auto",
 }: AgentParameterControlProps) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelQuery, setModelQuery] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement>(null);
+  const modelPanelRef = useRef<HTMLDivElement>(null);
+  const modelSearchRef = useRef<HTMLInputElement>(null);
   const panelId = useId();
+  const visibleModelOptions = useMemo(() => {
+    const query = modelQuery.trim().toLocaleLowerCase();
+    if (!query) return modelOptions;
+    return modelOptions.filter((option) => (
+      `${option.label} ${option.value}`.toLocaleLowerCase().includes(query)
+    ));
+  }, [modelOptions, modelQuery]);
+  const selectedModelLabel = model === "auto"
+    ? recommendedLabel
+    : modelOptions.find((option) => option.value === model)?.label ?? modelLabel;
+  const resolutionText = resolution === "auto" ? recommendedLabel : resolution.toUpperCase();
+  const automatic = controlMode === "auto";
 
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
+  useLayoutEffect(() => {
+    if (!open || !modelPickerOpen) return;
+    modelSearchRef.current?.focus();
+    const anchor = modelTriggerRef.current;
+    const panel = modelPanelRef.current;
+    if (!anchor || !panel) return;
+
+    const updatePosition = () => {
+      const anchorRect = anchor.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const padding = 12;
+      const gap = 8;
+      const width = Math.min(360, window.innerWidth - padding * 2);
+      const rightLeft = anchorRect.right + gap;
+      const leftLeft = anchorRect.left - gap - width;
+      const left = rightLeft + width <= window.innerWidth - padding
+        ? rightLeft
+        : Math.max(padding, leftLeft);
+      const top = Math.min(
+        Math.max(padding, anchorRect.top - 8),
+        Math.max(padding, window.innerHeight - padding - panelRect.height),
+      );
+      Object.assign(panel.style, {
+        left: `${left}px`,
+        top: `${top}px`,
+        width: `${width}px`,
+        visibility: "visible",
+      });
     };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
+
+    updatePosition();
+    const frame = window.requestAnimationFrame(updatePosition);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [modelPickerOpen, open, visibleModelOptions.length]);
 
   return (
-    <div
-      ref={rootRef}
-      className={`home-param-control home-agent-parameters${placement === "top" ? " home-param-control--top" : ""}`}
-      onBlur={(event) => {
-        const nextTarget = event.relatedTarget as Node | null;
-        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) setOpen(false);
-      }}
-    >
+    <div className={`home-param-control home-agent-parameters${placement === "top" ? " home-param-control--top" : ""}`}>
       <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
         ref={triggerRef}
@@ -1082,7 +1069,11 @@ export function AgentParameterControl({
       >
         <span className="home-param-trigger__value">
           <SlidersHorizontal className="home-param-trigger__icon" aria-hidden />
-          <span className="truncate">{preference === "image" ? imageLabel : videoLabel} · {ratio}</span>
+          <span className="truncate">
+            {automatic
+              ? autoLabel
+              : `${preference === "image" ? imageLabel : videoLabel} · ${selectedModelLabel} · ${resolutionText}`}
+          </span>
         </span>
         <ChevronDown className={`home-param-trigger__chevron${open ? " is-open" : ""}`} aria-hidden />
       </button>
@@ -1095,8 +1086,37 @@ export function AgentParameterControl({
         className="home-agent-parameters__popover"
         role="dialog"
         ariaLabel={label}
+        onRequestClose={() => {
+          setOpen(false);
+          setModelPickerOpen(false);
+          setModelQuery("");
+        }}
       >
-          <fieldset className="home-popover-section">
+          <div className="home-agent-preference-header">
+            <div>
+              <strong>{preferenceLabel}</strong>
+              <span>{automatic ? autoLabel : customLabel}</span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={automatic}
+              aria-label={autoLabel}
+              className="home-agent-mode-switch"
+              onClick={() => {
+                const nextMode = automatic ? "custom" : "auto";
+                if (nextMode === "auto") {
+                  setModelPickerOpen(false);
+                  setModelQuery("");
+                }
+                onControlModeChange(nextMode);
+              }}
+            >
+              <span aria-hidden />
+            </button>
+          </div>
+          <div className={`home-agent-preference-fields${automatic ? " is-disabled" : ""}`}>
+          <fieldset className="home-popover-section" disabled={automatic}>
             <legend>{preferenceLabel}</legend>
             <div className="home-detail-options home-detail-options--two">
               {([
@@ -1116,9 +1136,114 @@ export function AgentParameterControl({
               ))}
             </div>
           </fieldset>
-          <fieldset className="home-popover-section">
+          <fieldset className="home-popover-section" disabled={automatic}>
+            <legend>{modelLabel}</legend>
+            <button
+              ref={modelTriggerRef}
+              type="button"
+              className="home-agent-model-field"
+              aria-label={modelLabel}
+              aria-expanded={modelPickerOpen}
+              aria-haspopup="listbox"
+              onClick={() => setModelPickerOpen((current) => !current)}
+            >
+              <span>
+                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                <span className="truncate">{selectedModelLabel}</span>
+              </span>
+              <ChevronDown className={`h-3.5 w-3.5${modelPickerOpen ? " is-open" : ""}`} aria-hidden />
+            </button>
+            {modelPickerOpen ? (
+              <div
+                ref={modelPanelRef}
+                className="home-agent-model-picker"
+                role="listbox"
+                aria-label={modelLabel}
+              >
+                <label className="home-param-search home-agent-model-search">
+                  <Search className="h-3.5 w-3.5" aria-hidden />
+                  <input
+                    ref={modelSearchRef}
+                    type="search"
+                    value={modelQuery}
+                    onChange={(event) => setModelQuery(event.target.value)}
+                    placeholder={modelSearchPlaceholder}
+                    aria-label={modelSearchPlaceholder}
+                  />
+                </label>
+                <div className="home-agent-model-options">
+                <button
+                  type="button"
+                  className="home-agent-model-option"
+                  role="option"
+                  aria-selected={model === "auto"}
+                  aria-label={modelAutoLabel}
+                  onClick={() => {
+                    onModelChange("auto");
+                    setModelPickerOpen(false);
+                  }}
+                >
+                  <span><strong>{recommendedLabel}</strong><small>{modelAutoLabel}</small></span>
+                  {model === "auto" ? <Check className="h-3.5 w-3.5" aria-hidden /> : null}
+                </button>
+                {visibleModelOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className="home-agent-model-option"
+                    role="option"
+                    aria-selected={model === option.value}
+                    onClick={() => {
+                      onModelChange(option.value);
+                      setModelPickerOpen(false);
+                    }}
+                  >
+                    <span><strong>{option.label}</strong><small>{option.value}</small></span>
+                    {model === option.value ? <Check className="h-3.5 w-3.5" aria-hidden /> : null}
+                  </button>
+                ))}
+                {visibleModelOptions.length === 0 ? <p className="home-param-empty">{noModelsLabel}</p> : null}
+                </div>
+              </div>
+            ) : null}
+          </fieldset>
+          <fieldset className="home-popover-section" disabled={automatic}>
+            <legend>{resolutionLabel}</legend>
+            <div className="home-detail-options home-detail-options--three">
+              <button
+                type="button"
+                className="home-detail-option"
+                aria-pressed={resolution === "auto"}
+                aria-label={resolutionAutoLabel}
+                onClick={() => onResolutionChange("auto")}
+              >
+                {recommendedLabel}
+              </button>
+              {resolutionOptions.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className="home-detail-option"
+                  aria-pressed={resolution === value}
+                  onClick={() => onResolutionChange(value)}
+                >
+                  {value.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset className="home-popover-section" disabled={automatic}>
             <legend>{ratioLabel}</legend>
             <div className="home-ratio-options">
+              <button
+                type="button"
+                className="home-detail-option home-ratio-option"
+                aria-pressed={ratio === "smart"}
+                onClick={() => onRatioChange("smart")}
+              >
+                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                <span>{smartLabel}</span>
+              </button>
               {ratioOptions.map((option) => (
                 <button
                   key={option.value}
@@ -1133,6 +1258,7 @@ export function AgentParameterControl({
               ))}
             </div>
           </fieldset>
+          </div>
       </FloatingParameterPopover>
     </div>
   );
@@ -1155,7 +1281,6 @@ export function DurationControl({
   const minimum = supported[0] ?? value;
   const maximum = supported[supported.length - 1] ?? value;
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
@@ -1165,25 +1290,8 @@ export function DurationControl({
   const minimumProgress = `${(minimum / Math.max(1, maximum)) * 100}%`;
   const progress = `${(safeValue / Math.max(1, maximum)) * 100}%`;
 
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
-
   return (
-    <div
-      ref={rootRef}
-      className="home-param-control home-param-control--right home-duration-control"
-      onBlur={(event) => {
-        const nextTarget = event.relatedTarget as Node | null;
-        if (!event.currentTarget.contains(nextTarget) && !panelRef.current?.contains(nextTarget)) setOpen(false);
-      }}
-    >
+    <div className="home-param-control home-param-control--right home-duration-control">
       <span className={hideLabel ? "sr-only" : "home-param-label"}>{label}</span>
       <button
         ref={triggerRef}
@@ -1212,6 +1320,7 @@ export function DurationControl({
         className="home-duration-popover"
         role="dialog"
         ariaLabel={label}
+        onRequestClose={() => setOpen(false)}
       >
           <div className="home-duration-popover__header">
             <span>{minimumLabel}</span>
@@ -1258,8 +1367,11 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const referenceInputRef = useRef<HTMLInputElement>(null);
   const pendingFrameRoleRef = useRef<"first_frame" | "last_frame" | null>(null);
   const [composerMode, setComposerMode] = useState<HomeComposerMode>("video");
+  const [agentControlMode, setAgentControlMode] = useState<AgentGenerationControlMode>("auto");
   const [agentPreference, setAgentPreference] = useState<AgentGenerationPreference>("video");
-  const [agentAspectRatio, setAgentAspectRatio] = useState("16:9");
+  const [agentModel, setAgentModel] = useState("auto");
+  const [agentResolution, setAgentResolution] = useState("auto");
+  const [agentAspectRatio, setAgentAspectRatio] = useState("smart");
   const [referenceMode, setReferenceMode] = useState<FreeCreationReferenceMode>("omni");
   const [omniReferenceFiles, setOmniReferenceFiles] = useState<HomeReferenceFile[]>([]);
   const [frameReferenceFiles, setFrameReferenceFiles] = useState<HomeReferenceFile[]>([]);
@@ -1268,10 +1380,10 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const [videoAspectRatio, setVideoAspectRatio] = useState("16:9");
   const [imageAspectRatio, setImageAspectRatio] = useState("16:9");
   const [videoResolution, setVideoResolution] = useState<string>("1080p");
-  const [imageResolution, setImageResolution] = useState<string>("1.5k");
-  const initialImageDimensions = dimensionsForPreset("1.5k", "16:9");
-  const [imageWidth, setImageWidth] = useState(initialImageDimensions.width);
-  const [imageHeight, setImageHeight] = useState(initialImageDimensions.height);
+  const [imageResolution, setImageResolution] = useState<string>("1K");
+  const [customImageSize, setCustomImageSize] = useState<(
+    ImageDimensions & { ratio: string; resolution: string }
+  ) | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [duration, setDuration] = useState(4);
   const [modelPreferences, setModelPreferences] = useState(readGenerationModelPreferences);
@@ -1314,28 +1426,35 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const model = modelPreferences[outputType];
   const setModel = useCallback((nextModel: string) => {
     setModelPreferences((current) => writeGenerationModelPreference(current, outputType, nextModel));
+    if (outputType === "image") setCustomImageSize(null);
   }, [outputType]);
   const selectedModel = useMemo(
     () => (model === "auto" || models.length === 0 || models.includes(model) ? model : "auto"),
     [model, models],
   );
+  const agentModels = agentPreference === "video" ? modelOptions.video : modelOptions.image;
+  const selectedAgentModel = agentModel === "auto" || agentModels.length === 0 || agentModels.includes(agentModel)
+    ? agentModel
+    : "auto";
+  const capabilityOutputType = composerMode === "agent" ? agentPreference : outputType;
+  const capabilityModel = composerMode === "agent" ? selectedAgentModel : selectedModel;
   const referenceKind = useMemo<"none" | "frame" | "image" | "video" | "audio">(() => {
-    if (outputType === "video" && referenceMode === "frames") return "frame";
+    if (capabilityOutputType === "video" && referenceMode === "frames") return "frame";
     if (referenceFiles.some((item) => item.role === "reference_video")) return "video";
     if (referenceFiles.some((item) => item.role === "reference_audio")) return "audio";
     if (referenceFiles.some((item) => item.role === "reference_image")) return "image";
     return "none";
-  }, [outputType, referenceFiles, referenceMode]);
+  }, [capabilityOutputType, referenceFiles, referenceMode]);
   const { capabilities, error: capabilityError, loading: capabilitiesLoading } = useGenerationCapabilities({
-    outputType,
-    model: selectedModel === "auto" ? null : selectedModel,
+    outputType: capabilityOutputType,
+    model: capabilityModel === "auto" ? null : capabilityModel,
     referenceKind,
   });
   const ratioValues = useMemo(
-    () => capabilities?.output_type === outputType && capabilities.ratios.length
+    () => capabilities?.output_type === capabilityOutputType && capabilities.ratios.length
       ? capabilities.ratios
       : [],
-    [capabilities, outputType],
+    [capabilities, capabilityOutputType],
   );
   const ratioOptions = useMemo(() => ratioValues.map((value) => {
     const known = ASPECT_RATIO_OPTIONS.find((option) => option.value === value);
@@ -1343,7 +1462,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   }), [ratioValues, t]);
   const imageResolutionOptions = useMemo(
     () => capabilities?.output_type === "image" && capabilities.resolutions.length
-      ? capabilities.resolutions
+      ? selectableImageResolutionOptions(capabilities.resolutions)
       : [],
     [capabilities],
   );
@@ -1369,6 +1488,33 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const effectiveImageResolution = imageResolutionOptions.includes(imageResolution)
     ? imageResolution
     : imageResolutionOptions[0] ?? "";
+  const agentResolutionOptions = capabilities?.output_type === agentPreference
+    ? agentPreference === "image"
+      ? selectableImageResolutionOptions(capabilities.resolutions)
+      : capabilities.resolutions.filter((value) => value !== "auto")
+    : [];
+  const effectiveAgentResolution = agentResolution === "auto" || agentResolutionOptions.includes(agentResolution)
+    ? agentResolution
+    : "auto";
+  const effectiveAgentAspectRatio = agentAspectRatio === "smart"
+    || selectedAgentModel === "auto"
+    || ratioValues.includes(agentAspectRatio)
+    ? agentAspectRatio
+    : ratioValues[0] ?? agentAspectRatio;
+  const agentProjectAspectRatio = agentControlMode === "auto"
+    ? "16:9"
+    : effectiveAgentAspectRatio === "smart"
+      ? ratioValues[0] ?? "16:9"
+      : effectiveAgentAspectRatio;
+  const presetImageSize = useMemo(
+    () => imageDimensionsForPreset(effectiveImageResolution, effectiveImageAspectRatio),
+    [effectiveImageAspectRatio, effectiveImageResolution],
+  );
+  const activeCustomImageSize = customImageSize?.ratio === effectiveImageAspectRatio
+    && customImageSize.resolution === effectiveImageResolution
+    ? customImageSize
+    : null;
+  const { width: imageWidth, height: imageHeight } = activeCustomImageSize ?? presetImageSize;
   const videoDurations = videoDurationsForModel(
     selectedModel,
       capabilities?.output_type === "video" ? capabilities.durations : [],
@@ -1391,13 +1537,18 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       ? t("free_creation_capabilities_unavailable")
       : null
   );
-  const agentRatioOptions = useMemo(() => ASPECT_RATIO_OPTIONS.map(({ value, labelKey }) => ({
-    value,
-    label: t(labelKey),
-  })), [t]);
+  const agentRatioOptions = useMemo(() => {
+    const values = selectedAgentModel === "auto" || ratioValues.length === 0
+      ? ASPECT_RATIO_OPTIONS.map(({ value }) => value)
+      : ratioValues;
+    return values.map((value) => {
+      const known = ASPECT_RATIO_OPTIONS.find((option) => option.value === value);
+      return { value, label: known ? t(known.labelKey) : value };
+    });
+  }, [ratioValues, selectedAgentModel, t]);
 
   const showReferenceAdmissionIssue = (issue: Exclude<ReturnType<typeof referenceAdmissionIssue>, null>) => {
-    const limit = referenceUploadLimit(capabilities, referenceMode, outputType);
+    const limit = referenceUploadLimit(capabilities, referenceMode, capabilityOutputType);
     const message = issue === "frames_require_omni"
       ? t("free_creation_frames_require_omni")
       : issue === "unsupported_type"
@@ -1433,7 +1584,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
         mediaType,
         role,
         capabilities,
-        outputType,
+        outputType: capabilityOutputType,
         mode: referenceMode,
       });
       if (issue) {
@@ -1456,7 +1607,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
   const openReferencePicker = (frameRole?: "first_frame" | "last_frame") => {
     pendingFrameRoleRef.current = frameRole ?? null;
     if (!referenceInputRef.current) return;
-    referenceInputRef.current.accept = referenceAccept(capabilities, referenceMode, outputType);
+    referenceInputRef.current.accept = referenceAccept(capabilities, referenceMode, capabilityOutputType);
     referenceInputRef.current.multiple = referenceMode === "omni";
     referenceInputRef.current.click();
   };
@@ -1497,22 +1648,27 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
 
   const changeImageAspectRatio = (nextRatio: string) => {
     setImageAspectRatio(nextRatio);
-    const dimensions = dimensionsForPreset(effectiveImageResolution, nextRatio);
-    setImageWidth(dimensions.width);
-    setImageHeight(dimensions.height);
+    setCustomImageSize(null);
   };
 
   const changeImageResolution = (nextResolution: string) => {
     setImageResolution(nextResolution);
-    const dimensions = dimensionsForPreset(nextResolution, effectiveImageAspectRatio);
-    setImageWidth(dimensions.width);
-    setImageHeight(dimensions.height);
+    setCustomImageSize(null);
   };
 
-  const commitImageDimensions = (width: number, height: number) => {
-    setImageWidth(width);
-    setImageHeight(height);
-    setImageAspectRatio(ratioForDimensions(width, height));
+  const changeImageDimension = (axis: "width" | "height", value: number): ImageDimensions => {
+    const next = imageDimensionsForManualInput(
+      value,
+      axis,
+      effectiveImageResolution,
+      effectiveImageAspectRatio,
+    );
+    setCustomImageSize({
+      ...next,
+      ratio: effectiveImageAspectRatio,
+      resolution: effectiveImageResolution,
+    });
+    return next;
   };
 
   const handleSubmit = async () => {
@@ -1552,23 +1708,21 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       };
 
       if (composerMode === "agent") {
-        const project = await createProjectShell(agentAspectRatio);
+        const project = await createProjectShell(agentProjectAspectRatio);
         const projectRef = project.project_id ?? project.id ?? project.name;
-        await uploadReferences(projectRef);
-        const preferenceLabel = agentPreference === "image"
-          ? t("free_creation_agent_preference_image")
-          : t("free_creation_agent_preference_video");
-        const agentContext = t("free_creation_agent_prompt_context", {
-          preference: preferenceLabel,
-          ratio: agentAspectRatio,
+        const referenceClaims = await uploadReferences(projectRef);
+        const generationPolicy: AgentGenerationPolicy = buildAgentGenerationPolicy({
+          controlMode: agentControlMode,
+          preference: agentPreference,
+          aspectRatio: effectiveAgentAspectRatio,
+          model: selectedAgentModel,
+          resolution: effectiveAgentResolution,
+          references: referenceClaims,
         });
-        const referenceContext = referenceFiles.length
-          ? `\n${t("free_creation_agent_reference_context", { files: referenceFiles.map((item) => item.file.name).join(", ") })}`
-          : "";
         useAssistantStore.getState().queueHandoff({
           projectName: projectRef,
           content: cleanPrompt,
-          context: `${agentContext}${referenceContext}`,
+          generationPolicy,
         });
         setPrompt("");
         clearReferenceFiles();
@@ -1583,7 +1737,9 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
         resolution: outputType === "image"
           ? effectiveImageResolution
           : effectiveVideoResolution === "auto" ? undefined : effectiveVideoResolution,
-        size: outputType === "image" ? `${imageWidth}x${imageHeight}` : undefined,
+        ...(outputType === "image" && activeCustomImageSize
+          ? { size: `${imageWidth}x${imageHeight}` }
+          : {}),
         quantity,
         model: selectedModel === "auto" ? undefined : selectedModel,
         ...(outputType === "video" ? { duration_seconds: effectiveDuration } : {}),
@@ -1635,7 +1791,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       <div className="home-composer-shell rounded-[14px] p-3 sm:p-5">
         <FreeCreationReferenceInput
           mode={referenceMode}
-          outputType={outputType}
+          outputType={capabilityOutputType}
           capabilities={capabilities}
           items={referenceItems}
           busy={submitting}
@@ -1721,11 +1877,40 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
               preferenceLabel={t("free_creation_agent_generation_preference")}
               imageLabel={t("free_creation_agent_preference_image")}
               videoLabel={t("free_creation_agent_preference_video")}
+              modelLabel={t("free_creation_agent_model")}
+              resolutionLabel={t("home_resolution")}
+              autoLabel={t("free_creation_agent_auto_mode")}
+              customLabel={t("free_creation_agent_custom_mode")}
+              smartLabel={t("free_creation_agent_smart_ratio")}
+              recommendedLabel={t("free_creation_agent_recommended")}
+              modelAutoLabel={t("free_creation_agent_model_auto")}
+              resolutionAutoLabel={t("free_creation_agent_resolution_auto")}
+              modelSearchPlaceholder={t("free_creation_agent_model_search")}
+              noModelsLabel={t("home_model_no_results")}
               ratioLabel={t("free_creation_aspect_ratio")}
+              controlMode={agentControlMode}
               preference={agentPreference}
-              ratio={agentAspectRatio}
+              model={selectedAgentModel}
+              resolution={effectiveAgentResolution}
+              ratio={effectiveAgentAspectRatio}
+              modelOptions={agentModels.map((item) => ({
+                value: item,
+                label: modelLabel(item, t("home_model_auto")),
+              }))}
+              resolutionOptions={agentResolutionOptions}
               ratioOptions={agentRatioOptions}
-              onPreferenceChange={setAgentPreference}
+              onControlModeChange={setAgentControlMode}
+              onPreferenceChange={(nextPreference) => {
+                setAgentPreference(nextPreference);
+                setAgentModel("auto");
+                setAgentResolution("auto");
+                if (nextPreference === "image") setReferenceMode("omni");
+              }}
+              onModelChange={(nextModel) => {
+                setAgentModel(nextModel);
+                setAgentResolution("auto");
+              }}
+              onResolutionChange={setAgentResolution}
               onRatioChange={setAgentAspectRatio}
               hideLabel
             />
@@ -1751,7 +1936,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
               type="button"
               onClick={() => setAssetPickerOpen(true)}
               disabled={submitting || (() => {
-                const limit = referenceUploadLimit(capabilities, referenceMode, outputType);
+                const limit = referenceUploadLimit(capabilities, referenceMode, capabilityOutputType);
                 return limit !== null && referenceFiles.length >= limit;
               })()}
               className="home-param-trigger"
@@ -1783,7 +1968,8 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
               onRatioChange={changeImageAspectRatio}
               onResolutionChange={changeImageResolution}
               onQuantityChange={setQuantity}
-              onDimensionsCommit={commitImageDimensions}
+              onWidthChange={(value) => changeImageDimension("width", value)}
+              onHeightChange={(value) => changeImageDimension("height", value)}
               hideLabel
             />
           ) : (
@@ -1830,7 +2016,7 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
               || (composerMode !== "agent" && (!generationCapabilitiesReady || Boolean(referenceIssue)))
             }
             onClick={() => void handleSubmit()}
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] px-5 text-[13px] font-semibold transition-transform motion-safe:hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-45"
+            className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] px-3.5 text-xs font-semibold transition-transform motion-safe:hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-45"
             style={{ color: "oklch(0.14 0 0)", background: "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))" }}
           >
             {submitting ? <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden /> : <WandSparkles className="h-4 w-4" aria-hidden />}
@@ -1840,9 +2026,9 @@ export function HomeHeroComposer({ onCreated }: HomeHeroComposerProps) {
       </div>
       {assetPickerOpen ? (
         <FreeCreationAssetPickerModal
-          maxSelection={referenceUploadLimit(capabilities, referenceMode, outputType) === null
+          maxSelection={referenceUploadLimit(capabilities, referenceMode, capabilityOutputType) === null
             ? null
-            : Math.max(0, (referenceUploadLimit(capabilities, referenceMode, outputType) ?? 0) - referenceFiles.length)}
+            : Math.max(0, (referenceUploadLimit(capabilities, referenceMode, capabilityOutputType) ?? 0) - referenceFiles.length)}
           busy={importingAssets}
           onClose={() => {
             if (!importingAssets) setAssetPickerOpen(false);

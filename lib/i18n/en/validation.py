@@ -200,6 +200,8 @@ MESSAGES = {
     "arch_import_validation_failed": "Import package validation failed",
     "arch_artifact_activation_failed": "The imported project's artifact state is inconsistent",
     "arch_not_a_zip": "The uploaded file is not a valid ZIP archive",
+    "arch_creation_bundle_not_project": "This is a free-creation bundle, not a restorable project backup. Select a ZIP created by project export.",
+    "arch_format_version_unsupported": "Project backup format version {version} is unsupported; this release supports version {supported}.",
     "arch_zip_encrypted_entry": "The ZIP contains an encrypted entry and cannot be imported: {name}",
     "arch_zip_absolute_path_entry": "The ZIP contains an absolute-path entry: {name}",
     "arch_zip_traversal_entry": "The ZIP contains a path-traversal entry: {name}",

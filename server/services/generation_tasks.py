@@ -1436,7 +1436,7 @@ def compute_affected_fingerprints(project_name: str, task_type: str, resource_id
     elif task_type == "tts":
         audio_rel = resource_relative_path("audio", resource_id)
         paths.append((audio_rel, project_path / audio_rel))
-    elif task_type in {"free_image", "free_video", "free_edit"}:
+    elif task_type in {"free_image", "free_video", "free_edit", "free_video_merge"}:
         for suffix in (".png", ".mp4", ".json"):
             relative = f"creations/{resource_id}{suffix}"
             paths.append((relative, project_path / "creations" / f"{resource_id}{suffix}"))
@@ -1460,6 +1460,7 @@ _TASK_CHANGE_SPECS: dict[str, tuple] = {
     "free_image": ("free_creation", "free_creation_ready", "「{}」", False),
     "free_video": ("free_creation", "free_creation_ready", "「{}」", False),
     "free_edit": ("free_creation", "free_creation_ready", "「{}」", False),
+    "free_video_merge": ("free_creation", "free_creation_ready", "「{}」", False),
     "free_audio": ("free_creation", "free_creation_ready", "「{}」", False),
     "voice_sample": ("character", "voice_sample_ready", "「{}」试听样本", False),
     **{atype: (atype, "updated", f"{spec.label_zh}「{{}}」设计图", False) for atype, spec in ASSET_SPECS.items()},
@@ -3582,6 +3583,9 @@ _TASK_EXECUTORS = {
     ),
     "free_audio": lambda project_name, resource_id, payload, **kwargs: _execute_free_creation_task_proxy(
         "free_audio", project_name, resource_id, payload, **kwargs
+    ),
+    "free_video_merge": lambda project_name, resource_id, payload, **kwargs: _execute_free_creation_task_proxy(
+        "free_video_merge", project_name, resource_id, payload, **kwargs
     ),
 }
 

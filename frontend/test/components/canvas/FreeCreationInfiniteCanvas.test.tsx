@@ -609,6 +609,53 @@ describe("FreeCreationInfiniteCanvas", () => {
     expect(onMerge).toHaveBeenCalledWith([first.creation_id, second.creation_id]);
   });
 
+  it("merges selected uploaded videos in canvas order", async () => {
+    const first: FreeCreationUpload = {
+      ...textUpload,
+      reference_id: "r_11111111111111111111",
+      original_filename: "opening.mp4",
+      media_type: "video",
+      path: "uploads/free_creation/r_11111111111111111111.mp4",
+    };
+    const second: FreeCreationUpload = {
+      ...first,
+      reference_id: "r_22222222222222222222",
+      original_filename: "ending.mov",
+      path: "uploads/free_creation/r_22222222222222222222.mov",
+    };
+    const onMerge = vi.fn();
+    const { container } = render(
+      <FreeCreationInfiniteCanvas
+        projectName="demo"
+        creations={[]}
+        uploads={[first, second]}
+        readOnly={false}
+        actingId={null}
+        onCancel={vi.fn()}
+        onRetry={vi.fn()}
+        onEdit={vi.fn()}
+        onReference={vi.fn()}
+        onMerge={onMerge}
+      />,
+    );
+    const firstCard = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(`[data-canvas-id='${first.reference_id}']`);
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+    const secondCard = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(`[data-canvas-id='${second.reference_id}']`);
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+    selectCanvasNode(firstCard, 22);
+    selectCanvasNode(secondCard, 23, true);
+    fireEvent.contextMenu(secondCard, { clientX: 120, clientY: 120 });
+
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("free_creation_merge_selected") }));
+    expect(onMerge).toHaveBeenCalledWith([first.reference_id, second.reference_id]);
+  });
+
   it("offers voice compositing for exactly one selected video and one audio artifact", async () => {
     const video: FreeCreation = {
       ...creation,
@@ -1000,6 +1047,95 @@ describe("FreeCreationInfiniteCanvas", () => {
       },
     ]);
     expect(screen.queryByRole("menuitem", { name: t("free_creation_add_reference") })).not.toBeInTheDocument();
+  });
+
+  it("shows read-only relationships for the selection and switches the view locally", async () => {
+    localStorage.setItem(
+      "matrixspooll:freeCreationCanvasView:demo",
+      JSON.stringify({ relationMode: "selected" }),
+    );
+    const source: FreeCreation = {
+      ...creation,
+      creation_id: "c_source0123456789abcde",
+      prompt: "source frame",
+    };
+    const derived: FreeCreation = {
+      ...creation,
+      creation_id: "c_derived123456789abcde",
+      output_type: "video",
+      media_type: "video",
+      prompt: "derived shot",
+      reference_claims: [{
+        type: "creation",
+        creation_id: source.creation_id,
+        version: 1,
+        role: "first_frame",
+      }],
+    };
+    const { container } = renderCanvas([source, derived]);
+    const relationButton = screen.getByRole("button", { name: t("free_creation_relations") });
+    fireEvent.click(relationButton);
+    const relationOptions = screen.getAllByRole("menuitemradio");
+    expect(relationOptions.map((option) => option.textContent?.trim())).toEqual([
+      t("free_creation_relations_all"),
+      t("free_creation_relations_selected"),
+      t("free_creation_relations_off"),
+    ]);
+    expect(screen.getByRole("menuitemradio", {
+      name: t("free_creation_relations_all"),
+    })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(relationButton);
+    const derivedCard = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(`[data-canvas-id='${derived.creation_id}']`);
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+
+    selectCanvasNode(derivedCard, 34);
+    const summary = await screen.findByRole("button", {
+      name: t("free_creation_relation_summary", { upstream: 1, downstream: 0 }),
+    });
+    fireEvent.click(summary);
+    expect(screen.getByRole("heading", { name: t("free_creation_relation_details") })).toBeInTheDocument();
+    expect(screen.getByText(t("free_creation_relation_role_first_frame"))).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_relations") }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: t("free_creation_relations_off") }));
+    expect(JSON.parse(localStorage.getItem("matrixspooll:freeCreationCanvasView:demo") ?? "{}")).toEqual({
+      relationMode: "off",
+      version: 2,
+    });
+    expect(API.saveFreeCreationCanvas).not.toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({ show_relations: false }),
+    );
+  });
+
+  it("offers continuation only for one completed visual result", async () => {
+    const onContinue = vi.fn();
+    const { container } = render(
+      <FreeCreationInfiniteCanvas
+        projectName="demo"
+        creations={[creation]}
+        uploads={[]}
+        readOnly={false}
+        actingId={null}
+        onCancel={vi.fn()}
+        onRetry={vi.fn()}
+        onEdit={vi.fn()}
+        onReference={vi.fn()}
+        onContinue={onContinue}
+      />,
+    );
+    const card = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(`[data-canvas-id='${creation.creation_id}']`);
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+
+    fireEvent.contextMenu(card, { clientX: 120, clientY: 120 });
+    fireEvent.click(screen.getByRole("menuitem", { name: t("free_creation_continue_from_result") }));
+    expect(onContinue).toHaveBeenCalledWith(creation.creation_id);
   });
 
   it("hides every item in a multi-selection from one context action", async () => {

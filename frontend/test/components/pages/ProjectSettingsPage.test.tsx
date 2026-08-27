@@ -79,7 +79,7 @@ describe("ProjectSettingsPage – style picker", () => {
     mockBuiltinAgentProfile();
   });
 
-  it("uses the full settings width for project members and keeps owner actions visible", async () => {
+  it("places project members in the right settings column below the aspect ratio", async () => {
     vi.spyOn(API, "getProject").mockResolvedValue({
       current_role: "owner",
       project: { title: "Demo", episodes: [], characters: {}, clues: {} },
@@ -95,8 +95,35 @@ describe("ProjectSettingsPage – style picker", () => {
     renderAt("/app/projects/demo/settings");
 
     const section = await screen.findByTestId("project-members-settings-section");
-    expect(section).toHaveClass("lg:col-span-12");
+    const rightColumn = screen.getByTestId("project-settings-right-column");
+    expect(rightColumn).toContainElement(section);
+    expect(screen.getByTestId("project-aspect-ratio-settings-section").compareDocumentPosition(section))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(await screen.findByRole("button", { name: "移除" })).toBeInTheDocument();
+  });
+
+  it("edits the project display name from the identity card and saves it with settings", async () => {
+    vi.spyOn(API, "getProject").mockResolvedValue({
+      current_role: "owner",
+      project: { title: "Old title", episodes: [], characters: {}, clues: {} },
+      scripts: {},
+    } as unknown as Awaited<ReturnType<typeof API.getProject>>);
+    vi.spyOn(API, "listProjectMembers").mockResolvedValue({ members: [] });
+    const updateSpy = vi.spyOn(API, "updateProject").mockResolvedValue({
+      success: true,
+      project: { title: "New title" } as unknown as Awaited<ReturnType<typeof API.updateProject>>["project"],
+    });
+
+    renderAt("/app/projects/demo/settings");
+
+    const titleInput = await screen.findByRole("textbox", { name: /项目名称|Project name/i });
+    fireEvent.change(titleInput, { target: { value: "  New title  " } });
+    fireEvent.click(screen.getByRole("button", { name: /^(保存|Save)$/i }));
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({ title: "New title" }),
+    ));
   });
 
   it("shows customized Agent Profile files and resets only after destructive confirmation", async () => {

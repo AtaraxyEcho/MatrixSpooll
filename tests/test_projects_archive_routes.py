@@ -131,6 +131,53 @@ class TestProjectArchiveRoutes:
         assert any("project.json" in error for error in response.json()["errors"])
         assert "diagnostics" in response.json()
 
+    def test_import_route_identifies_free_creation_bundle(self, tmp_path, monkeypatch):
+        pm = ProjectManager(tmp_path / "projects")
+        client = _client(monkeypatch, pm)
+        archive_path = tmp_path / "demo-creations.zip"
+
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                "manifest.json",
+                json.dumps({"project": "demo", "creations": [{"creation_id": "c_demo"}]}),
+            )
+            archive.writestr("media/c_demo.mp4", b"video")
+
+        with client:
+            response = client.post(
+                "/api/v1/projects/import",
+                files={"file": (archive_path.name, archive_path.read_bytes(), "application/zip")},
+            )
+
+        assert response.status_code == 422
+        payload = response.json()
+        assert payload["code"] == "project_archive_type_unsupported"
+        assert payload["archive_type"] == "creation_bundle"
+        assert payload["expected_archive_type"] == "project_archive"
+        assert payload["diagnostics"]["blocking"]
+
+    def test_import_route_rejects_unsupported_project_archive_version(self, tmp_path, monkeypatch):
+        pm = ProjectManager(tmp_path / "projects")
+        client = _client(monkeypatch, pm)
+        archive_path = tmp_path / "future-project.zip"
+
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("demo/matrixspooll-export.json", json.dumps({"format_version": 999}))
+            archive.writestr("demo/project.json", json.dumps({"title": "Demo"}))
+
+        with client:
+            response = client.post(
+                "/api/v1/projects/import",
+                files={"file": (archive_path.name, archive_path.read_bytes(), "application/zip")},
+            )
+
+        assert response.status_code == 422
+        payload = response.json()
+        assert payload["code"] == "project_archive_version_unsupported"
+        assert payload["format_version"] == 999
+        assert payload["supported_format_version"] == 2
+        assert payload["diagnostics"]["blocking"]
+
     def test_import_route_rejects_upload_over_limit(self, tmp_path, monkeypatch):
         pm = ProjectManager(tmp_path / "projects")
         client = _client(monkeypatch, pm)

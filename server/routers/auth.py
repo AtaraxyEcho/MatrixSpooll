@@ -7,14 +7,14 @@
 import asyncio
 import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -30,12 +30,14 @@ from server.auth import (
     create_user_session,
     database_auth_initialized,
     database_user_exists,
+    get_user_session_state,
     is_auth_enabled,
     revoke_all_user_sessions,
     revoke_user_session,
     update_user_password,
 )
 from server.security.login_throttle import ACCOUNT_LOGIN_THROTTLE, IP_LOGIN_THROTTLE
+from server.services.login_events import LoginOutcome, record_login_event
 from server.services.user_validation import NICKNAME_MAX_LENGTH, validate_nickname
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,7 @@ router = APIRouter()
 
 ALLOWED_AVATAR_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
+SESSION_EVENTS_POLL_SECONDS = 2.0
 
 
 def _normalize_email(value: str | None) -> str | None:
@@ -119,19 +122,90 @@ class _LoginResult:
     email: str | None = None
 
 
+@dataclass(frozen=True)
+class _LoginFormData:
+    username: str | None
+    password: str | None
+
+
+async def _read_login_form(
+    username: Annotated[str | None, Form()] = None,
+    password: Annotated[str | None, Form()] = None,
+) -> _LoginFormData:
+    return _LoginFormData(username=username, password=password)
+
+
+async def _record_login_event_safely(
+    request: Request,
+    *,
+    outcome: LoginOutcome,
+    username: str | None,
+    reason: str | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    device_id: str | None = None,
+) -> None:
+    if not database_auth_initialized():
+        return
+    try:
+        async with async_session_factory() as session:
+            record_login_event(
+                session,
+                outcome=outcome,
+                endpoint=request.url.path,
+                user_id=user_id,
+                username=username,
+                reason=reason,
+                session_id=session_id,
+                device_id=device_id,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+            )
+            await session.commit()
+    except Exception:  # noqa: BLE001 - login availability must not depend on audit storage
+        logger.exception("Failed to record login event")
+
+
 async def _authenticate_login(
-    form_data: OAuth2PasswordRequestForm,
+    form_data: _LoginFormData,
     request: Request,
     device_id: str | None,
     translate: Callable[..., str],
 ) -> _LoginResult:
-    account_key = form_data.username.strip().casefold()
+    username = (form_data.username or "").strip()
+    password = form_data.password or ""
+    normalized_device_id = (device_id or "browser-default").strip()[:200] or "browser-default"
+    if not username or not password:
+        reason = (
+            "missing_username_and_password"
+            if not username and not password
+            else "missing_username"
+            if not username
+            else "missing_password"
+        )
+        await _record_login_event_safely(
+            request,
+            outcome=LoginOutcome.FAILURE,
+            username=username or None,
+            reason=reason,
+            device_id=normalized_device_id,
+        )
+        raise HTTPException(status_code=422, detail=translate("login_credentials_required"))
+
+    account_key = username.casefold()
     ip_key = request.client.host if request.client else "unknown"
     retry_after = max(
         ACCOUNT_LOGIN_THROTTLE.retry_after(account_key),
         IP_LOGIN_THROTTLE.retry_after(ip_key),
     )
     if is_auth_enabled() and retry_after:
+        await _record_login_event_safely(
+            request,
+            outcome=LoginOutcome.RATE_LIMITED,
+            username=username,
+            reason="rate_limited",
+            device_id=normalized_device_id,
+        )
         raise HTTPException(
             status_code=429,
             detail=translate("login_rate_limited"),
@@ -139,15 +213,23 @@ async def _authenticate_login(
         )
 
     if is_auth_enabled() and database_auth_initialized():
-        user = await authenticate_database_user(form_data.username, form_data.password)
+        user = await authenticate_database_user(username, password)
         if user is not None:
             session = await create_user_session(
                 user,
-                device_id=(device_id or "browser-default").strip()[:200] or "browser-default",
+                device_id=normalized_device_id,
                 ip_address=request.client.host if request.client else None,
                 user_agent=request.headers.get("user-agent"),
             )
             ACCOUNT_LOGIN_THROTTLE.clear(account_key)
+            await _record_login_event_safely(
+                request,
+                outcome=LoginOutcome.SUCCESS,
+                username=user.username,
+                user_id=user.id,
+                session_id=session.id,
+                device_id=normalized_device_id,
+            )
             return _LoginResult(
                 token=create_token(user.username, user_id=user.id, session_id=session.id, role=user.role),
                 username=user.username,
@@ -158,23 +240,30 @@ async def _authenticate_login(
             )
 
     if is_auth_enabled() and (
-        (database_auth_initialized() and await database_user_exists(form_data.username))
-        or not check_credentials(form_data.username, form_data.password)
+        (database_auth_initialized() and await database_user_exists(username))
+        or not check_credentials(username, password)
     ):
-        logger.warning("Login failed for user %s", form_data.username)
+        logger.warning("Login failed for user %s", username)
         ACCOUNT_LOGIN_THROTTLE.record_failure(account_key)
         IP_LOGIN_THROTTLE.record_failure(ip_key)
+        await _record_login_event_safely(
+            request,
+            outcome=LoginOutcome.FAILURE,
+            username=username,
+            reason="invalid_credentials",
+            device_id=normalized_device_id,
+        )
         raise HTTPException(
             status_code=401,
             detail=translate("unauthorized"),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    logger.info("User logged in: %s", form_data.username)
+    logger.info("User logged in: %s", username)
     ACCOUNT_LOGIN_THROTTLE.clear(account_key)
     return _LoginResult(
-        token=create_token(form_data.username),
-        username=form_data.username,
+        token=create_token(username),
+        username=username,
         role="admin",
     )
 
@@ -218,7 +307,7 @@ async def auth_status():
 
 @public_router.post("/auth/token", response_model=TokenResponse)
 async def login_for_access_token(
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    form_data: Annotated[_LoginFormData, Depends(_read_login_form)],
     _t: Translator,
     request: Request,
     device_id: Annotated[str | None, Form()] = None,
@@ -243,7 +332,7 @@ async def login_for_access_token(
 
 @public_router.post("/auth/session", response_model=BrowserSessionResponse)
 async def login_for_browser_session(
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    form_data: Annotated[_LoginFormData, Depends(_read_login_form)],
     _t: Translator,
     request: Request,
     response: Response,
@@ -332,6 +421,33 @@ async def current_user(current_user: CurrentUser) -> CurrentUserResponse:
         last_login_at=last_login_at,
         last_login_ip=last_login_ip,
     )
+
+
+@router.post("/auth/heartbeat", status_code=204)
+async def heartbeat(_current_user: CurrentUser) -> None:
+    """Keep the authenticated browser session visible in the online-session list."""
+
+
+@router.get("/auth/session/events", response_class=EventSourceResponse)
+async def stream_session_events(
+    request: Request,
+    current_user: CurrentUser,
+) -> AsyncIterator[ServerSentEvent]:
+    """Notify an open browser as soon as its revocable login reaches a terminal state."""
+
+    yield ServerSentEvent(event="ready", data={"status": "active"})
+    if not current_user.session_id:
+        return
+
+    while True:
+        await asyncio.sleep(SESSION_EVENTS_POLL_SECONDS)
+        if await request.is_disconnected():
+            return
+        state = await get_user_session_state(current_user.id, current_user.session_id)
+        if state == "active":
+            continue
+        yield ServerSentEvent(event="session_ended", data={"reason": state})
+        return
 
 
 @router.put("/auth/me", response_model=CurrentUserResponse)

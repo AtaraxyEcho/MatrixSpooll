@@ -6,6 +6,7 @@ import { API } from "@/api";
 import i18n from "@/i18n";
 import { useAppStore } from "@/stores/app-store";
 import { useProjectsStore } from "@/stores/projects-store";
+import { useAuthStore } from "@/stores/auth-store";
 import { ProjectsPage } from "@/components/pages/ProjectsPage";
 
 const t = i18n.getFixedT("zh", "dashboard");
@@ -30,8 +31,20 @@ describe("ProjectsPage", () => {
   beforeEach(() => {
     useProjectsStore.setState(useProjectsStore.getInitialState(), true);
     useAppStore.setState(useAppStore.getInitialState(), true);
+    useAuthStore.setState(useAuthStore.getInitialState(), true);
     localStorage.clear();
     vi.restoreAllMocks();
+  });
+
+  it("keeps language switching visible while hiding system settings from members", async () => {
+    useAuthStore.setState({ role: "member" });
+    vi.spyOn(API, "listProjects").mockResolvedValue({ projects: [] });
+
+    renderPage();
+
+    await screen.findByText("新建项目");
+    expect(screen.getByRole("button", { name: t("language_setting") })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: i18n.t("common:system_settings") })).not.toBeInTheDocument();
   });
 
   it("shows loading state while projects are being fetched", () => {
@@ -100,7 +113,6 @@ describe("ProjectsPage", () => {
         prompt: "纸飞机穿过云层",
         aspect_ratio: "16:9",
         resolution: "1.5k",
-        size: "1536x864",
         quantity: 1,
       }),
     });
@@ -168,8 +180,8 @@ describe("ProjectsPage", () => {
     renderPage("list");
     fireEvent.click(await screen.findByRole("button", { name: /项目操作.*Shared Project/ }));
 
-    expect(screen.queryByRole("link", { name: /项目设置/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /项目成员/ }));
+    expect(screen.queryByRole("menuitem", { name: /项目设置/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: /项目成员/ }));
 
     const dialog = await screen.findByRole("dialog", { name: "项目成员" });
     expect(dialog).toHaveClass("w-fit");
@@ -193,14 +205,74 @@ describe("ProjectsPage", () => {
 
     const { location } = renderPage("list");
     fireEvent.click(await screen.findByRole("button", { name: /项目操作.*Editable Project/ }));
-    fireEvent.click(screen.getByRole("link", { name: /项目设置/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /项目设置/ }));
 
     expect(location.history?.at(-1)).toBe("/app/projects/editable/settings");
   });
 
-  it("filters by the four merged phases and counts each pill", async () => {
+  it("opens the same visible project menu from the card context action", async () => {
     vi.spyOn(API, "listProjects").mockResolvedValue({
-      projects: [
+      projects: [{
+        name: "context-project",
+        title: "Context Project",
+        style: "Anime",
+        current_role: "editor",
+        thumbnail: null,
+        status: {},
+      }],
+    });
+
+    renderPage("list");
+    const projectLink = await screen.findByRole("link", { name: /Context Project/ });
+    const card = projectLink.closest("article");
+    expect(card).not.toBeNull();
+    const actionButton = screen.getByRole("button", {
+      name: new RegExp(t("lobby_card_actions")),
+    });
+    expect(actionButton).not.toHaveClass("opacity-0");
+
+    fireEvent.contextMenu(card!, { clientX: 180, clientY: 140 });
+
+    expect(screen.getByRole("menu", {
+      name: new RegExp(t("lobby_card_actions")),
+    })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: new RegExp(t("project_settings")) })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: new RegExp(t("project_members_title")) })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: new RegExp(t("delete_project")) })).toBeInTheDocument();
+  });
+
+  it("keeps current project cards mounted while a filter request is pending", async () => {
+    let resolveFiltered: ((value: Awaited<ReturnType<typeof API.listProjects>>) => void) | undefined;
+    vi.spyOn(API, "listProjects")
+      .mockResolvedValueOnce({
+        projects: [{
+          name: "existing-project",
+          title: "Existing Project",
+          style: "Anime",
+          content_mode: "free",
+          thumbnail: null,
+          status: {},
+        }],
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveFiltered = resolve;
+      }));
+
+    renderPage("list");
+    expect(await screen.findByRole("link", { name: /Existing Project/ })).toBeInTheDocument();
+    const contentModeGroup = screen.getByRole("group", { name: t("content_mode") });
+    fireEvent.click(within(contentModeGroup).getByRole("button", { name: t("drama_animation") }));
+    await waitFor(() => expect(API.listProjects).toHaveBeenCalledTimes(2));
+
+    expect(screen.getByRole("link", { name: /Existing Project/ })).toBeInTheDocument();
+    expect(screen.queryByText(t("loading_projects"))).not.toBeInTheDocument();
+
+    resolveFiltered?.({ projects: [] });
+    await waitFor(() => expect(screen.queryByRole("link", { name: /Existing Project/ })).not.toBeInTheDocument());
+  });
+
+  it("filters by the four merged phases and counts each pill", async () => {
+    const phaseProjects = [
         {
           name: "writing",
           title: "Writing Project",
@@ -231,8 +303,12 @@ describe("ProjectsPage", () => {
             episodes_summary: { total: 2, scripted: 2, in_production: 1, completed: 0 },
           },
         },
-      ],
-    });
+      ];
+    vi.spyOn(API, "listProjects").mockImplementation(async (filters = {}) => ({
+      projects: filters.phase === "script"
+        ? phaseProjects.filter((project) => project.status.phase === "script")
+        : phaseProjects,
+    }));
 
     renderPage();
 
@@ -577,6 +653,68 @@ describe("ProjectsPage", () => {
     expect(screen.getByText("缺少 project.json")).toBeInTheDocument();
     expect(screen.getByText("缺少 scripts/episode_1.json")).toBeInTheDocument();
     expect(screen.getByText("segments[0]: 补全缺失字段 clues_in_segment")).toBeInTheDocument();
+  });
+
+  it("shows the server detail when import diagnostics are empty", async () => {
+    vi.spyOn(API, "listProjects").mockResolvedValue({ projects: [] });
+    const error = new Error("This archive cannot restore a project") as Error & {
+      detail?: string;
+      errors?: string[];
+      diagnostics?: {
+        blocking: { code: string; message: string }[];
+        auto_fixable: { code: string; message: string }[];
+        warnings: { code: string; message: string }[];
+      };
+    };
+    error.detail = "This archive cannot restore a project";
+    error.errors = ["Select a MatrixSpooll project backup"];
+    error.diagnostics = { blocking: [], auto_fixable: [], warnings: [] };
+    vi.spyOn(API, "importProject").mockRejectedValue(error);
+
+    const { container } = renderPage();
+    await screen.findByText("新建项目");
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(["zip"], "creations.zip", { type: "application/zip" })] },
+    });
+
+    await waitFor(() => {
+      expect(useAppStore.getState().toast?.text).toContain("This archive cannot restore a project");
+    });
+    expect(screen.queryByText("导入失败诊断")).not.toBeInTheDocument();
+  });
+
+  it("confirms a clean project archive import before opening the restored project", async () => {
+    vi.spyOn(API, "listProjects").mockResolvedValue({ projects: [] });
+    vi.spyOn(API, "importProject").mockResolvedValue({
+      success: true,
+      project_id: "5af996e4-1a33-4b48-ae72-1d1e560ad9fc",
+      project_name: "restored-demo",
+      project: {
+        title: "Restored Demo",
+        content_mode: "narration",
+        style: "Anime",
+        episodes: [],
+        characters: {},
+        scenes: {},
+        props: {},
+      },
+      warnings: [],
+      conflict_resolution: "none",
+      diagnostics: { auto_fixed: [], warnings: [] },
+    });
+
+    const { container, location } = renderPage();
+    await screen.findByText("新建项目");
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(["zip"], "project.zip", { type: "application/zip" })] },
+    });
+
+    await waitFor(() => {
+      expect(useAppStore.getState().toast?.text).toContain("Restored Demo");
+      expect(location.history?.at(-1)).toBe("/app/projects/5af996e4-1a33-4b48-ae72-1d1e560ad9fc");
+    });
   });
 
   it("opens a secondary confirmation when import hits a duplicate project id", async () => {

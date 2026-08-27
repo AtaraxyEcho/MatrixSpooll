@@ -19,8 +19,10 @@ import { useProjectsStore } from "@/stores/projects-store";
 import { useAppStore } from "@/stores/app-store";
 import { useAssistantStore } from "@/stores/assistant-store";
 import { useAuthStore } from "@/stores/auth-store";
+import type { SessionEndReason } from "@/stores/auth-store";
 import { useConfigStatusStore } from "@/stores/config-status-store";
 import { errMsg } from "@/utils/async";
+import { sessionFetch } from "@/utils/auth";
 import { lookupProjectVideoResolution } from "@/utils/provider-models";
 import {
   ROUTE_APP,
@@ -83,6 +85,76 @@ function RouteLoading() {
       <span>{t("loading")}</span>
     </main>
   );
+}
+
+const SESSION_END_REASONS = new Set<SessionEndReason>(["replaced", "revoked", "expired", "invalid"]);
+
+function normalizeSessionEndReason(value: unknown): SessionEndReason {
+  return typeof value === "string" && SESSION_END_REASONS.has(value as SessionEndReason)
+    ? value as SessionEndReason
+    : "invalid";
+}
+
+function SessionPresenceReporter() {
+  const { t } = useTranslation("auth");
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const username = useAuthStore((state) => state.username);
+  const endSession = useAuthStore((state) => state.endSession);
+
+  useEffect(() => {
+    if (!isAuthenticated || !username) return;
+
+    let source: EventSource | null = null;
+    let sessionEnded = false;
+    const closeSource = () => {
+      const activeSource = source;
+      source = null;
+      activeSource?.close();
+    };
+    const terminateSession = (reason: SessionEndReason) => {
+      if (sessionEnded) return;
+      sessionEnded = true;
+      closeSource();
+      endSession(reason);
+      useAppStore.getState().pushToast(t(`session_ended_${reason}`), "warning");
+    };
+    const reportPresence = async () => {
+      if (document.visibilityState === "hidden") return;
+      try {
+        const response = await sessionFetch("/api/v1/auth/heartbeat", { method: "POST" });
+        if (response.status === 401) terminateSession("invalid");
+      } catch {
+        // A network interruption is not evidence that the authenticated session ended.
+      }
+    };
+    const handleVisibilityChange = () => void reportPresence();
+    const handleSessionEnded = (event: Event) => {
+      let reason: unknown = null;
+      try {
+        const parsed: unknown = JSON.parse((event as MessageEvent<string>).data);
+        if (parsed && typeof parsed === "object" && "reason" in parsed) reason = parsed.reason;
+      } catch {
+        // Malformed event payloads fall back to the generic invalid-session reason.
+      }
+      terminateSession(normalizeSessionEndReason(reason));
+    };
+
+    if (typeof EventSource !== "undefined") {
+      source = new EventSource("/api/v1/auth/session/events");
+      source.addEventListener("session_ended", handleSessionEnded);
+    }
+
+    void reportPresence();
+    const timer = window.setInterval(() => void reportPresence(), 45_000);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      closeSource();
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [endSession, isAuthenticated, t, username]);
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +221,31 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     // 登录成功后据此回跳。
     const from = window.location.pathname + window.location.search + window.location.hash;
     return <Redirect to={`~/login?from=${encodeURIComponent(from)}`} />;
+  }
+
+  return <>{children}</>;
+}
+
+// GuestGuard — 已登录用户访问登录页时重定向到首页（避免重复登录）
+function GuestGuard({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuthStore();
+  const { t } = useTranslation("common");
+
+  if (isLoading) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex h-screen items-center justify-center gap-2 bg-bg text-[13px] text-text-4"
+      >
+        <Loader2 aria-hidden className="h-4 w-4 motion-safe:animate-spin" />
+        <span>{t("loading")}</span>
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
+    return <Redirect to={`~${ROUTE_APP}`} />;
   }
 
   return <>{children}</>;
@@ -409,12 +506,15 @@ export function AppRoutes() {
   return (
     <>
       <ConfigStatusLoader />
+      <SessionPresenceReporter />
       <Suspense fallback={<RouteLoading />}>
         <OnboardingTour />
         <Switch>
         {/* Login page */}
         <Route path="/login">
-          <LoginPage />
+          <GuestGuard>
+            <LoginPage />
+          </GuestGuard>
         </Route>
 
         {/* Administrator portal */}

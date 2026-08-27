@@ -9,6 +9,7 @@ import { useAssistantStore } from "@/stores/assistant-store";
 import { useProjectsStore } from "@/stores/projects-store";
 import { useTasksStore } from "@/stores/tasks-store";
 import { useUsageStore } from "@/stores/usage-store";
+import { useAuthStore } from "@/stores/auth-store";
 import { DEMO_PROJECT_NAME } from "@/onboarding/demo-project";
 
 vi.mock("@/components/task-hud/TaskHud", () => ({
@@ -63,11 +64,11 @@ vi.mock("@/components/layout/ExportScopeDialog", () => ({
     ) : null,
 }));
 
-function renderHeader() {
+function renderHeader(variant: "workflow" | "free" = "workflow") {
   const { hook } = memoryLocation({ path: "/characters" });
   return render(
     <Router hook={hook}>
-      <GlobalHeader />
+      <GlobalHeader variant={variant} />
     </Router>,
   );
 }
@@ -79,7 +80,22 @@ describe("GlobalHeader", () => {
     useAssistantStore.setState(useAssistantStore.getInitialState(), true);
     useTasksStore.setState(useTasksStore.getInitialState(), true);
     useUsageStore.setState(useUsageStore.getInitialState(), true);
+    useAuthStore.setState(useAuthStore.getInitialState(), true);
     vi.restoreAllMocks();
+  });
+
+  it("keeps language switching in the workspace top bar", () => {
+    vi.spyOn(API, "getUsageStats").mockResolvedValue({
+      total_cost: 0,
+      image_count: 0,
+      video_count: 0,
+      failed_count: 0,
+      total_count: 0,
+    });
+
+    renderHeader();
+
+    expect(screen.getByRole("button", { name: "语言" })).toBeInTheDocument();
   });
 
   it("prefers the project title over the internal project name", async () => {
@@ -187,6 +203,33 @@ describe("GlobalHeader", () => {
     });
     expect(anchorClick).toHaveBeenCalled();
     expect(useAppStore.getState().toast?.text).toContain("包含 1 条诊断");
+  });
+
+  it("offers a restorable project backup from the free-creation export menu", async () => {
+    vi.spyOn(API, "getUsageStats").mockResolvedValue({
+      total_cost: 0,
+      image_count: 0,
+      video_count: 0,
+      failed_count: 0,
+      total_count: 0,
+    });
+    vi.spyOn(API, "requestExportToken").mockResolvedValue({
+      download_token: "free-project-backup-token",
+      expires_in: 300,
+      diagnostics: { blocking: [], auto_fixed: [], warnings: [] },
+    });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    useProjectsStore.setState({ currentProjectName: "free-demo" });
+
+    renderHeader("free");
+    screen.getByRole("button", { name: "导出" }).click();
+    (await screen.findByRole("menuitem", { name: "导出项目备份" })).click();
+
+    await waitFor(() => {
+      expect(API.requestExportToken).toHaveBeenCalledWith("free-demo", "full");
+    });
+    expect(anchorClick).toHaveBeenCalled();
+    expect(useAppStore.getState().toast?.text).toContain("项目 ZIP 已开始下载");
   });
 
   it("ad 参考路线导出不做旧签名预检", async () => {

@@ -10,7 +10,6 @@ import {
   Film,
   Info,
   KeyRound,
-  Languages,
   Plug,
   UserRound,
 } from "lucide-react";
@@ -25,11 +24,7 @@ import { MediaModelSection } from "./settings/MediaModelSection";
 import { ProviderSection } from "./ProviderSection";
 import { UsageStatsSection } from "./settings/UsageStatsSection";
 import { AccountSecuritySection } from "./AccountSecuritySection";
-import {
-  SUPPORTED_LANGUAGES,
-  LANGUAGE_DISPLAY_LABELS,
-  type SupportedLanguage,
-} from "@/i18n";
+import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher";
 
 // 全局设置页 · "Control Booth"
 // 延续 Darkroom 美学：editorial 大标题 + mono kicker + 分组侧栏 + accent 紫色高亮。
@@ -89,7 +84,7 @@ const SECTION_GROUPS: SectionGroup[] = [
 // ---------------------------------------------------------------------------
 
 export function SystemConfigPage() {
-  const { t, i18n } = useTranslation(["common", "dashboard", "onboarding"]);
+  const { t } = useTranslation(["common", "dashboard", "onboarding"]);
   const [location, navigate] = useLocation();
   const search = useSearch();
 
@@ -117,16 +112,6 @@ export function SystemConfigPage() {
   useEffect(() => {
     void fetchConfigStatus();
   }, [fetchConfigStatus]);
-
-  const currentLang = i18n.language.split("-")[0] as SupportedLanguage;
-  const langDisplay =
-    LANGUAGE_DISPLAY_LABELS[currentLang] ?? i18n.language;
-
-  const cycleLang = () => {
-    const idx = SUPPORTED_LANGUAGES.indexOf(currentLang);
-    const nextIdx = idx === -1 ? 0 : (idx + 1) % SUPPORTED_LANGUAGES.length;
-    void i18n.changeLanguage(SUPPORTED_LANGUAGES[nextIdx]);
-  };
 
   // -------------------------------------------------------------------------
   // Main render
@@ -177,18 +162,7 @@ export function SystemConfigPage() {
               <CircleHelp className="h-3.5 w-3.5" aria-hidden />
               <span className="hidden sm:inline">{t("onboarding:replay_action")}</span>
             </button>
-            <button
-              type="button"
-              onClick={cycleLang}
-              className="inline-flex shrink-0 items-center gap-2 rounded-md border border-hairline-soft bg-bg-grad-a/45 px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              title={langDisplay}
-              aria-label={t("dashboard:language_setting")}
-            >
-              <Languages className="h-3.5 w-3.5" aria-hidden />
-              <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.14em]">
-                {currentLang}
-              </span>
-            </button>
+            <LanguageSwitcher compact={false} />
           </div>
         </div>
       </header>

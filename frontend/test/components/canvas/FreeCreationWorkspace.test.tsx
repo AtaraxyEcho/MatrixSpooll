@@ -4,6 +4,7 @@ import { API } from "@/api";
 import { FreeCreationWorkspace } from "@/components/canvas/FreeCreationWorkspace";
 import { GENERATION_MODEL_PREFERENCES_STORAGE_KEY } from "@/components/generation/generationModelPreference";
 import i18n from "@/i18n";
+import type { FreeCreation } from "@/types";
 
 vi.mock("@/components/copilot/AgentCopilot", () => ({
   AgentCopilot: ({ footerStart }: { footerStart?: React.ReactNode }) => (
@@ -56,7 +57,7 @@ describe("FreeCreationWorkspace", () => {
       output_type: outputType,
       model: outputType === "video" ? "ark/video-model" : "ark/image-model",
       ratios: ["16:9", "9:16"],
-      resolutions: outputType === "video" ? ["720p", "1080p"] : ["1.5k", "2k"],
+      resolutions: outputType === "video" ? ["720p", "1080p"] : ["512px", "1.5k", "2k"],
       durations: outputType === "video" ? [4, 8, 12] : [],
       max_reference_images: outputType === "video" ? 9 : null,
       max_reference_videos: outputType === "video" ? 3 : null,
@@ -92,8 +93,15 @@ describe("FreeCreationWorkspace", () => {
     fireEvent.change(resolution, {
       target: { value: "2k" },
     });
-    expect(screen.getByLabelText("W")).toHaveValue(2048);
-    expect(screen.getByLabelText("H")).toHaveValue(1152);
+    fireEvent.click(screen.getByRole("button", { name: t("home_image_settings") }));
+    expect(screen.queryByRole("button", { name: "512PX" })).not.toBeInTheDocument();
+    const width = screen.getByRole("spinbutton", { name: t("home_width") });
+    expect(width).toHaveValue(2560);
+    expect(screen.getByRole("spinbutton", { name: t("home_height") })).toHaveValue(1440);
+    fireEvent.change(width, { target: { value: "1600" } });
+    fireEvent.blur(width);
+    expect(screen.getByRole("spinbutton", { name: t("home_width") })).toHaveValue(1536);
+    expect(screen.getByRole("spinbutton", { name: t("home_height") })).toHaveValue(864);
     fireEvent.change(screen.getByLabelText(t("free_creation_quantity")), {
       target: { value: "3" },
     });
@@ -109,7 +117,7 @@ describe("FreeCreationWorkspace", () => {
         output_type: "image",
         model: "ark/image-model",
         resolution: "2k",
-        size: "2048x1152",
+        size: "1536x864",
         quantity: 3,
       }),
     );
@@ -150,6 +158,88 @@ describe("FreeCreationWorkspace", () => {
     first.unmount();
     render(<FreeCreationWorkspace projectName="demo" />);
     await waitFor(() => expect(screen.getByRole("button", { name: t("home_model") })).toHaveTextContent("seedance-2.5"));
+  });
+
+  it("collapses without clearing the draft and expands from the compact entry", async () => {
+    render(<FreeCreationWorkspace projectName="demo" />);
+    const prompt = await screen.findByPlaceholderText(t("free_creation_prompt"));
+    fireEvent.change(prompt, { target: { value: "keep this unsent draft" } });
+
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_composer_collapse") }));
+    expect(screen.queryByPlaceholderText(t("free_creation_prompt"))).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("free_creation_composer_expand") }));
+
+    expect(screen.getByPlaceholderText(t("free_creation_prompt"))).toHaveValue("keep this unsent draft");
+  });
+
+  it("loads a completed result into the composer without submitting", async () => {
+    const result: FreeCreation = {
+      creation_id: "c_continue0123456789abc",
+      output_type: "video",
+      media_type: "video",
+      status: "succeeded",
+      prompt: "follow the train through the station",
+      media_path: "creations/c_continue0123456789abc.mp4",
+      version: 5,
+      aspect_ratio: "9:16",
+      resolution: "1080p",
+      duration_seconds: 8,
+      model: "ark/video-model",
+    };
+    vi.mocked(API.getFreeCreationCanvasIndex).mockResolvedValue({
+      version: 1,
+      creation_total: 1,
+      reference_total: 0,
+      total: 1,
+      creations: [result],
+      references: [],
+      built_at: "2026-08-23T00:00:00Z",
+    });
+    const create = vi.spyOn(API, "createFreeCreation");
+    const { container } = render(<FreeCreationWorkspace projectName="demo" />);
+    const card = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(`[data-canvas-id='${result.creation_id}']`);
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+
+    fireEvent.contextMenu(card, { clientX: 120, clientY: 120 });
+    fireEvent.click(screen.getByRole("menuitem", { name: t("free_creation_continue_from_result") }));
+
+    expect(screen.getByPlaceholderText(t("free_creation_prompt"))).toHaveValue(result.prompt);
+    expect(screen.getAllByText(result.prompt ?? "").length).toBeGreaterThan(0);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("asks before replacing an unsent draft during continuation", async () => {
+    const result: FreeCreation = {
+      creation_id: "c_conflict0123456789abc",
+      output_type: "image",
+      media_type: "image",
+      status: "succeeded",
+      prompt: "new result prompt",
+      media_path: "creations/c_conflict0123456789abc.png",
+      version: 2,
+    };
+    vi.mocked(API.getFreeCreationCanvasIndex).mockResolvedValue({
+      version: 1,
+      creation_total: 1,
+      reference_total: 0,
+      total: 1,
+      creations: [result],
+      references: [],
+      built_at: "2026-08-23T00:00:00Z",
+    });
+    const { container } = render(<FreeCreationWorkspace projectName="demo" />);
+    const prompt = await screen.findByPlaceholderText(t("free_creation_prompt"));
+    fireEvent.change(prompt, { target: { value: "existing unsent prompt" } });
+    const card = await waitFor(() => container.querySelector<HTMLElement>(`[data-canvas-id='${result.creation_id}']`)!);
+
+    fireEvent.contextMenu(card, { clientX: 120, clientY: 120 });
+    fireEvent.click(screen.getByRole("menuitem", { name: t("free_creation_continue_from_result") }));
+
+    expect(screen.getByRole("heading", { name: t("free_creation_continue_draft_conflict_title") })).toBeInTheDocument();
+    expect(prompt).toHaveValue("existing unsent prompt");
   });
 
   it("uses the project aspect ratio and restores project-scoped composer parameters", async () => {

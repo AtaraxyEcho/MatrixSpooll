@@ -22,6 +22,15 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function triggerBrowserDownload(url: string) {
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
 export function FreeCreationExportMenu({ projectName, disabled = false }: FreeCreationExportMenuProps) {
   const { t } = useTranslation("dashboard");
   const selectedIds = useFreeCreationStore((state) => state.selectedIds);
@@ -70,8 +79,8 @@ export function FreeCreationExportMenu({ projectName, disabled = false }: FreeCr
     setOpen(false);
     setMerging(true);
     try {
-      const blob = await API.mergeFreeCreationVideos(projectName, selectedVideoIds);
-      downloadBlob(blob, `${projectName}-merged.mp4`);
+      await API.mergeFreeCreationVideos(projectName, selectedVideoIds);
+      useFreeCreationStore.getState().invalidateCreations();
       useAppStore.getState().pushToast(t("free_creation_merge_started"), "success");
     } catch (error) {
       useAppStore.getState().pushToast(
@@ -80,6 +89,28 @@ export function FreeCreationExportMenu({ projectName, disabled = false }: FreeCr
       );
     } finally {
       setMerging(false);
+    }
+  };
+
+  const runProjectBackup = async () => {
+    if (!projectName || exporting) return;
+    setOpen(false);
+    setExporting(true);
+    try {
+      const { download_token, diagnostics } = await API.requestExportToken(projectName, "full");
+      triggerBrowserDownload(API.getExportDownloadUrl(projectName, download_token, "full"));
+      const diagnosticCount =
+        diagnostics.blocking.length + diagnostics.auto_fixed.length + diagnostics.warnings.length;
+      useAppStore.getState().pushToast(
+        diagnosticCount > 0
+          ? t("project_zip_download_started_with_diagnostics", { count: diagnosticCount })
+          : t("project_zip_download_started"),
+        diagnosticCount > 0 ? "warning" : "success",
+      );
+    } catch (error) {
+      useAppStore.getState().pushToast(t("export_failed", { message: errMsg(error) }), "error");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -148,6 +179,17 @@ export function FreeCreationExportMenu({ projectName, disabled = false }: FreeCr
           >
             <Archive className="h-3.5 w-3.5 shrink-0" aria-hidden />
             {t("free_creation_export_all")}
+          </button>
+          <div className="my-1 border-t border-[var(--color-hairline)]" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void runProjectBackup()}
+            className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"
+            title={t("free_creation_export_project_backup_hint")}
+          >
+            <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            {t("free_creation_export_project_backup")}
           </button>
         </div>
       ) : null}
