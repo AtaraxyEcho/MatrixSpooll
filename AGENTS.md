@@ -18,7 +18,8 @@ docker compose -f deploy/development/docker-compose.yml up -d
 
 # 启动开发服务器（必须用 --reload-dir 限定监视目录，否则 watchfiles 会扫描
 # node_modules / .venv / .git / .worktrees 等十几万个文件，单核 CPU 50%+）
-uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241
+uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241 \
+  --loop server.event_loop:subprocess_capable_event_loop_factory
 
 uv run python -m pytest                              # 测试（-v 单文件 / -k 关键字 / --cov 覆盖率）
 uv run ruff check . && uv run ruff format .          # lint + format

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import json
 import logging
@@ -13,6 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import cast
 
+from lib.ffmpeg_runner import MediaProcessError, run_media_process
 from lib.path_safety import safe_resolve
 
 logger = logging.getLogger(__name__)
@@ -111,25 +111,22 @@ async def _run_ffprobe(extra_args: list[str]) -> bytes:
     （对内网地址同样生效），不加白名单会把这个探测调用变成 SSRF 跳板。
     超时同样按 ValueError 处理，避免损坏文件让 ffprobe 挂起占用请求。
     """
-    proc = await asyncio.create_subprocess_exec(
-        "ffprobe",
-        "-v",
-        "error",
-        "-protocol_whitelist",
-        "file",
-        *extra_args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
     try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_FFPROBE_TIMEOUT_SECONDS)
-    except TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise ValueError("音频文件无法解析") from None
-
-    if proc.returncode != 0:
-        raise ValueError("音频文件无法解析")
+        stdout, _ = await run_media_process(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-protocol_whitelist",
+                "file",
+                *extra_args,
+            ],
+            timeout=_FFPROBE_TIMEOUT_SECONDS,
+        )
+    except MediaProcessError as exc:
+        if exc.code == "media_process_start_failed":
+            raise OSError(exc.detail) from exc
+        raise ValueError("音频文件无法解析") from exc
     return stdout
 
 

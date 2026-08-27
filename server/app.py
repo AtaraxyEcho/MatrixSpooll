@@ -3,7 +3,8 @@
 
 启动方式:
     cd MatrixSpooll
-    uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241
+    uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241 \
+        --loop server.event_loop:subprocess_capable_event_loop_factory
 
 注意：必须用 --reload-dir 限定监视目录，否则 watchfiles 会扫描
 node_modules / .venv / .git / .worktrees 等十几万个文件，单核 CPU 50%+。
@@ -52,6 +53,7 @@ from server.auth import (
 )
 from server.dependencies import require_project_migration_ok
 from server.error_handlers import register_error_handlers
+from server.event_loop import assert_subprocess_capable_event_loop
 from server.middleware.csrf import CSRFMiddleware
 from server.routers import (
     admin,
@@ -338,6 +340,7 @@ async def _migrate_source_encoding_on_startup(projects_root: Path) -> dict[str, 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    assert_subprocess_capable_event_loop()
     app.state.startup_complete = False
     # Startup
     # 安全红线检测：先父进程 env 净化，再 sandbox 工具可用性，再 docker 检测
@@ -943,4 +946,11 @@ if __name__ == "__main__":
     import uvicorn
 
     _host, _port = _resolve_listen_addr()
-    uvicorn.run(app, host=_host, port=_port, reload=True)
+    uvicorn.run(
+        "server.app:app",
+        host=_host,
+        port=_port,
+        reload=True,
+        reload_dirs=["server", "lib"],
+        loop="server.event_loop:subprocess_capable_event_loop_factory",
+    )

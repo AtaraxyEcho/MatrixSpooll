@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import shutil
 import subprocess
 import tempfile
@@ -72,7 +71,7 @@ class TestFfprobeUnavailable:
     @pytest.mark.unit
     async def test_returns_none_without_spawning(self):
         with patch("lib.audio_utils.shutil.which", return_value=None):
-            with patch("lib.audio_utils.asyncio.create_subprocess_exec") as spawn:
+            with patch("lib.audio_utils.run_media_process") as spawn:
                 result = await audio_utils_module.probe_audio_duration_seconds(_wav_bytes(3), ".wav")
         assert result is None
         spawn.assert_not_called()
@@ -89,6 +88,17 @@ class TestFfprobeAvailable:
     @pytest.mark.unit
     async def test_probes_real_duration(self):
         duration = await audio_utils_module.probe_audio_duration_seconds(_wav_bytes(3), ".wav")
+        assert duration is not None
+        assert 2.5 < duration < 3.5
+
+    @pytest.mark.unit
+    async def test_probe_does_not_require_asyncio_subprocess_transport(self):
+        async def unsupported_async_subprocess(*_args, **_kwargs):
+            raise NotImplementedError
+
+        with patch("asyncio.create_subprocess_exec", side_effect=unsupported_async_subprocess):
+            duration = await audio_utils_module.probe_audio_duration_seconds(_wav_bytes(3), ".wav")
+
         assert duration is not None
         assert 2.5 < duration < 3.5
 
@@ -116,14 +126,14 @@ class TestFfprobeAvailable:
     @pytest.mark.unit
     async def test_ffprobe_invoked_with_protocol_whitelist(self):
         """探测字节可能嵌套 HLS/RTMP 等播放列表引用；每次 ffprobe 调用都必须限制协议白名单为 file，防 SSRF。"""
-        calls: list[tuple[object, ...]] = []
-        orig_exec = asyncio.create_subprocess_exec
+        calls: list[list[str]] = []
+        original_run = audio_utils_module.run_media_process
 
-        async def _spy(*args, **kwargs):
-            calls.append(args)
-            return await orig_exec(*args, **kwargs)
+        async def _spy(command, **kwargs):
+            calls.append(list(command))
+            return await original_run(command, **kwargs)
 
-        with patch("lib.audio_utils.asyncio.create_subprocess_exec", side_effect=_spy):
+        with patch("lib.audio_utils.run_media_process", side_effect=_spy):
             await audio_utils_module.probe_audio_duration_seconds(_wav_bytes(3), ".wav")
 
         assert calls, "ffprobe 应至少被调用一次"
