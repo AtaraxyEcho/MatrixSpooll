@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from starlette.requests import Request
 
 from lib.api_errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from lib.db.base import Base, utc_now
@@ -132,6 +133,43 @@ async def test_project_access_enforces_roles_and_project_boundaries(tmp_path, mo
                     CurrentUserInfo(id="editor", sub="editor", role="member"),
                     session,
                 )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_project_request_access_exposes_resolved_identity_on_request(tmp_path, monkeypatch):
+    factory, engine = await _make_database()
+    try:
+        (tmp_path / "shared-project").mkdir()
+        monkeypatch.setattr(project_access, "get_project_manager", lambda: _ProjectManager(tmp_path))
+        await _seed_project(factory)
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/api/v1/projects/project-1/assistant/sessions",
+                "headers": [],
+                "query_string": b"",
+                "scheme": "http",
+                "server": ("testserver", 80),
+                "client": ("testclient", 1234),
+                "root_path": "",
+            }
+        )
+
+        async with factory() as session:
+            access = await project_access.require_project_request_access(
+                request,
+                CurrentUserInfo(id="default", sub="admin", role="admin"),
+                project_name="project-1",
+                session=session,
+            )
+
+        assert access is not None
+        assert request.state.project_access is access
+        assert access.project_id == "project-1"
+        assert access.project_name == "shared-project"
     finally:
         await engine.dispose()
 

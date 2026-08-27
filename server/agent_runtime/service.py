@@ -98,6 +98,7 @@ class AssistantService:
             meta_store=self.meta_store,
             projects_root=self.projects_root,
             event_log_store=self.event_log_store,
+            project_cwd_resolver=self.pm.get_project_path,
         )
         # Shared with SessionManager (lazy-cached there) so reads via the
         # adapter and writes via SDK options use the same per-user namespace.
@@ -175,10 +176,11 @@ class AssistantService:
         if not sessions or not project_name:
             return sessions
 
-        project_cwd = str(self.projects_root / project_name)
+        resolved_project_cwd = self._resolve_project_cwd_safe(project_name)
+        project_cwd = str(resolved_project_cwd) if resolved_project_cwd is not None else None
         sdk_sessions: list[Any] = []
 
-        if self._session_store is not None and list_sessions_from_store is not None:
+        if project_cwd is not None and self._session_store is not None and list_sessions_from_store is not None:
             try:
                 sdk_sessions = await list_sessions_from_store(self._session_store, directory=project_cwd)  # type: ignore[arg-type]
             except Exception:
@@ -223,7 +225,8 @@ class AssistantService:
             # computed from server cwd and never matches inserted rows, so the
             # delete becomes a silent no-op. Resolve project cwd from meta.
             meta = await self.meta_store.get(session_id)
-            project_cwd = str(self.projects_root / meta.project_name) if meta else None
+            resolved_project_cwd = self._resolve_project_cwd_safe(meta.project_name) if meta else None
+            project_cwd = str(resolved_project_cwd) if resolved_project_cwd is not None else None
             try:
                 await delete_session_via_store(self._session_store, session_id, directory=project_cwd)  # type: ignore[arg-type]
             except Exception:
@@ -995,6 +998,11 @@ class AssistantService:
             return self.pm.get_project_path(project_name)
         except (FileNotFoundError, ValueError):
             return None
+
+    def register_project_identity(self, project_id: str, project_name: str, storage_key: str) -> None:
+        """Register the authorized database identity used by Agent Runtime paths."""
+
+        self.pm.register_project_id_alias(project_id, project_name, storage_key)
 
     @staticmethod
     def _resolve_result_status(result_message: dict[str, Any]) -> SessionStatus:

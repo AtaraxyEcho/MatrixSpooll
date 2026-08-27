@@ -347,6 +347,7 @@ class SessionManager:
         in_docker: bool = False,
         sandbox_enabled: bool = True,
         event_log_store: EventLogStore | None = None,
+        project_cwd_resolver: Callable[[str], Path | None] | None = None,
     ):
         self.event_log_store = event_log_store or EventLogStore()
         self.project_root = Path(project_root)
@@ -361,6 +362,7 @@ class SessionManager:
             else (self.project_root / "projects").resolve()
         )
         self.meta_store = meta_store
+        self._project_cwd_resolver = project_cwd_resolver
         self.sessions: dict[str, ManagedSession] = {}
         # 轮次终结时仍未被认领的回显登记累计数，见 _drain_pending_user_echoes。
         self.unclaimed_user_echoes = 0
@@ -476,6 +478,18 @@ class SessionManager:
 
     def _resolve_project_cwd(self, project_name: str) -> Path:
         """Resolve and validate per-session project working directory."""
+        if self._project_cwd_resolver is not None:
+            resolved = self._project_cwd_resolver(project_name)
+            if resolved is None:
+                raise FileNotFoundError(f"project not found: {project_name}")
+            project_cwd = Path(resolved).resolve(strict=False)
+            try:
+                project_cwd.relative_to(self.projects_root)
+            except ValueError as exc:
+                raise ValueError("project directory is outside the projects root") from exc
+            if not project_cwd.exists() or not project_cwd.is_dir():
+                raise FileNotFoundError(f"project not found: {project_name}")
+            return project_cwd
         try:
             project_cwd = safe_join(self.projects_root, project_name)
         except PathTraversalError as exc:

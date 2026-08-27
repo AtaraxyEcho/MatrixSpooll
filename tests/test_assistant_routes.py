@@ -1,6 +1,7 @@
 """Unit tests for assistant router contract changes."""
 
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -10,6 +11,7 @@ from lib.i18n import get_translator
 from server.auth import CurrentUserInfo, get_current_user, get_current_user_flexible
 from server.error_handlers import register_error_handlers
 from server.routers import assistant
+from server.services.project_access import ProjectAccess
 from tests.auth_deps import AUTH_DEPENDENCIES
 from tests.conftest import make_translator
 from tests.factories import make_session_meta
@@ -61,6 +63,30 @@ def _assert_generic_500(response, sentinel: str) -> None:
 
 
 class TestAssistantRoutes:
+    def test_runtime_project_reference_registers_storage_alias_and_keeps_stable_id(self, tmp_path):
+        project_dir = tmp_path / "storage-key"
+        access = ProjectAccess(
+            project_id="project-id",
+            project_name="display-name",
+            project_path=project_dir,
+            content_mode="free",
+            generation_mode=None,
+            owner_id=USER_ID,
+            role="owner",
+            storage_key="storage-key",
+        )
+        request = SimpleNamespace(state=SimpleNamespace(project_access=access))
+        service = SimpleNamespace(register_project_identity=Mock())
+
+        project_ref = assistant._runtime_project_reference(request, "project-id", service)
+
+        assert project_ref == "project-id"
+        service.register_project_identity.assert_called_once_with(
+            "project-id",
+            "display-name",
+            "storage-key",
+        )
+
     def test_messages_endpoint_returns_410(self):
         with _build_client() as client:
             response = client.get(f"{PREFIX}/sessions/session-1/messages")

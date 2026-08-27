@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+import lib.ffmpeg_runner as ffmpeg_runner
 import lib.thumbnail as thumbnail_module
 
 pytestmark = pytest.mark.unit
@@ -27,7 +29,7 @@ async def test_returns_none_when_ffmpeg_missing(tmp_path: Path):
     out = tmp_path / "out.jpg"
 
     with patch("lib.thumbnail.shutil.which", return_value=None):
-        with patch("lib.thumbnail.asyncio.create_subprocess_exec") as spawn:
+        with patch("lib.thumbnail.run_media_process") as spawn:
             result = await thumbnail_module.extract_video_thumbnail(video, out)
 
     assert result is None
@@ -49,22 +51,80 @@ async def test_returns_none_when_video_missing(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_thumbnail_extraction_does_not_require_asyncio_subprocess_transport(tmp_path: Path):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"source-video")
+    out = tmp_path / "cover.jpg"
+
+    async def unsupported_async_subprocess(*_args: object, **_kwargs: object) -> None:
+        raise NotImplementedError
+
+    class FakeProcess:
+        returncode = 0
+
+        def __init__(self, command: list[str], **_kwargs: object) -> None:
+            Path(command[-1]).write_bytes(b"thumbnail")
+
+        def communicate(self) -> tuple[bytes, bytes]:
+            return b"", b""
+
+        def kill(self) -> None:
+            return None
+
+    with patch("lib.thumbnail.shutil.which", return_value="ffmpeg"):
+        with patch("asyncio.create_subprocess_exec", side_effect=unsupported_async_subprocess):
+            with patch.object(ffmpeg_runner.subprocess, "Popen", FakeProcess):
+                result = await thumbnail_module.extract_video_thumbnail(video, out)
+
+    assert result == out
+    assert out.read_bytes() == b"thumbnail"
+
+
+@pytest.mark.asyncio
+async def test_last_frame_extraction_does_not_require_asyncio_subprocess_transport(tmp_path: Path):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"source-video")
+    out = tmp_path / "last-frame.png"
+
+    async def unsupported_async_subprocess(*_args: object, **_kwargs: object) -> None:
+        raise NotImplementedError
+
+    class FakeProcess:
+        returncode = 0
+
+        def __init__(self, command: list[str], **_kwargs: object) -> None:
+            self.command = command
+            if command[0] == "ffmpeg":
+                Path(command[-1]).write_bytes(b"last-frame")
+
+        def communicate(self) -> tuple[bytes, bytes]:
+            if self.command[0] == "ffprobe":
+                return b"30\n", b""
+            return b"", b""
+
+        def kill(self) -> None:
+            return None
+
+    with patch("lib.thumbnail.shutil.which", side_effect=lambda name: name):
+        with patch.object(asyncio, "create_subprocess_exec", side_effect=unsupported_async_subprocess):
+            with patch.object(ffmpeg_runner.subprocess, "Popen", FakeProcess):
+                result = await thumbnail_module.extract_video_last_frame(video, out)
+
+    assert result == out
+    assert out.read_bytes() == b"last-frame"
+
+
+@pytest.mark.asyncio
 async def test_ffmpeg_available_attempts_extraction(tmp_path: Path):
     """ffmpeg 在 PATH 时走原有 spawn 路径（spawn 被调用，returncode 非零仍返回 None）。"""
     video = tmp_path / "fake.mp4"
     video.write_bytes(b"\x00")
     out = tmp_path / "out.jpg"
 
-    class _FakeProc:
-        returncode = 1  # ffmpeg failure
-
-        async def wait(self):
-            return None
-
     with patch("lib.thumbnail.shutil.which", return_value="/usr/bin/ffmpeg"):
         with patch(
-            "lib.thumbnail.asyncio.create_subprocess_exec",
-            return_value=_FakeProc(),
+            "lib.thumbnail.run_media_process",
+            side_effect=ffmpeg_runner.MediaProcessError("media_process_failed"),
         ) as spawn:
             result = await thumbnail_module.extract_video_thumbnail(video, out)
 
@@ -90,7 +150,7 @@ async def test_last_frame_returns_none_when_ffmpeg_missing(tmp_path: Path):
     out = tmp_path / "out.png"
 
     with patch("lib.thumbnail.shutil.which", return_value=None):
-        with patch("lib.thumbnail.asyncio.create_subprocess_exec") as spawn:
+        with patch("lib.thumbnail.run_media_process") as spawn:
             result = await thumbnail_module.extract_video_last_frame(video, out)
 
     assert result is None
@@ -109,7 +169,7 @@ async def test_last_frame_returns_none_when_only_ffprobe_missing(tmp_path: Path)
         return "/usr/bin/ffmpeg" if name == "ffmpeg" else None
 
     with patch("lib.thumbnail.shutil.which", side_effect=_which):
-        with patch("lib.thumbnail.asyncio.create_subprocess_exec") as spawn:
+        with patch("lib.thumbnail.run_media_process") as spawn:
             result = await thumbnail_module.extract_video_last_frame(video, out)
 
     assert result is None
@@ -136,44 +196,21 @@ async def test_last_frame_falls_back_to_count_frames(tmp_path: Path):
     video.write_bytes(b"\x00")
     out = tmp_path / "out.png"
 
-    class _ProbeProc:
-        """第一次返回 N/A，第二次返回 30。"""
-
-        def __init__(self, payload: bytes, rc: int = 0):
-            self._payload = payload
-            self.returncode = rc
-
-        async def communicate(self):
-            return self._payload, b""
-
-    class _FfmpegProc:
-        def __init__(self, target: Path):
-            self._target = target
-
-        returncode = 0
-
-        async def wait(self):
-            # 模拟 ffmpeg 写出文件
-            self._target.write_bytes(b"\x89PNG\r\n\x1a\n")
-            return None
-
     call_log: list[list[str]] = []
-    procs = [
-        _ProbeProc(b"N/A\n"),  # nb_frames 快路径
-        _ProbeProc(b"30\n"),  # -count_frames 回退
-    ]
+    probe_payloads = [b"N/A\n", b"30\n"]
 
-    async def _spawn(*args, **_kwargs):
-        call_log.append(list(args))
-        if args[0] == "ffmpeg":
-            return _FfmpegProc(Path(args[-1]))
-        return procs.pop(0)
+    async def _run(command: list[str], **_kwargs: object) -> tuple[bytes, bytes]:
+        call_log.append(command)
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"\x89PNG\r\n\x1a\n")
+            return b"", b""
+        return probe_payloads.pop(0), b""
 
     def _which(name: str):
         return f"/usr/bin/{name}"
 
     with patch("lib.thumbnail.shutil.which", side_effect=_which):
-        with patch("lib.thumbnail.asyncio.create_subprocess_exec", side_effect=_spawn):
+        with patch("lib.thumbnail.run_media_process", side_effect=_run):
             result = await thumbnail_module.extract_video_last_frame(video, out)
 
     assert result == out
@@ -193,41 +230,23 @@ async def test_last_frame_retries_precise_count_when_fast_extract_writes_nothing
     out = tmp_path / "out.png"
     out.write_bytes(b"stale")
 
-    class _ProbeProc:
-        def __init__(self, payload: bytes):
-            self._payload = payload
-            self.returncode = 0
-
-        async def communicate(self):
-            return self._payload, b""
-
-    class _FfmpegProc:
-        returncode = 0
-
-        def __init__(self, target: Path, *, writes_output: bool):
-            self._target = target
-            self._writes_output = writes_output
-
-        async def wait(self):
-            if self._writes_output:
-                self._target.write_bytes(b"fresh")
-            return None
-
-    probe_procs = [_ProbeProc(b"999\n"), _ProbeProc(b"30\n")]
+    probe_payloads = [b"999\n", b"30\n"]
     ffmpeg_writes = [False, True]
     call_log: list[list[str]] = []
 
-    async def _spawn(*args, **_kwargs):
-        call_log.append(list(args))
-        if args[0] == "ffprobe":
-            return probe_procs.pop(0)
-        return _FfmpegProc(Path(args[-1]), writes_output=ffmpeg_writes.pop(0))
+    async def _run(command: list[str], **_kwargs: object) -> tuple[bytes, bytes]:
+        call_log.append(command)
+        if command[0] == "ffprobe":
+            return probe_payloads.pop(0), b""
+        if ffmpeg_writes.pop(0):
+            Path(command[-1]).write_bytes(b"fresh")
+        return b"", b""
 
     def _which(name: str):
         return f"/usr/bin/{name}"
 
     with patch("lib.thumbnail.shutil.which", side_effect=_which):
-        with patch("lib.thumbnail.asyncio.create_subprocess_exec", side_effect=_spawn):
+        with patch("lib.thumbnail.run_media_process", side_effect=_run):
             result = await thumbnail_module.extract_video_last_frame(video, out)
 
     assert result == out
