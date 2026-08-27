@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   CanvasSpatialIndex,
-  clampCameraToBounds,
   computeContentBounds,
   fitCameraToBounds,
   selectCanvasLod,
@@ -44,7 +43,7 @@ describe("free creation canvas engine", () => {
     expect(selectCanvasLod({ projectedNodeWidth: 48, visibleCount: 2_000, previous: "overview" })).toBe("compact");
   });
 
-  it("derives content bounds and softly clamps extreme camera movement", () => {
+  it("derives content bounds for explicit fit-to-content actions", () => {
     const nodes = [
       { id: "left", minX: -500, minY: -200, maxX: -228, maxY: 122, kind: "creation" },
       { id: "right", minX: 800, minY: 300, maxX: 1072, maxY: 622, kind: "creation" },
@@ -52,11 +51,6 @@ describe("free creation canvas engine", () => {
     const bounds = computeContentBounds(nodes);
 
     expect(bounds).toEqual({ minX: -500, minY: -200, maxX: 1072, maxY: 622 });
-    expect(clampCameraToBounds(
-      { x: 100_000, y: -100_000, scale: 1 },
-      bounds,
-      { width: 1920, height: 1080 },
-    )).toEqual({ x: 1460, y: -82, scale: 1 });
   });
 
   it("fits content into the viewport while preserving scale limits", () => {

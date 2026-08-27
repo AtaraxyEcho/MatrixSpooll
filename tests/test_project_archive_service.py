@@ -391,7 +391,7 @@ class TestProjectArchiveService:
         pm.create_project_metadata(
             "free-demo",
             "Free Demo",
-            "Anime",
+            "",
             "free",
             extras={"generation_mode": None, "grid_storyboard": False},
         )

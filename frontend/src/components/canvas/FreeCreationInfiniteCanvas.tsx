@@ -48,7 +48,6 @@ import {
 } from "@/components/canvas/free-creation/CanvasNodeLabel";
 import {
   CanvasSpatialIndex,
-  clampCameraToBounds,
   computeContentBounds,
   fitCameraToBounds,
   snapCanvasPositions,
@@ -1690,16 +1689,10 @@ export function FreeCreationInfiniteCanvas({
         publishSelection(operation.selection);
       }
     } else if (operation.kind === "pan") {
-      const next = clampCameraToBounds(
-        {
-          x: operation.origin.x + event.clientX - operation.start.x,
-          y: operation.origin.y + event.clientY - operation.start.y,
-          scale,
-        },
-        contentBounds,
-        viewportSize,
-      );
-      setPan({ x: next.x, y: next.y });
+      setPan({
+        x: operation.origin.x + event.clientX - operation.start.x,
+        y: operation.origin.y + event.clientY - operation.start.y,
+      });
     }
     pointerRef.current = null;
     setDraggingIds([]);
@@ -1717,22 +1710,18 @@ export function FreeCreationInfiniteCanvas({
       const cursorY = event.clientY - (rect?.top ?? 0);
       const worldX = (cursorX - pan.x) / scale;
       const worldY = (cursorY - pan.y) / scale;
-      const next = clampCameraToBounds({
+      setScale(nextScale);
+      setPan({
         x: cursorX - worldX * nextScale,
         y: cursorY - worldY * nextScale,
-        scale: nextScale,
-      }, contentBounds, viewportSize);
-      setScale(next.scale);
-      setPan({ x: next.x, y: next.y });
+      });
       return;
     }
-    const next = clampCameraToBounds({
+    setPan({
       x: pan.x - event.deltaX,
       y: pan.y - event.deltaY,
-      scale,
-    }, contentBounds, viewportSize);
-    setPan({ x: next.x, y: next.y });
-  }, [contentBounds, pan.x, pan.y, scale, viewportSize]);
+    });
+  }, [pan.x, pan.y, scale]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
