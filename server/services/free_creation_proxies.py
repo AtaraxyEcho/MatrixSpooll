@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 from pathlib import Path
 from uuid import uuid4
 
+from lib.ffmpeg_runner import MediaProcessError, run_ffmpeg
 from lib.path_safety import safe_join
 
+logger = logging.getLogger(__name__)
+
 _TRANSCODE_SLOTS = asyncio.Semaphore(2)
+_TRANSCODE_TIMEOUT_SECONDS = 30 * 60
 _proxy_locks: dict[str, asyncio.Lock] = {}
 
 
@@ -93,28 +98,31 @@ async def ensure_video_proxy(project_path: Path, namespace: str, media_id: str, 
         destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = destination.with_name(f".{destination.stem}.{uuid4().hex}.tmp.mp4")
         try:
-            process = await asyncio.create_subprocess_exec(
-                "ffmpeg",
-                "-i",
-                str(source),
-                "-vf",
-                "scale=-2:480:force_original_aspect_ratio=decrease",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "28",
-                "-an",
-                "-movflags",
-                "+faststart",
-                "-y",
-                str(temporary),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await process.wait()
-            if process.returncode != 0 or not temporary.is_file():
+            try:
+                await run_ffmpeg(
+                    [
+                        "-i",
+                        str(source),
+                        "-vf",
+                        "scale=-2:480:force_original_aspect_ratio=decrease",
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "veryfast",
+                        "-crf",
+                        "28",
+                        "-an",
+                        "-movflags",
+                        "+faststart",
+                        "-y",
+                        str(temporary),
+                    ],
+                    timeout=_TRANSCODE_TIMEOUT_SECONDS,
+                )
+            except MediaProcessError as exc:
+                logger.warning("Video proxy transcoding failed code=%s detail=%s", exc.code, exc.detail[:2000])
+                return None
+            if not temporary.is_file():
                 return None
             temporary.replace(destination)
             touch_video_proxy(destination)

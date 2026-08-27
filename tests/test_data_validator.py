@@ -47,7 +47,7 @@ class TestDataValidator:
                 "generation_mode": None,
                 "grid_storyboard": False,
                 "aspect_ratio": "21:9",
-                "style": "Anime",
+                "style": "",
                 "episodes": [],
             },
         )
@@ -56,6 +56,18 @@ class TestDataValidator:
 
         assert result.valid
         assert result.errors == []
+
+    @pytest.mark.unit
+    def test_validate_fixed_workflow_project_still_requires_style(self, tmp_path):
+        project_dir = tmp_path / "projects" / "workflow-demo"
+        payload = _project_payload()
+        payload["style"] = ""
+        _write_json(project_dir / "project.json", payload)
+
+        result = DataValidator(projects_root=str(tmp_path / "projects")).validate_project("workflow-demo")
+
+        assert not result.valid
+        assert any("缺少必填字段: style" in error for error in result.errors)
 
     @pytest.mark.unit
     def test_validate_free_project_rejects_fixed_route_and_invalid_ratio(self, tmp_path):

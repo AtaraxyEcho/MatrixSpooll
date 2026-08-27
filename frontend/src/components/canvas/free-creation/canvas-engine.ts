@@ -217,23 +217,6 @@ export function snapCanvasPositions(
   return { positions: nextPositions, guides };
 }
 
-export function clampCameraToBounds(
-  camera: CanvasCamera,
-  bounds: CanvasRect,
-  viewport: CanvasViewportSize,
-): CanvasCamera {
-  const scale = camera.scale;
-  const minX = viewport.width / 2 - bounds.maxX * scale;
-  const maxX = viewport.width / 2 - bounds.minX * scale;
-  const minY = viewport.height / 2 - bounds.maxY * scale;
-  const maxY = viewport.height / 2 - bounds.minY * scale;
-  return {
-    x: Math.min(maxX, Math.max(minX, camera.x)),
-    y: Math.min(maxY, Math.max(minY, camera.y)),
-    scale,
-  };
-}
-
 export function fitCameraToBounds(
   bounds: CanvasRect,
   viewport: CanvasViewportSize,

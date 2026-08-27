@@ -423,9 +423,6 @@ class DataValidator:
 
         self._validate_ad_project_fields(project, content_mode, errors)
 
-        if not project.get("style"):
-            errors.append(_m("val_missing_field", field="style"))
-
         if content_mode == "free":
             episodes = project.get("episodes", [])
             if not isinstance(episodes, list):
@@ -433,6 +430,9 @@ class DataValidator:
             elif episodes:
                 errors.append(_m("val_field_must_be_empty", field="episodes"))
             return
+
+        if not project.get("style"):
+            errors.append(_m("val_missing_field", field="style"))
 
         episodes = project.get("episodes", [])
         if not isinstance(episodes, list):

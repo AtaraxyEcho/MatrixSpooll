@@ -225,8 +225,8 @@ describe("FreeCreationInfiniteCanvas", () => {
     expect(video).toHaveClass("pointer-events-none");
   });
 
-  it("keeps the default cursor, reserves blank left drag for selection, and pans with the middle button", async () => {
-    const { container } = renderCanvas();
+  it("keeps the default cursor, reserves blank left drag for selection, and freely pans beyond content bounds", async () => {
+    renderCanvas();
     const surface = screen.getByTestId("free-creation-canvas");
     expect(surface).toHaveStyle({ cursor: "default" });
 
@@ -240,11 +240,11 @@ describe("FreeCreationInfiniteCanvas", () => {
     fireEvent.pointerUp(surface, { pointerId: 1, clientX: 50, clientY: 60 });
 
     fireEvent.pointerDown(surface, { button: 1, pointerId: 2, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(surface, { pointerId: 2, clientX: 40, clientY: 60 });
-    await waitFor(() => expect(transformLayer?.style.transform).toContain("translate3d(30px, 50px, 0)"));
-    fireEvent.pointerUp(surface, { pointerId: 2, clientX: 40, clientY: 60 });
+    fireEvent.pointerMove(surface, { pointerId: 2, clientX: 5_010, clientY: -4_990 });
+    await waitFor(() => expect(transformLayer?.style.transform).toContain("translate3d(5000px, -5000px, 0)"));
+    fireEvent.pointerUp(surface, { pointerId: 2, clientX: 5_010, clientY: -4_990 });
+    await waitFor(() => expect(transformLayer?.style.transform).toContain("translate3d(5000px, -5000px, 0)"));
 
-    expect(container.querySelector("[data-canvas-id='c_0123456789abcdef0123']")).toBeInTheDocument();
   });
 
   it("moves a card from its media surface only after the desktop drag threshold", async () => {
@@ -900,7 +900,7 @@ describe("FreeCreationInfiniteCanvas", () => {
     fireEvent.pointerUp(surface, { pointerId: 52, clientX: 148, clientY: 132 });
     fireEvent.keyUp(window, { code: "Space", key: " " });
 
-    await waitFor(() => expect(transformLayer?.style.transform).toContain("translate3d(272px, 32px, 0)"));
+    await waitFor(() => expect(transformLayer?.style.transform).toContain("translate3d(48px, 32px, 0)"));
     expect(card).toHaveStyle({ left: "96px", top: "88px" });
   });
 
