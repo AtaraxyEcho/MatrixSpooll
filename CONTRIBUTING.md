@@ -5,7 +5,7 @@
 ```bash
 # 前置要求：Python 3.12+, Node.js 20+, uv, pnpm, ffmpeg, Docker Compose
 # 文档站 website/ 另需 Node 24（版本钉在 website/.node-version）
-# 操作系统：Linux / MacOS / Windows WSL2（Windows 原生不支持）
+# 操作系统：Linux / macOS / Windows 原生或 WSL2
 
 # 安装依赖
 uv sync
@@ -26,7 +26,8 @@ uv run alembic upgrade head
 # 启动后端 (终端 1)
 # 注意：必须用 --reload-dir 限定监视目录，否则 watchfiles 会扫描
 # node_modules / .venv / .git / .worktrees 等十几万个文件，单核 CPU 50%+
-uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241
+uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241 \
+  --loop server.event_loop:subprocess_capable_event_loop_factory
 
 # 启动前端 (终端 2)
 cd frontend && pnpm dev

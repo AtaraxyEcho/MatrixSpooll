@@ -92,4 +92,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
       && ffprobe -version >/dev/null 2>&1 || exit 1
 
 # ---------- 直接使用虚拟环境中的 uvicorn，避免 uv run 的额外同步 ----------
-CMD ["/app/.venv/bin/uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "1241"]
+CMD ["/app/.venv/bin/uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "1241", "--loop", "server.event_loop:subprocess_capable_event_loop_factory"]
