@@ -71,6 +71,7 @@ services:
       CORS_ORIGINS: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in deploy/production/.env}
       DATABASE_URL: postgresql+asyncpg://matrixspooll:${POSTGRES_PASSWORD}@postgres:5432/matrixspooll
       MATRIXSPOOLL_SOURCE_RELEASE_DIR: /app/legal-source
+      MATRIXSPOOLL_SOURCE_DOWNLOAD_ENABLED: ${MATRIXSPOOLL_SOURCE_DOWNLOAD_ENABLED:-true}
       TZ: ${TZ:-Asia/Shanghai}
     command:
       - /app/.venv/bin/uvicorn

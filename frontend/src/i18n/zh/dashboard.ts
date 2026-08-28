@@ -401,6 +401,7 @@ export default {
   'about_license_title': '软件许可证',
   'about_license_description': '本程序依据 GNU Affero 通用公共许可证第 3 版提供。许可证不会因商业交付而失效。',
   'about_source_title': '对应源码',
+  'about_source_disabled': '源码下载暂未开放。',
   'about_source_available': '当前部署版本 {{version}} 的完整对应源码可供下载。',
   'about_source_unavailable': '当前部署版本尚未发布对应源码包，请联系系统管理员。',
   'about_source_download': '下载当前版本源码',

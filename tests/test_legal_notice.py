@@ -2,9 +2,34 @@ from pathlib import Path
 
 import pytest
 
-from lib.legal_notice import read_legal_attribution, read_modified_version_notice, read_source_release
+from lib.legal_notice import (
+    read_legal_attribution,
+    read_modified_version_notice,
+    read_source_release,
+    source_download_enabled,
+)
 
 pytestmark = pytest.mark.unit
+
+
+def test_source_download_is_enabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MATRIXSPOOLL_SOURCE_DOWNLOAD_ENABLED", raising=False)
+
+    assert source_download_enabled() is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "NO", "off"])
+def test_source_download_can_be_disabled(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("MATRIXSPOOLL_SOURCE_DOWNLOAD_ENABLED", value)
+
+    assert source_download_enabled() is False
+
+
+def test_source_download_rejects_invalid_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MATRIXSPOOLL_SOURCE_DOWNLOAD_ENABLED", "sometimes")
+
+    with pytest.raises(ValueError, match="MATRIXSPOOLL_SOURCE_DOWNLOAD_ENABLED"):
+        source_download_enabled()
 
 
 def test_reads_quoted_attribution_and_repository(tmp_path: Path) -> None:

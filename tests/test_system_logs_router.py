@@ -72,6 +72,7 @@ async def test_legal_disclosure_reports_missing_source_release(_client, monkeypa
     payload = res.json()
     assert payload["modified_product"] == "MatrixSpooll"
     assert payload["source_release"] == {
+        "enabled": True,
         "available": False,
         "version": None,
         "archive_name": None,
@@ -79,6 +80,36 @@ async def test_legal_disclosure_reports_missing_source_release(_client, monkeypa
         "created_at": None,
         "download_url": None,
     }
+
+
+async def test_source_download_disabled_blocks_existing_archive(_client, monkeypatch, tmp_path: Path) -> None:
+    client, _log_dir = _client
+    archive = tmp_path / "matrixspooll-source-1.2.0.zip"
+    archive.write_bytes(b"zip")
+    (tmp_path / "source-manifest.json").write_text(
+        '{"schema_version":1,"version":"1.2.0",'
+        '"archive":"matrixspooll-source-1.2.0.zip",'
+        '"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+        '"created_at":"2026-08-28T00:00:00Z"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MATRIXSPOOLL_SOURCE_RELEASE_DIR", str(tmp_path))
+    monkeypatch.setenv("MATRIXSPOOLL_SOURCE_DOWNLOAD_ENABLED", "false")
+
+    disclosure = await client.get("/api/v1/system/legal-disclosure")
+    download = await client.get("/api/v1/system/source-code/download")
+
+    assert disclosure.status_code == 200
+    assert disclosure.json()["source_release"] == {
+        "enabled": False,
+        "available": False,
+        "version": None,
+        "archive_name": None,
+        "sha256": None,
+        "created_at": None,
+        "download_url": None,
+    }
+    assert download.status_code == 404
 
 
 async def test_zip_contains_diagnostics(_client) -> None:

@@ -26,6 +26,9 @@ _MODIFICATION_DATE_PATTERN = re.compile(
 )
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_MANIFEST_NAME = "source-manifest.json"
+_SOURCE_DOWNLOAD_ENABLED_ENV = "MATRIXSPOOLL_SOURCE_DOWNLOAD_ENABLED"
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +51,17 @@ class SourceRelease:
     sha256: str
     created_at: str
     archive_path: Path
+
+
+def source_download_enabled() -> bool:
+    """Return whether corresponding-source downloads are enabled for this deployment."""
+    raw = os.environ.get(_SOURCE_DOWNLOAD_ENABLED_ENV, "true").strip().lower()
+    if raw in _TRUE_VALUES:
+        return True
+    if raw in _FALSE_VALUES:
+        return False
+    valid = ", ".join(sorted(_TRUE_VALUES | _FALSE_VALUES))
+    raise ValueError(f"{_SOURCE_DOWNLOAD_ENABLED_ENV} must be one of: {valid}")
 
 
 def read_legal_attribution(notice_path: Path | None = None) -> LegalAttribution:
