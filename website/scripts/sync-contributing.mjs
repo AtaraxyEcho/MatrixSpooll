@@ -69,17 +69,8 @@ function injectAnchors(markdown) {
   return lines.join("\n");
 }
 
-// 副本不入库，「编辑此页」须指回仓库根的真相源，否则会指向不存在的 website/docs/dev/contributing.md。
-const frontmatter = [
-  "---",
-  "id: contributing",
-  "title: 贡献指南",
-  "sidebar_position: 2",
-  "custom_edit_url: https://github.com/MockMine/MatrixSpooll/blob/main/CONTRIBUTING.md",
-  "---",
-  "",
-  "",
-].join("\n");
+// 副本不入库；交付文档站不提供公开仓库的“编辑此页”入口。
+const frontmatter = ["---", "id: contributing", "title: 贡献指南", "sidebar_position: 2", "---", "", ""].join("\n");
 
 // Windows 下 Git 若开启 autocrlf，CONTRIBUTING.md 会以 CRLF 检出；split("\n") 按行切分后非标题行仍带尾部
 // \r、标题行被替换后丢失 \r，混合换行符写入产物会触发 Prettier 等格式检查。读取后统一归一为 \n。

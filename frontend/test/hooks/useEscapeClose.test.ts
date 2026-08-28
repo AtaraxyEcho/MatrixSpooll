@@ -9,6 +9,7 @@ const LABELS: TourLabels = {
   done: "完成",
   skip: "跳过",
   close: "关闭引导",
+  actions: { "create-project": "立即创建项目" },
   progress: (current, total) => `第 ${current} 步，共 ${total} 步`,
 };
 

@@ -8,6 +8,7 @@ const LABELS: TourLabels = {
   done: "完成",
   skip: "跳过",
   close: "关闭引导",
+  actions: { "create-project": "立即创建项目" },
   progress: (current, total) => `第 ${current} 步，共 ${total} 步`,
 };
 
@@ -59,6 +60,22 @@ describe("startTour", () => {
   it("clamps an out-of-range start index onto the last step", () => {
     const handle = startTour(TWO_STEPS, LABELS, { onExit: vi.fn(), startIndex: 9 });
 
+    expect(handle.currentIndex()).toBe(1);
+
+    handle.dispose();
+  });
+
+  it("jumps straight to a step via moveTo, clamping out-of-range targets", () => {
+    const handle = startTour(TWO_STEPS, LABELS, { onExit: vi.fn() });
+
+    expect(handle.currentIndex()).toBe(0);
+
+    handle.moveTo(1);
+    expect(popover().querySelector(".driver-popover-title")?.textContent).toBe("轮到你了");
+    expect(handle.currentIndex()).toBe(1);
+
+    // 越界目标被夹到最后一步，而不是抛错或停住不动
+    handle.moveTo(9);
     expect(handle.currentIndex()).toBe(1);
 
     handle.dispose();
@@ -169,6 +186,7 @@ describe("startTour", () => {
     click(".msp-tour-skip-btn");
 
     expect(onExit).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledWith(false);
     expect(document.querySelector(".driver-popover")).toBeNull();
   });
 
@@ -179,6 +197,7 @@ describe("startTour", () => {
     click(".driver-popover-close-btn");
 
     expect(onExit).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledWith(false);
   });
 
   it("reports the exit once when the tour is played to the end", () => {
@@ -189,7 +208,48 @@ describe("startTour", () => {
     click(".driver-popover-next-btn");
 
     expect(onExit).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledWith(true);
     expect(document.querySelector(".driver-popover")).toBeNull();
+  });
+
+  it("renders the action button only on the step that declares it, firing onAction and a completed exit", () => {
+    const onExit = vi.fn();
+    const onAction = vi.fn();
+    const steps: TourStep[] = [
+      { anchor: null, title: "欢迎", body: "开场" },
+      { anchor: null, title: "轮到你了", body: "收尾", action: "create-project" },
+    ];
+    const handle = startTour(steps, LABELS, { onExit, onAction });
+
+    // 第一步没有声明 action，不该渲染行动按钮
+    expect(popover().querySelector(".msp-tour-action-btn")).toBeNull();
+
+    click(".driver-popover-next-btn");
+    const btn = popover().querySelector<HTMLElement>(".msp-tour-action-btn");
+    expect(btn?.textContent).toBe("立即创建项目");
+
+    btn?.click();
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(onAction).toHaveBeenCalledWith("create-project");
+    // 行动按钮的退出按「走完」计——用户到达了收尾并选择继续动手，不该再收「可重看」提示
+    expect(onExit).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledWith(true);
+    expect(document.querySelector(".driver-popover")).toBeNull();
+
+    handle.dispose();
+  });
+
+  it("does not leak the action button onto a rerendered non-action step after moveTo", () => {
+    const steps: TourStep[] = [
+      { anchor: null, title: "欢迎", body: "开场" },
+      { anchor: null, title: "轮到你了", body: "收尾", action: "create-project" },
+    ];
+    const handle = startTour(steps, LABELS, { onExit: vi.fn(), startIndex: 1 });
+
+    handle.moveTo(0);
+    expect(popover().querySelector(".msp-tour-action-btn")).toBeNull();
+
+    handle.dispose();
   });
 
   it("does not report an exit when the caller disposes the tour", () => {

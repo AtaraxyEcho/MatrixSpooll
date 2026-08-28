@@ -83,6 +83,11 @@ coverage/
 .pytest_cache/
 .pytest-tmp/
 
+# Local diagnostics and browser automation artifacts
+*.log
+.playwright-cli/
+member-home.yml
+
 # File locks (project_manager 原子写产物)
 **/*.lock
 !/uv.lock

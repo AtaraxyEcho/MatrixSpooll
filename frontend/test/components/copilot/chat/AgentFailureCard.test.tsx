@@ -70,4 +70,21 @@ describe("AgentFailureCard", () => {
     expect(onRetry).toHaveBeenCalledOnce();
     expect(screen.getByRole("alert")).toHaveTextContent("Agent 启动失败");
   });
+
+  it("shows an actionable provider compatibility hint for model access failures", () => {
+    render(
+      <AgentFailureCard
+        failure={{
+          ...turnFailure,
+          summary: {
+            ...turnFailure.summary,
+            diagnosis: "model_or_endpoint_incompatible",
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/Anthropic Messages/)).toBeInTheDocument();
+    expect(screen.getByText(/OpenAI Chat Completions/)).toBeInTheDocument();
+  });
 });

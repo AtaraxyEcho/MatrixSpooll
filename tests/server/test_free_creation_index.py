@@ -21,6 +21,9 @@ def test_free_creation_index_rebuilds_from_project_records(tmp_path: Path) -> No
             "output_type": "video",
             "media_type": "video",
             "prompt": "A city at sunrise",
+            "effective_mode": "subtitle_burn",
+            "subtitle_id": "sub_11111111111111111111",
+            "subtitle_revision": 3,
             "media_path": f"creations/{creation_id}.mp4",
             "updated_at": "2026-08-23T00:00:00+00:00",
         },
@@ -33,6 +36,9 @@ def test_free_creation_index_rebuilds_from_project_records(tmp_path: Path) -> No
     assert index["creation_total"] == 1
     assert index["reference_total"] == 1
     assert index["creations"][0]["creation_id"] == creation_id
+    assert index["creations"][0]["effective_mode"] == "subtitle_burn"
+    assert index["creations"][0]["subtitle_id"] == "sub_11111111111111111111"
+    assert index["creations"][0]["subtitle_revision"] == 3
     assert "references" not in index["creations"][0]
     assert index["references"][0]["reference_id"] == upload["reference_id"]
 
@@ -70,5 +76,5 @@ def test_free_creation_index_can_be_explicitly_rebuilt(tmp_path: Path) -> None:
     invalidate_free_creation_index(tmp_path)
     second = load_free_creation_index(tmp_path)
 
-    assert first["version"] == second["version"] == 1
+    assert first["version"] == second["version"] == 2
     assert first["total"] == second["total"] == 0

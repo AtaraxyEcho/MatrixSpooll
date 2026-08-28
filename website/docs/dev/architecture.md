@@ -52,7 +52,6 @@ flowchart TB
 
     PROJECTS --> FILES["Project Files & Generated Assets"]
     SERVICES --> ORM["SQLAlchemy 2.0"]
-    ORM --> SQLITE["SQLite"]
     ORM --> PG["PostgreSQL"]
 ```
 
@@ -269,32 +268,11 @@ MatrixSpooll 的项目不仅是一条数据库记录，还包括文件系统中�
 2. 兼容变量 `AI_ANIME_PROJECTS`
 3. 默认 `projects/`
 
-默认 SQLite 数据库也位于应用数据目录中。
+运行时数据库由 `DATABASE_URL` 指向 PostgreSQL。项目媒体、结构化项目文件和凭据密钥仍位于应用数据目录中。
 
 ## 10. 数据库 {#database}
 
-MatrixSpooll 使用 SQLAlchemy 2.0 异步 ORM。
-
-### SQLite {#database-sqlite}
-
-适合：
-
-- 个人体验；
-- 本地开发；
-- 轻量单实例。
-
-默认使用 WAL、忙等待超时和外键约束。
-
-### PostgreSQL {#database-postgresql}
-
-适合：
-
-- 生产环境；
-- 较高并发；
-- 长期运行；
-- 更成熟的备份和恢复。
-
-应用启动时运行 Alembic 迁移，将数据库升级到当前版本。
+MatrixSpooll 使用 SQLAlchemy 2.0 异步 ORM，开发和生产运行环境统一连接 PostgreSQL。应用启动时运行 Alembic 迁移，将数据库升级到当前版本。SQLite 仅在 `TESTING=true` 的隔离测试中使用，不属于开发或生产部署选项。
 
 ## 11. 版本历史 {#version-history}
 
@@ -367,9 +345,11 @@ MatrixSpooll 使用 SQLAlchemy 2.0 异步 ORM。
 MatrixSpooll 提供：
 
 - 用户名和密码登录；
-- JWT；
+- HttpOnly Cookie 承载的 JWT 会话；
 - `msp-` 前缀 API Key；
 - 外部 Agent 同步对话端点。
+
+实例级角色分为超级管理员、管理员和普通成员；项目级权限独立分为所有者、编辑者和查看者。后端对项目路由统一解析稳定的项目 ID 并校验成员关系，不能依赖前端隐藏按钮作为权限边界。管理员可以管理账号、当前在线会话、系统日志和全局任务；只有项目所有者可以管理成员或转移所有权。
 
 API Key 应使用哈希存储，不应在创建后以明文持续返回。
 
@@ -459,4 +439,4 @@ MatrixSpooll 在支持的环境中使用 `bwrap` 等机制限制这些能力。D
 - [供应商与模型配置](../guide/providers.md)
 - [部署与运维](../ops/deployment.md)
 - [贡献指南](./contributing.md)
-- [ADR 目录](https://github.com/MockMine/MatrixSpooll/tree/main/docs/adr)
+- 交付源码包中的 `docs/adr/` 目录

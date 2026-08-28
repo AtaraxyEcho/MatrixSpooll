@@ -2,7 +2,6 @@
 id: contributing
 title: Contributing Guide
 sidebar_position: 2
-custom_edit_url: https://github.com/MockMine/MatrixSpooll/blob/main/CONTRIBUTING.md
 ---
 
 # Contributing Guide {#contributing}

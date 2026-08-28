@@ -88,6 +88,12 @@ interface AppState {
   sourceFilesVersion: number;
   invalidateSourceFiles: () => void;
 
+  // 创建项目请求信号：新建弹窗的开关是大厅页（ProjectsPage）的本地状态，引导收尾
+  // 行动按钮与上手清单挂在弹窗开关够不着的位置，经这个自增计数送达。订阅方记下
+  // 上次处理的值、仅在变化时打开弹窗。
+  createProjectRequest: number;
+  requestCreateProject: () => void;
+
   // Grid list invalidation signal (incremented on grid_ready SSE events)
   gridsRevision: number;
   invalidateGrids: () => void;
@@ -238,6 +244,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   sourceFilesVersion: 0,
   invalidateSourceFiles: () => set((s) => ({ sourceFilesVersion: s.sourceFilesVersion + 1 })),
+
+  createProjectRequest: 0,
+  requestCreateProject: () => set((s) => ({ createProjectRequest: s.createProjectRequest + 1 })),
 
   gridsRevision: 0,
   invalidateGrids: () => set((s) => ({ gridsRevision: s.gridsRevision + 1 })),

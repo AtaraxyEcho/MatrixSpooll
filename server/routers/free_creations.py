@@ -241,8 +241,8 @@ class CanvasGroup(BaseModel):
     @classmethod
     def validate_member_ids(cls, value: list[str]) -> list[str]:
         members = list(dict.fromkeys(value))
-        if len(members) < 2 or any(not item.startswith(("c_", "r_")) for item in members):
-            raise ValueError("canvas groups require at least two creations or references")
+        if len(members) < 2 or any(not item.startswith(("c_", "r_", "sub_")) for item in members):
+            raise ValueError("canvas groups require at least two creations, references, or subtitle tracks")
         return members
 
 
@@ -258,15 +258,15 @@ class CanvasStateUpdate(BaseModel):
     @field_validator("positions")
     @classmethod
     def validate_position_ids(cls, value: dict[str, CanvasPoint]) -> dict[str, CanvasPoint]:
-        if any(not key.startswith(("c_", "r_")) for key in value):
-            raise ValueError("canvas position ids must identify creations or references")
+        if any(not key.startswith(("c_", "r_", "sub_")) for key in value):
+            raise ValueError("canvas position ids must identify creations, references, or subtitle tracks")
         return value
 
     @field_validator("hidden_creation_ids")
     @classmethod
     def validate_hidden_ids(cls, value: list[str]) -> list[str]:
-        if any(not item.startswith("c_") for item in value):
-            raise ValueError("hidden ids must identify creations")
+        if any(not item.startswith(("c_", "sub_")) for item in value):
+            raise ValueError("hidden ids must identify creations or subtitle tracks")
         return value
 
     @field_validator("hidden_reference_ids")
@@ -302,22 +302,24 @@ class CanvasPatchUpdate(BaseModel):
     @field_validator("target_revisions")
     @classmethod
     def validate_target_revisions(cls, value: dict[str, int]) -> dict[str, int]:
-        if any(revision < 0 or not key.startswith(("c_", "r_", "g_", "canvas:")) for key, revision in value.items()):
+        if any(
+            revision < 0 or not key.startswith(("c_", "r_", "sub_", "g_", "canvas:")) for key, revision in value.items()
+        ):
             raise ValueError("canvas patch target revisions are invalid")
         return value
 
     @field_validator("position_updates")
     @classmethod
     def validate_position_updates(cls, value: dict[str, CanvasPoint]) -> dict[str, CanvasPoint]:
-        if any(not key.startswith(("c_", "r_")) for key in value):
-            raise ValueError("canvas patch positions require creation or reference ids")
+        if any(not key.startswith(("c_", "r_", "sub_")) for key in value):
+            raise ValueError("canvas patch positions require creation, reference, or subtitle ids")
         return value
 
     @field_validator("hidden_creation_updates")
     @classmethod
     def validate_hidden_creation_updates(cls, value: dict[str, bool]) -> dict[str, bool]:
-        if any(not key.startswith("c_") for key in value):
-            raise ValueError("canvas hidden creation updates require creation ids")
+        if any(not key.startswith(("c_", "sub_")) for key in value):
+            raise ValueError("canvas hidden creation updates require creation or subtitle ids")
         return value
 
     @field_validator("hidden_reference_updates")

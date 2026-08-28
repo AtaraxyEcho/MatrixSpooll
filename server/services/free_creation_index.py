@@ -10,7 +10,7 @@ from lib.formal_write import project_metadata_lock
 from lib.json_io import atomic_write_json, load_json_or_none
 from lib.path_safety import safe_join
 
-_INDEX_VERSION = 1
+_INDEX_VERSION = 2
 _CREATION_FIELDS = frozenset(
     {
         "creation_id",
@@ -27,7 +27,10 @@ _CREATION_FIELDS = frozenset(
         "model",
         "quantity",
         "duration_seconds",
+        "effective_mode",
         "parent_creation_id",
+        "subtitle_id",
+        "subtitle_revision",
         "storyboard_plan_id",
         "storyboard_shot_id",
         "sequence_index",

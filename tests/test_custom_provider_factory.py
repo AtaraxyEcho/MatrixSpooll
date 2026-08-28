@@ -166,6 +166,29 @@ class TestEndpointDispatch:
             api_key="sk-test", base_url="https://api.minimaxi.com/v1", model="MiniMax-Hailuo-2.3"
         )
 
+    @patch("lib.custom_provider.endpoints.MiniMaxVideoBackend")
+    def test_anyfast_minimax_h3_uses_required_mount_prefix(self, mock_cls):
+        provider = _make_provider(base_url="https://www.anyfast.ai/v1")
+        result = create_custom_backend(provider=provider, model_id="MiniMax-H3", endpoint="minimax-video")
+
+        assert isinstance(result, CustomVideoBackend)
+        mock_cls.assert_called_once_with(
+            api_key="sk-test",
+            base_url="https://www.anyfast.ai/minimax",
+            model="MiniMax-H3",
+        )
+
+    @patch("lib.custom_provider.endpoints.MiniMaxVideoBackend")
+    def test_anyfast_non_h3_minimax_model_keeps_configured_base(self, mock_cls):
+        provider = _make_provider(base_url="https://www.anyfast.ai/v1")
+        create_custom_backend(provider=provider, model_id="MiniMax-Hailuo-2.3", endpoint="minimax-video")
+
+        mock_cls.assert_called_once_with(
+            api_key="sk-test",
+            base_url="https://www.anyfast.ai/v1",
+            model="MiniMax-Hailuo-2.3",
+        )
+
     @patch("lib.custom_provider.endpoints.KlingImageBackend")
     def test_kling_image(self, mock_cls):
         provider = _make_provider(base_url="https://relay.example.com/v1")

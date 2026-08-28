@@ -3,7 +3,7 @@
 ## 本地开发环境
 
 ```bash
-# 前置要求：Python 3.12+, Node.js 20+, uv, pnpm, ffmpeg, Docker Compose
+# 前置要求：Python 3.12+, Node.js 20.19+, uv, pnpm, ffmpeg, Docker Compose
 # 文档站 website/ 另需 Node 24（版本钉在 website/.node-version）
 # 操作系统：Linux / macOS / Windows 原生或 WSL2
 
@@ -73,7 +73,7 @@ pnpm check-consistency
 
 ```bash
 # 后端测试
-python -m pytest
+uv run python -m pytest
 
 # 前端类型检查 + 测试
 cd frontend && pnpm check

@@ -24,6 +24,18 @@ https://github.com/ArcReel/ArcReel
 Modified versions must not misrepresent the origin of the software and must
 mark their changes in accordance with AGPLv3 Section 7(c).
 
+==== MatrixSpooll Modified Version Notice ====
+
+MatrixSpooll is a modified version of ArcReel.
+Modified product: MatrixSpooll
+Modified by: AtaraxyEcho
+Relevant modification date: 2026-08-28
+
+MatrixSpooll includes substantial changes to the user interface, free-creation
+workflow, multi-user administration, storage, deployment, media processing,
+and agent runtime integration. The complete corresponding source for the
+deployed version is made available to authenticated users from the About page.
+
 ==== 依据 AGPLv3 第 7 条的附加条款（中文对照）====
 
 根据 GNU Affero 通用公共许可证第 3 版第 7(b) 条，修改版本必须在"适当的法律

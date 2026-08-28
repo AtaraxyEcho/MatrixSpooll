@@ -22,12 +22,17 @@ RUN pnpm build
 # ============================================================
 FROM python:3.12-slim AS production
 
+ARG DEBIAN_MIRROR=https://deb.debian.org
+
 ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     UV_LINK_MODE=copy
 
-# 安装系统依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 使用 HTTPS，并为 Debian CDN/镜像的瞬时错误提供有限重试。
+# 中国大陆网络可在构建时传入 --build-arg DEBIAN_MIRROR=https://mirrors.aliyun.com。
+RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=30 update \
+    && apt-get -o Acquire::Retries=5 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
     ffmpeg \
     curl \
     bubblewrap \
@@ -47,8 +52,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-LABEL org.opencontainers.image.source="https://github.com/MockMine/MatrixSpooll" \
-      org.opencontainers.image.licenses="AGPL-3.0" \
+ARG MATRIXSPOOLL_VERSION=1.2.0
+LABEL org.opencontainers.image.licenses="AGPL-3.0" \
+      org.opencontainers.image.version="${MATRIXSPOOLL_VERSION}" \
       org.opencontainers.image.title="MatrixSpooll"
 
 # 基础环境变量

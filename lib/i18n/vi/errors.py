@@ -522,6 +522,7 @@ MESSAGES = {
     "free_creation_aspect_ratio_not_supported": "Mô hình {model} không hỗ trợ tỷ lệ khung hình {ratio}; hãy chọn: {supported}",
     "free_creation_aspect_ratio_capabilities_missing": "Mô hình {model} chưa khai báo các tỷ lệ khung hình được hỗ trợ, nên không thể gửi tác vụ sáng tạo tự do một cách an toàn",
     "video_model_unsupported": "Điểm cuối video này không hỗ trợ {provider}/{model}; hãy chọn mô hình tương thích",
+    "video_provider_response_invalid": "{provider} trả về phản hồi không nhận dạng được ({content_type}, ID yêu cầu: {request_id}). Hãy kiểm tra URL cơ sở và cấu hình điểm cuối của mô hình",
     "video_start_image_unsupported": "Mô hình {model} không hỗ trợ đầu vào khung hình đầu",
     "video_end_image_unsupported": "Mô hình {model} không hỗ trợ đầu vào khung hình cuối",
     "video_t2v_unsupported": "Mô hình {model} không hỗ trợ tạo video từ văn bản",

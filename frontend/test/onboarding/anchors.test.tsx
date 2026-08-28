@@ -16,7 +16,6 @@ import { OverviewCanvas } from "@/components/canvas/OverviewCanvas";
 import { CharactersPage } from "@/components/canvas/lorebook/CharactersPage";
 import { TimelineCanvas } from "@/components/canvas/timeline/TimelineCanvas";
 import { ProjectsPage } from "@/components/pages/ProjectsPage";
-import { SystemConfigPage } from "@/components/pages/SystemConfigPage";
 import { useAppStore } from "@/stores/app-store";
 import { useCostStore } from "@/stores/cost-store";
 import { useOnboardingStore } from "@/stores/onboarding-store";
@@ -54,15 +53,6 @@ function renderLobby() {
   );
 }
 
-function renderSettings() {
-  const { hook } = memoryLocation({ path: "/app/settings" });
-  render(
-    <Router hook={hook}>
-      <SystemConfigPage />
-    </Router>,
-  );
-}
-
 // 工作台四步落在演示项目上，锚点测试直接用同一份演示数据构建 props——挂载条件与
 // 引导实际走到的界面一致，不另造 mock 数据。
 const demoT = i18n.getFixedT("zh", "onboarding");
@@ -85,8 +75,6 @@ const RENDERERS: Record<OnboardingAnchor, () => void> = {
     useOnboardingStore.setState({ active: true });
     renderLobby();
   },
-  [ONBOARDING_ANCHORS.settingsProviders]: renderSettings,
-  [ONBOARDING_ANCHORS.settingsAgent]: renderSettings,
   [ONBOARDING_ANCHORS.workbenchOverview]: () => {
     render(<OverviewCanvas projectName={DEMO_PROJECT_NAME} projectData={buildDemoProjectData(demoT)} readOnly />);
   },

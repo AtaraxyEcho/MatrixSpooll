@@ -154,6 +154,7 @@ _TASK_FAILURE_ACTIONS: dict[str, GenerationAction] = {
     "video_capability_missing_r2v": GenerationAction.CONFIGURE_PROVIDER,
     "video_capability_missing_t2v": GenerationAction.CONFIGURE_PROVIDER,
     "video_model_unsupported": GenerationAction.CONFIGURE_PROVIDER,
+    "video_provider_response_invalid": GenerationAction.CONFIGURE_PROVIDER,
     "video_start_image_unsupported": GenerationAction.CONFIGURE_PROVIDER,
     "video_end_image_unsupported": GenerationAction.CONFIGURE_PROVIDER,
     "video_t2v_unsupported": GenerationAction.CONFIGURE_PROVIDER,

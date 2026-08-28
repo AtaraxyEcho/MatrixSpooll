@@ -109,7 +109,10 @@ export interface FreeCreation {
   model?: string;
   quantity?: number;
   duration_seconds?: number | null;
+  effective_mode?: string | null;
   parent_creation_id?: string | null;
+  subtitle_id?: string | null;
+  subtitle_revision?: number | null;
   storyboard_plan_id?: string | null;
   storyboard_shot_id?: string | null;
   sequence_index?: number | null;

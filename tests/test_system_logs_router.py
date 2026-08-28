@@ -62,6 +62,25 @@ async def test_legal_attribution_is_loaded_from_notice(_client) -> None:
     assert payload["repository_url"] in payload["attribution"]
 
 
+async def test_legal_disclosure_reports_missing_source_release(_client, monkeypatch, tmp_path: Path) -> None:
+    client, _log_dir = _client
+    monkeypatch.setenv("MATRIXSPOOLL_SOURCE_RELEASE_DIR", str(tmp_path / "missing-source"))
+
+    res = await client.get("/api/v1/system/legal-disclosure")
+
+    assert res.status_code == 200
+    payload = res.json()
+    assert payload["modified_product"] == "MatrixSpooll"
+    assert payload["source_release"] == {
+        "available": False,
+        "version": None,
+        "archive_name": None,
+        "sha256": None,
+        "created_at": None,
+        "download_url": None,
+    }
+
+
 async def test_zip_contains_diagnostics(_client) -> None:
     client, _log_dir = _client
     res = await client.get("/api/v1/system/logs/download")

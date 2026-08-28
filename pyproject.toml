@@ -41,11 +41,6 @@ dependencies = [
     "cryptography>=50.0.0",
 ]
 
-[project.urls]
-Repository = "https://github.com/MockMine/MatrixSpooll"
-License = "https://github.com/MockMine/MatrixSpooll/blob/main/LICENSE"
-Notice = "https://github.com/MockMine/MatrixSpooll/blob/main/NOTICE"
-
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",

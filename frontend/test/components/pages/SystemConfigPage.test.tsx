@@ -96,10 +96,6 @@ describe("SystemConfigPage", () => {
     } as never);
     vi.spyOn(API, "listCredentials").mockResolvedValue({ credentials: [] });
     vi.spyOn(API, "getUsageStatsGrouped").mockResolvedValue({ stats: [], period: { start: "", end: "" } });
-    vi.spyOn(API, "getLegalAttribution").mockResolvedValue({
-      attribution: "Powered by Upstream — https://example.test/upstream",
-      repository_url: "https://example.test/upstream",
-    });
   });
 
   it("renders the page header", () => {
@@ -108,14 +104,13 @@ describe("SystemConfigPage", () => {
     expect(screen.getByText("系统配置与 API 访问管理")).toBeInTheDocument();
   });
 
-  it("renders all 6 sidebar sections", () => {
+  it("renders all 5 sidebar sections", () => {
     renderPage();
     expect(screen.getByRole("button", { name: /智能体/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /供应商/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /模型选择/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /用量统计/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /API 令牌/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /关于/ })).toBeInTheDocument();
   });
 
   it("defaults to the 供应商 section", () => {
@@ -189,19 +184,6 @@ describe("SystemConfigPage", () => {
     expect(link).toHaveAttribute("href", "/app/projects");
   });
 
-  it("renders the attribution-only About section", async () => {
-    renderPage("/app/settings?section=about");
-
-    expect(await screen.findByRole("link", { name: "https://example.test/upstream" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /检查更新/ })).not.toBeInTheDocument();
-  });
-
-  it("offers a replay action outside the attribution-only About section", async () => {
-    renderPage("/app/settings?section=about");
-
-    fireEvent.click(screen.getByRole("button", { name: "重看引导" }));
-
-    expect(useOnboardingStore.getState().active).toBe(true);
-    expect(await screen.findByRole("link", { name: "https://example.test/upstream" })).toBeInTheDocument();
-  });
+  // 「关于」分区与设置页的重看引导入口已随 AboutSection 移除：引导入口收敛到用户菜单，
+  // 本文件只覆盖仍存在的分区。
 });

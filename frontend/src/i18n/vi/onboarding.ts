@@ -3,19 +3,15 @@ import type enOnboarding from '@/i18n/en/onboarding';
 export default {
   // Các bước hướng dẫn
   'welcome_title': 'Chào mừng đến với [[brand]]',
-  'welcome_body': '[[brand]] biến tiểu thuyết hoặc kịch bản thành video ngắn: Agent phụ trách phân tích nguyên tác, viết kịch bản từng tập, tạo phân cảnh và video, và mỗi bước đều có thể chỉnh sửa thủ công. Phần hướng dẫn này giới thiệu giao diện chính và quy trình cơ bản.',
+  'welcome_body': '[[brand]] biến tiểu thuyết hoặc kịch bản thành video ngắn: Agent phụ trách phân tích nguyên tác, viết kịch bản từng tập, tạo phân cảnh và video, và mỗi bước đều có thể chỉnh sửa thủ công. Phần hướng dẫn này đưa bạn đi qua sảnh, một dự án minh hoạ và bàn làm việc, mất khoảng hai phút.',
   'lobby_create_title': 'Tạo dự án',
-  'lobby_create_body': 'Tạo dự án tại đây, thiết lập thông tin cơ bản, mô hình sử dụng và phong cách hình ảnh của dự án.',
+  'lobby_create_body': 'Tạo dự án tại đây, thiết lập thông tin cơ bản, chế độ nội dung, mô hình sử dụng và phong cách hình ảnh.',
   'lobby_settings_title': 'Cài đặt',
-  'lobby_settings_body': 'Trước khi bắt đầu sản xuất cần hoàn tất hai mục cấu hình. Chấm đỏ trên nút nghĩa là còn mục bắt buộc chưa được cấu hình.',
-  'settings_providers_title': 'Cấu hình nhà cung cấp',
-  'settings_providers_body': 'Hình ảnh và video do các nhà cung cấp cấu hình tại đây tạo ra. Cấu hình ít nhất một nhà cung cấp: nhập API Key và xác nhận khả dụng bằng "Kiểm tra kết nối".',
-  'settings_agent_title': 'Cấu hình Agent',
-  'settings_agent_body': 'Agent phụ trách phân tích nguyên tác, viết kịch bản và thực hiện sản xuất; cấu hình dịch vụ mô hình mà nó sử dụng tại đây.',
+  'lobby_settings_body': 'Trước khi sản xuất cần cấu hình nhà cung cấp tạo sinh và dịch vụ mô hình của Agent. Trước khi cấu hình đầy đủ, nút sẽ có chấm đỏ nhắc nhở — phần cấu hình chi tiết có thể làm theo danh sách khởi đầu ở sảnh.',
   'lobby_demo_title': 'Dự án minh hoạ',
-  'lobby_demo_body': 'Nhấp vào thẻ để mở bàn làm việc minh hoạ và xem giao diện sản xuất của dự án.',
+  'lobby_demo_body': 'Thẻ này là một dự án minh hoạ, chỉ hiển thị trong lúc hướng dẫn. Nhấp vào thẻ để mở bàn làm việc minh hoạ chỉ đọc, hoặc nhấn "Tiếp theo" để tiếp tục.',
   'workbench_overview_title': 'Tổng quan dự án',
-  'workbench_overview_body': 'Trang đầu của bàn làm việc là tổng quan dự án, gồm phần tổng quan do Agent tạo và danh sách các tập; trạng thái và tiến độ sản xuất của từng tập đều xem tại đây.',
+  'workbench_overview_body': 'Trang đầu của bàn làm việc là tổng quan dự án, gồm phần tổng quan do Agent tạo và danh sách các tập; trạng thái và tiến độ sản xuất của từng tập đều xem tại đây. Bản minh hoạ dùng chế độ phim truyền hình — các chế độ thuật sư, quảng cáo và sáng tạo tự do có bố cục bàn làm việc hơi khác một chút.',
   'workbench_agent_title': 'Agent',
   'workbench_agent_body': 'Bên phải là Agent — nó thực hiện sản xuất và báo cáo tiến độ. Với dự án mới, vào bàn làm việc rồi nhập tiểu thuyết hoặc kịch bản trước; phân tích xong, gửi "Bắt đầu sản xuất" và nó sẽ lần lượt tạo tổng quan dự án, ảnh tạo hình nhân vật cùng phân cảnh và video cho từng tập.',
   'workbench_lorebook_title': 'Nhân vật, bối cảnh và đạo cụ',
@@ -25,7 +21,18 @@ export default {
   'workbench_export_title': 'Xuất',
   'workbench_export_body': 'Sản xuất xong, xuất bản nháp Jianying từ thanh trên cùng để tiếp tục dựng, hoặc tải cả dự án về. Dự án minh hoạ chưa có thành phẩm nên nút xuất không khả dụng.',
   'finish_title': 'Bắt đầu dự án đầu tiên của bạn',
-  'finish_body': 'Tạo dự án và nhập tiểu thuyết hoặc kịch bản, hoặc bắt đầu sáng tạo tự do ngay. Có thể xem lại hướng dẫn này bằng nút “Xem lại hướng dẫn” ở đầu trang Cài đặt.',
+  'finish_body': 'Tạo dự án và nhập tiểu thuyết hoặc kịch bản, hoặc bắt đầu sáng tạo tự do ngay. Có thể xem lại hướng dẫn này bằng mục "Xem hướng dẫn" trong menu tài khoản ở góc trên bên phải.',
+  'finish_action': 'Tạo dự án đầu tiên',
+  'closed_hint': 'Hướng dẫn đã đóng, có thể mở lại bất cứ lúc nào qua mục "Xem hướng dẫn" trong menu tài khoản ở góc trên bên phải.',
+
+  // Danh sách khởi đầu ở sảnh
+  'checklist_eyebrow': 'Bắt đầu sử dụng',
+  'checklist_task_config': 'Cấu hình nhà cung cấp và Agent',
+  'checklist_action_config': 'Đi cấu hình',
+  'checklist_task_project': 'Tạo dự án đầu tiên của bạn',
+  'checklist_action_project': 'Dự án mới',
+  'checklist_task_tour': 'Làm quen giao diện (xem hướng dẫn)',
+  'checklist_action_tour': 'Xem hướng dẫn',
 
   // Điều khiển hướng dẫn
   'next': 'Tiếp theo',
@@ -139,5 +146,5 @@ export default {
   // Mục ở đầu trang Cài đặt
   'replay_title': 'Hướng dẫn sử dụng',
   'replay_desc': 'Xem lại phần hướng dẫn lần đầu, tìm hiểu giao diện chính và quy trình cơ bản.',
-  'replay_action': 'Xem lại hướng dẫn',
+  'replay_action': 'Xem hướng dẫn',
 } satisfies Record<keyof typeof enOnboarding, string>;

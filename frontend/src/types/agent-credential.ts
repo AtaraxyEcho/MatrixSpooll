@@ -83,6 +83,7 @@ export interface TestConnectionResponse {
   overall: "ok" | "warn" | "fail";
   messages_probe: ProbeResult;
   discovery_probe: ProbeResult | null;
+  openai_probe: ProbeResult | null;
   diagnosis: DiagnosisCode | null;
   suggestion: SuggestionAction | null;
   derived_messages_root: string;

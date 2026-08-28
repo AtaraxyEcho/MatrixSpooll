@@ -40,6 +40,23 @@ def _format_exception(exc: BaseException) -> str:
         return f"{type(exc).__module__}.{type(exc).__name__}: {_safe_text(exc)}"
 
 
+def _diagnose_model_or_endpoint_failure(message: str | None) -> str | None:
+    """Classify the Claude SDK's generic model-selection failure text.
+
+    The SDK does not expose whether the model is missing, inaccessible, or only
+    available through a non-Anthropic route. Keep the diagnosis deliberately
+    broad and let the credential connection test provide protocol evidence.
+    """
+    lowered = (message or "").lower()
+    if "there's an issue with the selected model" in lowered or "model_not_found" in lowered:
+        return "model_or_endpoint_incompatible"
+    if "selected model" in lowered and any(
+        marker in lowered for marker in ("may not exist", "not available", "do not have access", "don't have access")
+    ):
+        return "model_or_endpoint_incompatible"
+    return None
+
+
 def build_startup_failure_observation(
     exc: BaseException,
     *,
@@ -54,6 +71,13 @@ def build_startup_failure_observation(
     if message is None and sdk_stderr:
         source = "sdk_stderr"
         message = sdk_stderr
+    summary: dict[str, Any] = {
+        "source": source,
+        "type": type(exc).__name__,
+        "message": message,
+    }
+    if diagnosis := _diagnose_model_or_endpoint_failure(message):
+        summary["diagnosis"] = diagnosis
     return _sanitize_observation(
         {
             "version": 1,
@@ -61,11 +85,7 @@ def build_startup_failure_observation(
             "timestamp": _utc_now_iso(),
             "project_name": project_name,
             "session_id": session_id,
-            "summary": {
-                "source": source,
-                "type": type(exc).__name__,
-                "message": message,
-            },
+            "summary": summary,
             "raw": {
                 "exception": {
                     "type": type(exc).__name__,
@@ -129,6 +149,16 @@ def build_turn_failure_observation(
     if result_message is not None:
         raw["result_message"] = dict(result_message)
 
+    message = _message_text(assistant_message) or _message_text(result_message)
+    summary: dict[str, Any] = {
+        "source": source,
+        "type": observed_type,
+        "status": status,
+        "message": message,
+    }
+    if diagnosis := _diagnose_model_or_endpoint_failure(message):
+        summary["diagnosis"] = diagnosis
+
     return _sanitize_observation(
         {
             "version": 1,
@@ -136,12 +166,7 @@ def build_turn_failure_observation(
             "timestamp": timestamp,
             "project_name": project_name,
             "session_id": session_id,
-            "summary": {
-                "source": source,
-                "type": observed_type,
-                "status": status,
-                "message": _message_text(assistant_message) or _message_text(result_message),
-            },
+            "summary": summary,
             "raw": raw,
         }
     )

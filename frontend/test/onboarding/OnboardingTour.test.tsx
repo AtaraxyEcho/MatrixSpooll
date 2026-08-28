@@ -6,6 +6,7 @@ import i18n from "@/i18n";
 import { API } from "@/api";
 import { ROUTE_APP_ASSETS } from "@/app-routes";
 import { useAuthStore } from "@/stores/auth-store";
+import { useAppStore } from "@/stores/app-store";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { ONBOARDING_ANCHORS, type OnboardingAnchor } from "@/onboarding/anchors";
 import { DEMO_PROJECT_NAME, DEMO_SCRIPTED_EPISODE } from "@/onboarding/demo-project";
@@ -37,7 +38,9 @@ function popoverTitle(): string | null {
 describe("OnboardingTour", () => {
   beforeEach(() => {
     useOnboardingStore.setState(useOnboardingStore.getInitialState(), true);
-    useAuthStore.setState({ isAuthenticated: true });
+    useAuthStore.setState({ isAuthenticated: true, role: null });
+    // toast 是模块级 store，跨用例残留会把「中途退出提示」泄漏到别的用例的断言里
+    useAppStore.setState({ toast: null, createProjectRequest: 0 });
     vi.spyOn(API, "markOnboardingSeen").mockResolvedValue({ seen: true });
   });
 
@@ -248,73 +251,13 @@ describe("OnboardingTour", () => {
     );
   }
 
-  /** 设置页两步的锚点。 */
-  function mountSettingsAnchors(): HTMLElement[] {
-    return mountAnchors(ONBOARDING_ANCHORS.settingsProviders, ONBOARDING_ANCHORS.settingsAgent);
-  }
-
   function click(selector: string): void {
     document.querySelector<HTMLElement>(selector)?.click();
   }
 
-  it("crosses from the lobby into settings when the tour reaches the provider step", async () => {
-    vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
-    const lobbyAnchors = mountLobbyAnchors();
-    const settingsAnchor = document.createElement("button");
-    settingsAnchor.setAttribute("data-onboarding", ONBOARDING_ANCHORS.settingsProviders);
-    document.body.appendChild(settingsAnchor);
-
-    const { hook, history } = memoryLocation({ path: "/app/projects", record: true });
-    render(
-      <Router hook={hook}>
-        <OnboardingTour />
-      </Router>,
-    );
-    await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
-
-    click(".driver-popover-next-btn"); // → 新建项目入口
-    click(".driver-popover-next-btn"); // → 设置入口（仍在大厅）
-    click(".driver-popover-next-btn"); // → 供应商（跨页到设置）
-
-    await waitFor(() => expect(popoverTitle()).toBe("配置供应商"));
-    // 带上 section 查询参数——设置页内容区靠它落到供应商一节。
-    expect(history.at(-1)).toBe("/app/settings?section=providers");
-    expect(API.markOnboardingSeen).not.toHaveBeenCalled();
-    [...lobbyAnchors, settingsAnchor].forEach((el) => el.remove());
-  });
-
-  it("crosses back into the lobby when the tour steps backwards out of settings", async () => {
-    vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
-    const lobbyAnchors = mountLobbyAnchors();
-    const settingsAnchor = document.createElement("button");
-    settingsAnchor.setAttribute("data-onboarding", ONBOARDING_ANCHORS.settingsProviders);
-    document.body.appendChild(settingsAnchor);
-
-    const { hook, history } = memoryLocation({ path: "/app/projects", record: true });
-    render(
-      <Router hook={hook}>
-        <OnboardingTour />
-      </Router>,
-    );
-    await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
-
-    click(".driver-popover-next-btn");
-    click(".driver-popover-next-btn");
-    click(".driver-popover-next-btn"); // → 供应商（跨页到设置）
-    await waitFor(() => expect(popoverTitle()).toBe("配置供应商"));
-    expect(history.at(-1)).toBe("/app/settings?section=providers");
-
-    click(".driver-popover-prev-btn"); // ← 设置入口（跨页回大厅）
-
-    await waitFor(() => expect(popoverTitle()).toBe("设置"));
-    expect(history.at(-1)).toBe("/app/projects");
-    expect(API.markOnboardingSeen).not.toHaveBeenCalled();
-    [...lobbyAnchors, settingsAnchor].forEach((el) => el.remove());
-  });
-
   it("pulls back to the lobby if another tour route is reached mid-way through the interactive demo-card step", async () => {
     vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
-    const anchors = [...mountLobbyAnchors(), ...mountSettingsAnchors()];
+    const anchors = mountLobbyAnchors();
 
     const { hook, history, navigate } = memoryLocation({ path: "/app/projects", record: true });
     render(
@@ -324,13 +267,13 @@ describe("OnboardingTour", () => {
     );
     await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
 
-    for (let i = 0; i < 5; i++) click(".driver-popover-next-btn"); // → 演示卡（interactive 步，锚点在大厅）
+    for (let i = 0; i < 3; i++) click(".driver-popover-next-btn"); // → 演示卡（interactive 步，锚点在大厅）
     await waitFor(() => expect(popoverTitle()).toBe("演示项目"));
 
     // 演示卡步是 interactive，允许用户点卡片本身离开大厅进工作台；但如果落点是引导
     // 覆盖的另一个路由（如顶栏「设置」），不该被这条豁免一并放过——否则 driver 停在
     // 演示卡步却找不到锚点，会降级成与设置页内容不符的居中气泡。
-    act(() => navigate("/app/settings"));
+    act(() => navigate("/app/projects"));
 
     await waitFor(() => expect(history.at(-1)).toBe("/app"));
     expect(popoverTitle()).toBe("演示项目");
@@ -340,7 +283,7 @@ describe("OnboardingTour", () => {
 
   it("pulls back to the lobby if a route outside the tour is reached mid-way through the interactive demo-card step", async () => {
     vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
-    const anchors = [...mountLobbyAnchors(), ...mountSettingsAnchors()];
+    const anchors = mountLobbyAnchors();
 
     const { hook, history, navigate } = memoryLocation({ path: "/app/projects", record: true });
     render(
@@ -350,7 +293,7 @@ describe("OnboardingTour", () => {
     );
     await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
 
-    for (let i = 0; i < 5; i++) click(".driver-popover-next-btn"); // → 演示卡（interactive 步）
+    for (let i = 0; i < 3; i++) click(".driver-popover-next-btn"); // → 演示卡（interactive 步）
     await waitFor(() => expect(popoverTitle()).toBe("演示项目"));
 
     // 落点之外的去处一律拽回，不因为它在引导覆盖范围之外就放过：资产库是主界面路由但
@@ -364,37 +307,10 @@ describe("OnboardingTour", () => {
     anchors.forEach((el) => el.remove());
   }, 20_000);
 
-  it("switches the settings pane back to providers when stepping backwards from the agent step", async () => {
-    vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
-    const anchors = [...mountLobbyAnchors(), ...mountSettingsAnchors()];
-
-    const { hook, history } = memoryLocation({ path: "/app/projects", record: true });
-    render(
-      <Router hook={hook}>
-        <OnboardingTour />
-      </Router>,
-    );
-    await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
-
-    for (let i = 0; i < 4; i++) click(".driver-popover-next-btn"); // → 配置智能体
-    await waitFor(() => expect(popoverTitle()).toBe("配置智能体"));
-    expect(history.at(-1)).toBe("/app/settings?section=agent");
-
-    // 两步同在 /app/settings，退回时 pathname 不变——内容区必须靠 section 参数切回
-    // 供应商，否则讲供应商时右边还摆着智能体（正向同理）。
-    click(".driver-popover-prev-btn");
-
-    await waitFor(() => expect(popoverTitle()).toBe("配置供应商"));
-    expect(history.at(-1)).toBe("/app/settings?section=providers");
-    expect(API.markOnboardingSeen).not.toHaveBeenCalled();
-
-    anchors.forEach((el) => el.remove());
-  });
-
-  it("degrades to a centered popover when the settings-step anchor never mounts", async () => {
+  it("degrades to a centered popover when the workbench-step anchor never mounts", async () => {
     vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const lobbyAnchors = mountLobbyAnchors();
+    const anchors = mountLobbyAnchors();
 
     const { hook } = memoryLocation({ path: "/app/projects" });
     render(
@@ -404,27 +320,21 @@ describe("OnboardingTour", () => {
     );
     await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
 
-    click(".driver-popover-next-btn");
-    click(".driver-popover-next-btn");
-    click(".driver-popover-next-btn"); // 没有渲染设置页，锚点不存在——等待超时后应当降级为居中气泡而不是卡住
-
-    await waitFor(() => expect(popoverTitle()).toBe("配置供应商"), { timeout: 3000 });
+    for (let i = 0; i < 4; i++) click(".driver-popover-next-btn"); // → 项目概览（没有渲染工作台，锚点不存在）
+    await waitFor(() => expect(popoverTitle()).toBe("项目概览"), { timeout: 3000 });
     // 讲解照常进行，丢的只是高亮——driver 顶上自己的占位元素，气泡回到屏幕中央。
     expect(document.getElementById("driver-dummy-element")?.classList.contains("driver-active-element")).toBe(
       true,
     );
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining(ONBOARDING_ANCHORS.settingsProviders));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(ONBOARDING_ANCHORS.workbenchOverview));
 
     warn.mockRestore();
-    lobbyAnchors.forEach((el) => el.remove());
-  });
+    anchors.forEach((el) => el.remove());
+  }, 20_000);
 
-  it("still marks the tour as seen when skipped mid-way through the settings steps", async () => {
+  it("still marks the tour as seen when skipped mid-way through the lobby steps", async () => {
     vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
     const lobbyAnchors = mountLobbyAnchors();
-    const settingsAnchor = document.createElement("button");
-    settingsAnchor.setAttribute("data-onboarding", ONBOARDING_ANCHORS.settingsProviders);
-    document.body.appendChild(settingsAnchor);
 
     const { hook } = memoryLocation({ path: "/app/projects" });
     render(
@@ -435,16 +345,14 @@ describe("OnboardingTour", () => {
     await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
 
     click(".driver-popover-next-btn");
-    click(".driver-popover-next-btn");
-    click(".driver-popover-next-btn");
-    await waitFor(() => expect(popoverTitle()).toBe("配置供应商"));
+    await waitFor(() => expect(popoverTitle()).toBe("新建项目"));
 
     click(".msp-tour-skip-btn");
 
     await waitFor(() => expect(API.markOnboardingSeen).toHaveBeenCalledTimes(1));
     expect(popoverTitle()).toBeNull();
     expect(useOnboardingStore.getState().seen).toBe(true);
-    [...lobbyAnchors, settingsAnchor].forEach((el) => el.remove());
+    lobbyAnchors.forEach((el) => el.remove());
   });
 
   /** 演示工作台五步的锚点。 */
@@ -458,15 +366,15 @@ describe("OnboardingTour", () => {
     );
   }
 
-  /** 全程 12 步的锚点，供跑完整串联的用例一次挂齐。 */
+  /** 全程 10 步的锚点，供跑完整串联的用例一次挂齐。 */
   function mountAllAnchors(): HTMLElement[] {
-    return [...mountLobbyAnchors(), ...mountSettingsAnchors(), ...mountWorkbenchAnchors()];
+    return [...mountLobbyAnchors(), ...mountWorkbenchAnchors()];
   }
 
   const DEMO_WORKBENCH = `/app/projects/${DEMO_PROJECT_NAME}`;
   const DEMO_EPISODE = `${DEMO_WORKBENCH}/episodes/${DEMO_SCRIPTED_EPISODE}`;
 
-  it("walks all twelve steps from the lobby through the demo workbench and back to the lobby", async () => {
+  it("walks all ten steps from the lobby through the demo workbench and back to the lobby", async () => {
     vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
     const anchors = mountAllAnchors();
 
@@ -482,8 +390,6 @@ describe("OnboardingTour", () => {
     const expected: [string, string][] = [
       ["新建项目", "/app/projects"],
       ["设置", "/app/projects"],
-      ["配置供应商", "/app/settings?section=providers"],
-      ["配置智能体", "/app/settings?section=agent"],
       ["演示项目", "/app"],
       ["项目概览", DEMO_WORKBENCH],
       ["智能体", DEMO_WORKBENCH],
@@ -510,6 +416,86 @@ describe("OnboardingTour", () => {
     anchors.forEach((el) => el.remove());
   }, 20_000);
 
+  it("offers the create-project action button on the finish step and requests the modal", async () => {
+    vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
+    const anchors = mountAllAnchors();
+
+    const { hook } = memoryLocation({ path: "/app/projects" });
+    render(
+      <Router hook={hook}>
+        <OnboardingTour />
+      </Router>,
+    );
+    await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
+
+    for (let i = 0; i < 9; i++) click(".driver-popover-next-btn");
+    await waitFor(() => expect(popoverTitle()).toBe("开始你的第一个项目"));
+
+    // 收尾气泡带行动按钮：点击 = 记 seen + 请求打开新建弹窗（经 app-store 信号送达大厅页）
+    const before = useAppStore.getState().createProjectRequest;
+    click(".msp-tour-action-btn");
+
+    await waitFor(() => expect(API.markOnboardingSeen).toHaveBeenCalledTimes(1));
+    expect(popoverTitle()).toBeNull();
+    expect(useAppStore.getState().createProjectRequest).toBe(before + 1);
+    // 走完的退出不收「可重看」提示——那是给中途退出用户的（见下一用例）。
+    expect(useAppStore.getState().toast).toBeNull();
+
+    anchors.forEach((el) => el.remove());
+  }, 20_000);
+
+  it("hints at the replay entry when the tour is closed mid-way", async () => {
+    vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
+
+    renderAt("/app/projects");
+    await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
+
+    click(".driver-popover-close-btn");
+
+    await waitFor(() => expect(API.markOnboardingSeen).toHaveBeenCalledTimes(1));
+    // 中途退出提示去处；正常走完的用户不收这条提示（见上一用例）。
+    expect(useAppStore.getState().toast?.text).toContain("查看引导");
+  });
+
+  it("skips the settings point-out step for member-role users", async () => {
+    vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
+    useAuthStore.setState({ role: "member" });
+    const anchors = mountAllAnchors();
+
+    const { hook, history } = memoryLocation({ path: "/app/projects", record: true });
+    render(
+      <Router hook={hook}>
+        <OnboardingTour />
+      </Router>,
+    );
+    await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
+
+    // member 的 9 步大纲：欢迎 → 新建项目 → 演示卡 → 演示工作台五步 → 收尾，没有设置
+    // 指路步（member 界面上没有那个入口，steps.ts 里整步裁剪）。
+    const expected: [string, string][] = [
+      ["新建项目", "/app/projects"],
+      ["演示项目", "/app"],
+      ["项目概览", DEMO_WORKBENCH],
+      ["智能体", DEMO_WORKBENCH],
+      ["角色、场景与道具", `${DEMO_WORKBENCH}/characters`],
+      ["分镜画布", DEMO_EPISODE],
+      ["导出", DEMO_EPISODE],
+      ["开始你的第一个项目", "/app/projects"],
+    ];
+
+    for (const [title, route] of expected) {
+      click(".driver-popover-next-btn");
+      await waitFor(() => expect(popoverTitle()).toBe(title));
+      expect(history.at(-1)).toBe(route);
+    }
+
+    click(".driver-popover-next-btn"); // 收尾气泡上是「完成」
+    await waitFor(() => expect(API.markOnboardingSeen).toHaveBeenCalledTimes(1));
+    expect(popoverTitle()).toBeNull();
+
+    anchors.forEach((el) => el.remove());
+  }, 20_000);
+
   it("advances straight into the workbench segment when the user follows the demo card in", async () => {
     vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
     const anchors = mountAllAnchors();
@@ -522,7 +508,7 @@ describe("OnboardingTour", () => {
     );
     await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
 
-    for (let i = 0; i < 5; i++) click(".driver-popover-next-btn"); // → 演示卡（interactive）
+    for (let i = 0; i < 3; i++) click(".driver-popover-next-btn"); // → 演示卡（interactive）
     await waitFor(() => expect(popoverTitle()).toBe("演示项目"));
 
     // 顺着这一步给的入口点进演示工作台：不拽回大厅，引导顺势推进到工作台首步——
@@ -548,7 +534,7 @@ describe("OnboardingTour", () => {
     );
     await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
 
-    for (let i = 0; i < 6; i++) click(".driver-popover-next-btn"); // → 项目概览（工作台第一步）
+    for (let i = 0; i < 4; i++) click(".driver-popover-next-btn"); // → 项目概览（工作台第一步）
     await waitFor(() => expect(popoverTitle()).toBe("项目概览"));
     expect(history.at(-1)).toBe(DEMO_WORKBENCH);
 
@@ -562,11 +548,11 @@ describe("OnboardingTour", () => {
     anchors.forEach((el) => el.remove());
   }, 20_000);
 
-  it("replays the full twelve steps from the settings entry", async () => {
+  it("replays the full ten steps from the settings entry", async () => {
     vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: true });
     const anchors = mountAllAnchors();
 
-    // 重看入口在设置页，起步得先跨回大厅——重看和首弹共用同一条 12 步大纲。
+    // 重看入口在设置页，起步得先跨回大厅——重看和首弹共用同一条 10 步大纲。
     const { hook, history } = memoryLocation({ path: "/app/settings", record: true });
     render(
       <Router hook={hook}>
@@ -579,7 +565,7 @@ describe("OnboardingTour", () => {
     await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
     expect(history.at(-1)).toBe("/app/projects");
 
-    for (let i = 0; i < 11; i++) click(".driver-popover-next-btn");
+    for (let i = 0; i < 9; i++) click(".driver-popover-next-btn");
     await waitFor(() => expect(popoverTitle()).toBe("开始你的第一个项目"));
     expect(history.at(-1)).toBe("/app/projects");
 
@@ -591,7 +577,7 @@ describe("OnboardingTour", () => {
     anchors.forEach((el) => el.remove());
   }, 20_000);
 
-  it("issues no requests of its own beyond the seen flag across the whole twelve-step run", async () => {
+  it("issues no requests of its own beyond the seen flag across the whole ten-step run", async () => {
     vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
     // 引导自身不该发任何别的请求：没有生成调用、没有入队、没有项目写入。挂载点之外
     // 的页面组件不在本用例里，这里守的是引导这条链路自己。
@@ -607,7 +593,7 @@ describe("OnboardingTour", () => {
     );
     await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
 
-    for (let i = 0; i < 11; i++) click(".driver-popover-next-btn");
+    for (let i = 0; i < 9; i++) click(".driver-popover-next-btn");
     await waitFor(() => expect(popoverTitle()).toBe("开始你的第一个项目"));
     click(".driver-popover-next-btn");
     await waitFor(() => expect(API.markOnboardingSeen).toHaveBeenCalledTimes(1));
@@ -618,6 +604,44 @@ describe("OnboardingTour", () => {
     vi.unstubAllGlobals();
     anchors.forEach((el) => el.remove());
   }, 20_000);
+
+  it("skips an unreachable step instead of looping on it forever", async () => {
+    vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const anchors = mountAllAnchors();
+
+    const { hook, history, navigate } = memoryLocation({ path: "/app/projects", record: true });
+    render(
+      <Router hook={hook}>
+        <OnboardingTour />
+      </Router>,
+    );
+    await waitFor(() => expect(popoverTitle()).toBe("欢迎使用 MatrixSpooll"));
+
+    for (let i = 0; i < 3; i++) click(".driver-popover-next-btn"); // → 演示卡（落点 /app）
+    await waitFor(() => expect(popoverTitle()).toBe("演示项目"));
+    expect(history.at(-1)).toBe("/app");
+
+    // 复刻「落点被守卫拦回」：纠偏把用户送去 /app 后又被立即弹回 /app/projects
+    // （如目标路由被守卫 Redirect 的场景）。每轮弹离摊在独立批次里，不可达账本跨轮
+    // 累计，计数或时长超限即判不可达并越过这一步。不能改用自动弹回的组件——jsdom
+    // 的 act 会把导航振荡压进同一更新批次，直接触发 React 的最大更新深度。
+    for (let i = 0; i < 12 && popoverTitle() === "演示项目"; i++) {
+      await act(async () => {
+        navigate("/app/projects");
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
+    // 演示卡步被越过，引导落在下一步（项目概览）声明的页面上继续讲。
+    await waitFor(() => expect(popoverTitle()).toBe("项目概览"), { timeout: 8000 });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("unreachable"));
+    await waitFor(() => expect(history.at(-1)).toBe(DEMO_WORKBENCH));
+    expect(API.markOnboardingSeen).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+    anchors.forEach((el) => el.remove());
+  }, 25_000);
 
   it("takes the tour down when the user navigates back to the login page mid-tour", async () => {
     vi.spyOn(API, "getOnboardingStatus").mockResolvedValue({ seen: false });

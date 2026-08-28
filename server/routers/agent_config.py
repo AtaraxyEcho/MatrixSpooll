@@ -296,6 +296,7 @@ class TestConnectionResponseModel(BaseModel):
     overall: Literal["ok", "warn", "fail"]
     messages_probe: ProbeResultModel | None
     discovery_probe: ProbeResultModel | None
+    openai_probe: ProbeResultModel | None
     diagnosis: str | None
     suggestion: SuggestionModel | None
     derived_messages_root: str
@@ -321,6 +322,7 @@ def _serialize_test_response(r: TestConnectionResponseDC) -> TestConnectionRespo
         overall=r.overall,
         messages_probe=_serialize_probe(r.messages_probe),
         discovery_probe=_serialize_probe(r.discovery_probe),
+        openai_probe=_serialize_probe(r.openai_probe),
         diagnosis=r.diagnosis.value if isinstance(r.diagnosis, DiagnosisCode) else None,
         suggestion=SuggestionModel(kind=r.suggestion.kind, suggested_value=r.suggestion.suggested_value)
         if r.suggestion

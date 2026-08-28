@@ -10,7 +10,12 @@ import pytest
 
 from lib.config.registry import model_info_for
 from lib.providers import PROVIDER_MINIMAX
-from lib.video_backends.base import ReferenceAudioMode, VideoCapabilityError, VideoGenerationRequest
+from lib.video_backends.base import (
+    ReferenceAudioMode,
+    VideoCapabilityError,
+    VideoGenerationRequest,
+    VideoProviderError,
+)
 from lib.video_backends.minimax import MiniMaxVideoBackend, _safe_body_for_log
 from lib.video_frame_slots import resolve_first_frame_aspect_ratio
 
@@ -478,6 +483,24 @@ class TestH3V2Generate:
         assert result.video_uri == "https://x/h3.mp4"
         assert result.task_id == "h3-task"
         dl.assert_awaited_once()
+
+    async def test_non_json_submit_response_is_reported_as_provider_protocol_error(self, tmp_path):
+        response = _resp({})
+        response.headers = {"content-type": "text/html; charset=utf-8", "x-request-id": "req-html"}
+        response.text = "<html>not an API response</html>"
+        response.json.side_effect = ValueError("invalid JSON")
+        client = _client(post=AsyncMock(return_value=response))
+
+        with patch("lib.video_backends.minimax.httpx.AsyncClient", return_value=client):
+            with pytest.raises(VideoProviderError) as exc:
+                await _h3().generate(_request(tmp_path, duration_seconds=5))
+
+        assert exc.value.code == "video_provider_response_invalid"
+        assert exc.value.params == {
+            "provider": PROVIDER_MINIMAX,
+            "content_type": "text/html; charset=utf-8",
+            "request_id": "req-html",
+        }
 
     async def test_running_status_keeps_polling(self, tmp_path):
         get = AsyncMock(side_effect=[_resp(_v2_query("running")), _resp(_v2_query("succeeded", url="https://x/o.mp4"))])

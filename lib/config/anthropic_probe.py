@@ -132,6 +132,69 @@ async def probe_messages(
     return ProbeResult(success=True, status_code=resp.status_code, latency_ms=elapsed, error=None)
 
 
+async def probe_openai_chat(
+    *,
+    openai_root: str,
+    api_key: str,
+    model: str,
+    timeout_s: float = 10.0,
+) -> ProbeResult:
+    """Probe the same model through an OpenAI-compatible Chat Completions route.
+
+    This is a diagnostic contrast probe only. A successful response proves the
+    configured model is available through OpenAI Chat Completions, but does not
+    make it usable by the Claude Agent SDK's Anthropic Messages runtime.
+    """
+    url = f"{openai_root.rstrip('/')}/v1/chat/completions"
+    payload = {
+        "model": model,
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "ping"}],
+    }
+    headers = {
+        "authorization": f"Bearer {api_key}",
+        "content-type": "application/json",
+    }
+    started = time.perf_counter()
+    try:
+        resp = await _post(url=url, headers=headers, payload=payload, timeout_s=timeout_s)
+    except httpx.TimeoutException as exc:
+        elapsed = int((time.perf_counter() - started) * 1000)
+        logger.info("probe_openai_chat timeout url=%s elapsed_ms=%d", url, elapsed)
+        return ProbeResult(success=False, status_code=None, latency_ms=elapsed, error=f"timeout: {exc!s}")
+    except httpx.HTTPError as exc:
+        elapsed = int((time.perf_counter() - started) * 1000)
+        logger.info("probe_openai_chat network err url=%s elapsed_ms=%d", url, elapsed)
+        return ProbeResult(success=False, status_code=None, latency_ms=elapsed, error=_truncate(str(exc)))
+
+    elapsed = int((time.perf_counter() - started) * 1000)
+    logger.info("probe_openai_chat url=%s status=%d elapsed_ms=%d", url, resp.status_code, elapsed)
+    if resp.status_code >= 400:
+        return ProbeResult(
+            success=False,
+            status_code=resp.status_code,
+            latency_ms=elapsed,
+            error=_truncate(resp.text),
+        )
+    try:
+        data = resp.json()
+    except ValueError:
+        return ProbeResult(
+            success=False,
+            status_code=resp.status_code,
+            latency_ms=elapsed,
+            error="non-openai response: not JSON",
+        )
+    if not isinstance(data, dict) or not isinstance(data.get("choices"), list):
+        return ProbeResult(
+            success=False,
+            status_code=resp.status_code,
+            latency_ms=elapsed,
+            error="non-openai JSON: missing choices",
+        )
+    return ProbeResult(success=True, status_code=resp.status_code, latency_ms=elapsed, error=None)
+
+
 def classify_probe_failure(result: ProbeResult) -> DiagnosisCode:
     """把失败 ProbeResult 映射到 DiagnosisCode。"""
     if result.success:
@@ -169,7 +232,14 @@ async def probe_discovery(
     if not discovery_root:
         return None
     url = f"{discovery_root.rstrip('/')}/v1/models"
-    headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+    # Anthropic's own models endpoint uses x-api-key, while many compatible
+    # gateways expose the same path with OpenAI-style Bearer authentication.
+    # Supplying both keeps discovery advisory across both families.
+    headers = {
+        "x-api-key": api_key,
+        "authorization": f"Bearer {api_key}",
+        "anthropic-version": "2023-06-01",
+    }
     started = time.perf_counter()
     try:
         resp = await _get(url=url, headers=headers, timeout_s=timeout_s)
@@ -196,6 +266,7 @@ _DEFAULT_TEST_MODEL = "claude-3-5-sonnet-20241022"
 # 选 404/405/502 是因为它们是 anthropic 协议打到 OpenAI 兼容根（如 https://api.deepseek.com）
 # 上最常见的几种错误码；401/429/422 这种 = 上游已经识别请求，不是路径问题，不该重试。
 _RETRYABLE_STATUS_FOR_SELF_HEAL = (404, 405, 502)
+_OPENAI_CONTRAST_STATUS = (400, 404, 405, 422, 500, 501, 502)
 
 
 @dataclass(frozen=True)
@@ -213,6 +284,7 @@ class TestConnectionResponse:
     suggestion: SuggestionAction | None
     derived_messages_root: str
     derived_discovery_root: str
+    openai_probe: ProbeResult | None = None
 
 
 async def run_test(
@@ -260,6 +332,7 @@ async def run_test(
     # 3. 自定义模式 + 失败 + 没显式 anthropic 后缀 + status 命中 retryable → 串行自愈
     suggestion: SuggestionAction | None = None
     diagnosis: DiagnosisCode | None = None
+    openai_probe: ProbeResult | None = None
     final_messages_root = ep.messages_root
     if (
         not msg.success
@@ -282,12 +355,30 @@ async def run_test(
             msg = retry
             final_messages_root = retry_root
 
-    # 4. 诊断 + 总评
+    # 4. Anthropic 失败但并非认证/限流/网络问题时，用同模型做 OpenAI
+    # 对比探测。成功只能说明供应商把该模型放在 Chat Completions 路由，
+    # 不能改变当前 Claude Agent SDK 必须使用 Messages 协议的事实。
+    preliminary = classify_probe_failure(msg) if not msg.success else None
+    if (
+        not msg.success
+        and preliminary not in {DiagnosisCode.AUTH_FAILED, DiagnosisCode.RATE_LIMITED, DiagnosisCode.NETWORK}
+        and msg.status_code in _OPENAI_CONTRAST_STATUS
+    ):
+        openai_probe = await probe_openai_chat(
+            openai_root=ep.discovery_root or ep.messages_root,
+            api_key=api_key,
+            model=effective_model,
+        )
+        if openai_probe.success:
+            diagnosis = DiagnosisCode.OPENAI_COMPAT_ONLY
+
+    # 5. 诊断 + 总评
     if msg.success:
         overall = "ok" if (disc is None or disc.success) else "warn"
     else:
         overall = "fail"
-        diagnosis = classify_probe_failure(msg)
+        if diagnosis is None:
+            diagnosis = classify_probe_failure(msg)
 
     return TestConnectionResponse(
         overall=overall,
@@ -297,4 +388,5 @@ async def run_test(
         suggestion=suggestion,
         derived_messages_root=final_messages_root,
         derived_discovery_root=ep.discovery_root,
+        openai_probe=openai_probe,
     )

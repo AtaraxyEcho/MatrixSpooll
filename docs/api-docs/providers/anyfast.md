@@ -7,6 +7,19 @@ AnyFast 是通过自定义供应商 `anyfast-seedance` endpoint 接入的协议�
 - 输入组合：[Seedance 2.0 指南](https://docs.anyfast.ai/guides/model-api/bytedance/seedance-2-0)
 - 代码：`lib/custom_provider/endpoints.py::ENDPOINT_REGISTRY["anyfast-seedance"]`、`lib/video_backends/anyfast.py::AnyFastSeedanceBackend`
 
+## MiniMax-H3 特殊挂载
+
+- AnyFast 的 [MiniMax-H3](https://docs.anyfast.ai/api-reference/model-api/minimax/minimax-h3) 不使用 `/v1`，创建与查询路径分别为 `/minimax/v2/video_generation` 和 `/minimax/v2/query/video_generation/{task_id}`；`/minimax` 是 AnyFast 强制要求的路由前缀。
+- MiniMax 官方 H3 仍使用原生 `/v2` 路径，Hailuo/S2V 等旧版 MiniMax 视频模型仍按各自 `/v1` 契约处理。路径改写只适用于 `anyfast.ai` 域名下的 `MiniMax-H3` 型号。
+- 代码：`lib/custom_provider/endpoints.py::_minimax_video_base_for_provider`、`lib/video_backends/minimax.py::MiniMaxVideoBackend`。
+
+## Agent 协议边界
+
+- AnyFast 的文本模型可通过 [OpenAI Chat Completions](https://docs.anyfast.ai/guides/endpoints/openai) 调用；Anthropic 兼容调用使用独立的 [Messages endpoint](https://docs.anyfast.ai/api-reference/endpoints/openapi/anthropic/openapi.yaml)。模型是否可见及其端点类型以当前凭证的 [Models list](https://docs.anyfast.ai/guides/system-api/models-list.md) 为准。
+- MatrixSpooll 当前 Agent Runtime 使用 Claude Agent SDK，只能直连 Anthropic Messages 兼容模型。模型在 `/v1/chat/completions` 可用不代表它能通过 `/v1/messages` 使用。
+- Agent 连接测试先探测 Anthropic Messages；仅当协议或模型类请求失败时，才以同一模型对比探测 OpenAI Chat Completions。若后者成功，返回 `openai_compat_only`，用于阻止把不兼容配置误认为模型不存在或权限不足。
+- 代码：`lib/config/anthropic_probe.py::run_test`、`server/routers/agent_config.py::test_connection_draft`。
+
 ## 自由创作契约
 
 - 请求按 `text → image_url → video_url → audio_url` 排序，并显式下发 `first_frame`、`last_frame`、`reference_image`、`reference_audio` 角色。

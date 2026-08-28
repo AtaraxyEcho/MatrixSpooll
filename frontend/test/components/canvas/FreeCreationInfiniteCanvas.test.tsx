@@ -828,18 +828,32 @@ describe("FreeCreationInfiniteCanvas", () => {
     await waitFor(() => expect(container.querySelector<HTMLElement>(`[data-canvas-id='${target.creation_id}']`)).toHaveStyle({ left: "96px" }));
   });
 
-  it("projects subtitle tracks as visible editable canvas cards", async () => {
+  it("treats subtitle tracks as draggable canvas nodes with explicit actions", async () => {
     const video: FreeCreation = {
       ...creation,
       output_type: "video",
       media_type: "video",
       media_path: "creations/c_0123456789abcdef0123.mp4",
     };
+    const renderedVideo: FreeCreation = {
+      ...video,
+      creation_id: "c_0123456789abcdef0124",
+      effective_mode: "subtitle_burn",
+      subtitle_id: "sub_0123456789abcdef0123",
+      parent_creation_id: video.creation_id,
+      reference_claims: [{
+        type: "creation",
+        creation_id: video.creation_id,
+        role: "reference_video",
+      }],
+    };
     const onEditSubtitle = vi.fn();
-    render(
+    const onRenderSubtitle = vi.fn();
+    const onDeleteSubtitle = vi.fn();
+    const { container } = render(
       <FreeCreationInfiniteCanvas
         projectName="demo"
-        creations={[video]}
+        creations={[video, renderedVideo]}
         uploads={[]}
         subtitleTracks={[{
           subtitle_id: "sub_0123456789abcdef0123",
@@ -856,13 +870,107 @@ describe("FreeCreationInfiniteCanvas", () => {
         onEdit={vi.fn()}
         onReference={vi.fn()}
         onEditSubtitle={onEditSubtitle}
+        onRenderSubtitle={onRenderSubtitle}
+        onDeleteSubtitle={onDeleteSubtitle}
       />,
     );
 
-    const subtitleCard = await screen.findByRole("button", { name: t("free_creation_subtitle_title") });
+    const subtitleCard = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>("[data-canvas-id='sub_0123456789abcdef0123']");
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
     expect(screen.getByText("The train arrives.")).toBeInTheDocument();
-    fireEvent.click(subtitleCard);
+    const renderedCard = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(`[data-canvas-id='${renderedVideo.creation_id}']`);
+      expect(element).toBeInTheDocument();
+      expect(Number.parseInt(element?.style.left ?? "0", 10)).toBeGreaterThan(
+        Number.parseInt(subtitleCard.style.left, 10),
+      );
+      return element!;
+    });
+    expect(renderedCard).toHaveStyle({ top: subtitleCard.style.top });
+
+    selectCanvasNode(subtitleCard, 70);
+    expect(onEditSubtitle).not.toHaveBeenCalled();
+    expect(subtitleCard).toHaveAttribute("data-selected", "true");
+
+    fireEvent.doubleClick(subtitleCard);
     expect(onEditSubtitle).toHaveBeenCalledWith(video.creation_id);
+
+    const surface = screen.getByTestId("free-creation-canvas");
+    const originalLeft = subtitleCard.style.left;
+    fireEvent.pointerDown(subtitleCard, { button: 0, pointerId: 71, clientX: 450, clientY: 100 });
+    fireEvent.pointerMove(surface, { pointerId: 71, clientX: 510, clientY: 140 });
+    fireEvent.pointerUp(surface, { pointerId: 71, clientX: 510, clientY: 140 });
+    await waitFor(() => expect(subtitleCard.style.left).not.toBe(originalLeft));
+
+    fireEvent.contextMenu(subtitleCard, { clientX: 480, clientY: 120 });
+    fireEvent.click(screen.getByRole("menuitem", { name: t("free_creation_subtitle_render") }));
+    expect(onRenderSubtitle).toHaveBeenCalledWith("sub_0123456789abcdef0123");
+
+    fireEvent.contextMenu(subtitleCard, { clientX: 480, clientY: 120 });
+    const menuItems = within(screen.getByRole("menu")).getAllByRole("menuitem");
+    expect(menuItems.at(-1)).toHaveTextContent(t("free_creation_subtitle_delete"));
+    fireEvent.click(screen.getByRole("menuitem", { name: t("free_creation_subtitle_delete") }));
+    expect(onDeleteSubtitle).toHaveBeenCalledWith("sub_0123456789abcdef0123");
+  });
+
+  it("groups a subtitle with video and hides the subtitle independently", async () => {
+    const video: FreeCreation = {
+      ...creation,
+      output_type: "video",
+      media_type: "video",
+      media_path: "creations/c_0123456789abcdef0123.mp4",
+    };
+    const subtitleId = "sub_0123456789abcdef0123";
+    const { container } = render(
+      <FreeCreationInfiniteCanvas
+        projectName="demo"
+        creations={[video]}
+        uploads={[]}
+        subtitleTracks={[{
+          subtitle_id: subtitleId,
+          creation_id: video.creation_id,
+          revision: 1,
+          cues: [{ start_seconds: 0, end_seconds: 4, text: "The train arrives." }],
+          created_at: "2026-08-19T00:00:00Z",
+          updated_at: "2026-08-19T00:00:00Z",
+        }]}
+        readOnly={false}
+        actingId={null}
+        onCancel={vi.fn()}
+        onRetry={vi.fn()}
+        onEdit={vi.fn()}
+        onReference={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(container.querySelector(
+      `[data-canvas-id='${video.creation_id}']`,
+    )).toBeInTheDocument());
+    await waitFor(() => expect(container.querySelector(
+      `[data-canvas-id='${subtitleId}']`,
+    )).toBeInTheDocument());
+    const videoCard = container.querySelector<HTMLElement>(`[data-canvas-id='${video.creation_id}']`)!;
+    const subtitleCard = container.querySelector<HTMLElement>(`[data-canvas-id='${subtitleId}']`)!;
+    selectCanvasNode(videoCard, 72);
+    selectCanvasNode(subtitleCard, 73, true);
+
+    fireEvent.contextMenu(subtitleCard, { clientX: 480, clientY: 120 });
+    fireEvent.click(screen.getByRole("menuitem", { name: t("free_creation_group_selected") }));
+    fireEvent.contextMenu(subtitleCard, { clientX: 480, clientY: 120 });
+    expect(screen.getByRole("menuitem", { name: t("free_creation_ungroup") })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: t("free_creation_ungroup") }));
+
+    const surface = screen.getByTestId("free-creation-canvas");
+    fireEvent.pointerDown(surface, { button: 0, pointerId: 74, clientX: 8, clientY: 8 });
+    fireEvent.pointerUp(surface, { pointerId: 74, clientX: 8, clientY: 8 });
+    fireEvent.contextMenu(subtitleCard, { clientX: 480, clientY: 120 });
+    fireEvent.click(screen.getByRole("menuitem", { name: t("free_creation_hide") }));
+
+    await waitFor(() => expect(container.querySelector(`[data-canvas-id='${subtitleId}']`)).not.toBeInTheDocument());
+    expect(container.querySelector(`[data-canvas-id='${video.creation_id}']`)).toBeInTheDocument();
   });
 
   it("synchronizes selection when opening a card menu from the more button", async () => {

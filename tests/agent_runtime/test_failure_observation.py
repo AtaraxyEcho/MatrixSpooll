@@ -85,3 +85,26 @@ def test_turn_observation_falls_back_to_result_message_when_assistant_has_no_tex
 
     assert observation["summary"]["source"] == "sdk_assistant"
     assert observation["summary"]["message"] == "upstream rejected the selected model"
+
+
+def test_turn_observation_classifies_selected_model_compatibility_failure() -> None:
+    observation = build_turn_failure_observation(
+        assistant_message={
+            "type": "assistant",
+            "error": "invalid_request",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "There's an issue with the selected model (deepseek-v4-flash). "
+                        "It may not exist or you may not have access to it."
+                    ),
+                }
+            ],
+        },
+        result_message=None,
+        project_name="demo",
+        session_id="session-1",
+    )
+
+    assert observation["summary"]["diagnosis"] == "model_or_endpoint_incompatible"

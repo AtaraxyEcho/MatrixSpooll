@@ -169,10 +169,19 @@ def _refuse_while_migration_failed(sdk_tool: Any, ctx: ToolContext) -> Any:
 
 
 def build_matrixspooll_mcp_server(
-    *, project_name: str, projects_root: Path, actor_user_id: str = DEFAULT_USER_ID
+    *,
+    project_name: str,
+    projects_root: Path,
+    actor_user_id: str = DEFAULT_USER_ID,
+    project_storage_key: str | None = None,
 ) -> Any:
     """Build the per-session in-process MCP server with all MatrixSpooll tools."""
-    ctx = ToolContext(project_name=project_name, projects_root=projects_root, actor_user_id=actor_user_id)
+    ctx = ToolContext(
+        project_name=project_name,
+        projects_root=projects_root,
+        actor_user_id=actor_user_id,
+        project_storage_key=project_storage_key,
+    )
     tools = [
         complete_asset_inventory_tool(ctx),
         complete_step1_rebuild_tool(ctx),

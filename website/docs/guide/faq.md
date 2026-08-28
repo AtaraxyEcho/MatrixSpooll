@@ -24,14 +24,14 @@ update_docs: engine-b
 普通用户优先使用 Docker。推荐环境为 Linux、macOS、WSL2 或 Docker Desktop：
 
 ```bash
-git clone https://github.com/MockMine/MatrixSpooll.git
-cd MatrixSpooll/deploy/production
+# 在客户服务器解压完整源码交付包后进入部署目录
+cd /srv/matrixspooll/deploy/production
 cp .env.example .env
-# 编辑 .env，设置 POSTGRES_PASSWORD 和认证配置
+# 编辑 .env，设置认证、PostgreSQL、PUBLIC_HOST、PUBLIC_ORIGIN 和 CERTBOT_EMAIL
 docker compose -f docker-compose.yml up -d --build
 ```
 
-启动后访问 `http://localhost:1241`；部署在其他主机上时，将 `localhost` 换成主机地址。
+将 `PUBLIC_HOST` 的域名或公网 IPv4 指向服务器并放行 TCP `80`、`443`。Certbot 完成签发后访问 `https://<PUBLIC_HOST>`。生产 Compose 只发布 Nginx 的 `80/443`，应用 `1241` 和数据库 `5432` 不对宿主机开放。
 
 Windows 原生环境可以运行项目创建等基础流程，但 Agent 沙箱会降级，生产部署仍建议使用 WSL2 或 Docker Desktop。Linux/macOS 本地运行需要可用的系统沙箱工具，详见[部署补充说明](../ops/deployment.md)。
 
@@ -48,8 +48,8 @@ docker compose logs postgres
 依次检查：
 
 1. Docker 服务是否正常，MatrixSpooll 容器是否通过健康检查。
-2. 端口 `1241` 是否已被其他程序占用。
-3. `.env` 是否存在且容器有权读取；生产部署还必须设置 `POSTGRES_PASSWORD`。
+2. Nginx 使用的 `80/443` 是否已被其他程序占用，公网 `80` 是否可供 ACME HTTP-01 校验。
+3. `.env` 是否存在，并已设置 `AUTH_PASSWORD`、`AUTH_TOKEN_SECRET`、`POSTGRES_PASSWORD`、`PUBLIC_HOST`、`PUBLIC_ORIGIN` 和 `CERTBOT_EMAIL`。
 4. 日志是否包含 `SANDBOX_UNAVAILABLE`、`SANDBOX_BWRAP_BROKEN` 或更具体的修复提示。
 5. 供应商 API Key 是否误放在 `.env` 中。供应商凭据应在 Web 设置页保存，否则服务会拒绝启动。
 
@@ -57,7 +57,7 @@ docker compose logs postgres
 
 ### 默认登录账号是什么？忘记密码怎么办？ {#default-login}
 
-默认用户名是 `admin`，可通过 `.env` 中的 `AUTH_USERNAME` 修改。`AUTH_PASSWORD` 留空时，首次启动会生成密码并回写到当前部署目录的 `.env`，不会把明文密码打印到日志。
+默认用户名是 `admin`，可通过 `.env` 中的 `AUTH_USERNAME` 修改。生产 Compose 要求在启动前设置非空 `AUTH_PASSWORD` 和固定的 `AUTH_TOKEN_SECRET`；不会自动生成或回写生产密码。
 
 忘记密码时，修改 `.env` 中的 `AUTH_PASSWORD`。Docker 部署需要重建容器以重新载入环境变量：
 
@@ -78,7 +78,7 @@ docker compose up -d
 
 MatrixSpooll 启动时会自动执行数据库与项目结构迁移。正常更新不会主动删除已挂载的数据目录，但更新前仍应备份项目目录、数据库和凭据文件。不要使用会删除数据卷的清理命令代替普通更新。
 
-设置页的“关于”区域可以检查新版本并打开发布页，但不会在网页中自动升级服务器。
+设置页的“关于”区域用于显示法定来源署名；服务器升级仍需由运维人员按对应的源码提交或镜像标签执行。
 
 ### 项目和配置存在哪里？怎样备份或迁移？ {#where-is-data}
 
@@ -120,7 +120,7 @@ MatrixSpooll 智能体与内容生成使用两套独立配置：
 1. 智能体凭据是否已激活，模型 ID 是否与服务端实际开放的 ID 完全一致。
 2. Docker 容器或服务器能否访问智能体 API，代理、DNS 和 TLS 是否正常。
 3. Docker/WSL/本地环境的 Agent 沙箱是否通过启动检查。
-4. 在设置页“关于”中下载诊断日志，查看错误发生时间附近的具体上游状态码。
+4. 在管理端“系统日志”或容器日志中查看错误发生时间附近的具体上游状态码。
 
 连接测试只代表最小请求成功；长会话仍可能受到额度、上下文长度、限流或代理超时影响。
 
@@ -299,7 +299,7 @@ MatrixSpooll 是自托管 Web 应用，目前没有独立的 iOS 或 Android 原
 
 ### 可以商用或二次开发吗？ {#commercial-use}
 
-MatrixSpooll 按 [AGPL-3.0](https://github.com/MockMine/MatrixSpooll/blob/main/LICENSE) 发布，并附带 [NOTICE](https://github.com/MockMine/MatrixSpooll/blob/main/NOTICE) 中的署名和修改声明要求。AGPL-3.0 允许商业使用和二次开发，但交付修改版或提供网络服务时仍需遵守许可证和对应源码义务。
+MatrixSpooll 按交付包中的 `LICENSE`（AGPL-3.0）发布，并附带 `NOTICE` 中的署名和修改声明要求。AGPL-3.0 允许商业使用和二次开发，但交付修改版或提供网络服务时仍需遵守许可证和对应源码义务。
 
 MatrixSpooll 可以提供基于 AGPL-3.0 的定制开发、私有化部署和技术支持；相关费用属于开发、部署与服务费用，不改变软件本身的许可证。
 
@@ -313,11 +313,11 @@ MatrixSpooll 可以提供基于 AGPL-3.0 的定制开发、私有化部署和技
 docker compose logs matrixspooll
 ```
 
-也可以在设置页“关于”中下载诊断日志。诊断包会尝试遮蔽系统摘要中的已知凭据，但不会在下载时对已有日志再次全文脱敏；分享前必须人工检查整个诊断包，并删除 API Key、Token、密码、完整 `.env`、私人接口地址和项目内容。
+管理员还可以在管理端“系统日志”中按操作或登录事件定位时间范围。分享日志前必须人工删除 API Key、Token、密码、完整 `.env`、私人接口地址和项目内容。
 
 ### 怎样提交一个可以有效排查的问题？ {#how-to-report-issue}
 
-提交 [GitHub Issue](https://github.com/MockMine/MatrixSpooll/issues) 或寻求社区帮助时，请提供：
+向交付方技术支持或客户内部运维团队提交问题时，请提供：
 
 - MatrixSpooll 版本
 - 操作系统以及 Docker、WSL 或源码部署方式
@@ -326,7 +326,7 @@ docker compose logs matrixspooll
 - 错误发生时间、短错误关键词、上游状态码和任务 ID
 - 已人工脱敏的相关日志
 
-不要公开 API Key、Token、密码、完整 `.env` 或未经检查的诊断包。只有截图和“这个怎么处理”通常不足以定位问题。
+不要公开 API Key、Token、密码、完整 `.env` 或未经人工脱敏的日志。只有截图和“这个怎么处理”通常不足以定位问题。
 
 ## 效果与成本最佳实践 {#quality-and-cost-best-practices}
 

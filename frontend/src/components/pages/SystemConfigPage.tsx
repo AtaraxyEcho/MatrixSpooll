@@ -6,20 +6,15 @@ import {
   BarChart3,
   Bot,
   ChevronLeft,
-  CircleHelp,
   Film,
-  Info,
   KeyRound,
   Plug,
   UserRound,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConfigStatusStore } from "@/stores/config-status-store";
-import { useOnboardingStore } from "@/stores/onboarding-store";
-import { ONBOARDING_ANCHORS } from "@/onboarding/anchors";
 import { AgentConfigTab } from "./AgentConfigTab";
 import { ApiKeysTab } from "./ApiKeysTab";
-import { AboutSection } from "./settings/AboutSection";
 import { MediaModelSection } from "./settings/MediaModelSection";
 import { ProviderSection } from "./ProviderSection";
 import { UsageStatsSection } from "./settings/UsageStatsSection";
@@ -33,13 +28,7 @@ import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher";
 // Types
 // ---------------------------------------------------------------------------
 
-type SettingsSection = "agent" | "providers" | "media" | "usage" | "api-keys" | "account" | "about";
-
-/** 引导第 5/6 步指向的侧栏入口——只有这两项挂锚点，其余小节不在当前引导覆盖范围内。 */
-const SECTION_ONBOARDING_ANCHORS: Partial<Record<SettingsSection, string>> = {
-  providers: ONBOARDING_ANCHORS.settingsProviders,
-  agent: ONBOARDING_ANCHORS.settingsAgent,
-};
+type SettingsSection = "agent" | "providers" | "media" | "usage" | "api-keys" | "account";
 
 interface SectionDef {
   id: SettingsSection;
@@ -73,10 +62,6 @@ const SECTION_GROUPS: SectionGroup[] = [
       { id: "account", labelKey: "dashboard:account_security_nav", Icon: UserRound },
     ],
   },
-  {
-    kicker: "System",
-    items: [{ id: "about", labelKey: "dashboard:about", Icon: Info }],
-  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -95,7 +80,6 @@ export function SystemConfigPage() {
     if (section === "usage") return "usage";
     if (section === "api-keys") return "api-keys";
     if (section === "account") return "account";
-    if (section === "about") return "about";
     return "providers";
   }, [search]);
 
@@ -107,7 +91,6 @@ export function SystemConfigPage() {
 
   const configIssues = useConfigStatusStore((s) => s.issues);
   const fetchConfigStatus = useConfigStatusStore((s) => s.fetch);
-  const startOnboarding = useOnboardingStore((s) => s.start);
 
   useEffect(() => {
     void fetchConfigStatus();
@@ -152,16 +135,6 @@ export function SystemConfigPage() {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={startOnboarding}
-              className="inline-flex shrink-0 items-center gap-2 rounded-md border border-hairline-soft bg-bg-grad-a/45 px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              title={t("onboarding:replay_action")}
-              aria-label={t("onboarding:replay_action")}
-            >
-              <CircleHelp className="h-3.5 w-3.5" aria-hidden />
-              <span className="hidden sm:inline">{t("onboarding:replay_action")}</span>
-            </button>
             <LanguageSwitcher compact={false} />
           </div>
         </div>
@@ -191,7 +164,6 @@ export function SystemConfigPage() {
                     key={id}
                     type="button"
                     onClick={() => setActiveSection(id)}
-                    data-onboarding={SECTION_ONBOARDING_ANCHORS[id]}
                     aria-current={isActive ? "page" : undefined}
                     aria-pressed={isActive}
                     className={
@@ -288,7 +260,6 @@ export function SystemConfigPage() {
                 </div>
               )}
               {activeSection === "account" && <AccountSecuritySection />}
-              {activeSection === "about" && <AboutSection />}
             </div>
           )}
         </main>

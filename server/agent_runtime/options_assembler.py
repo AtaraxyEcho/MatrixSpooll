@@ -275,6 +275,7 @@ class OptionsAssembler:
             project_name=project_name,
             projects_root=self.projects_root,
             actor_user_id=actor_user_id or self._user_id_provider(),
+            project_storage_key=project_cwd.name,
         )
 
         return ClaudeAgentOptions(
