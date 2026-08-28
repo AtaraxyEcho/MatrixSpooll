@@ -103,19 +103,20 @@ server {
     }
 
     location = /docs {
-        return 308 /docs/;
+        return 308 https://${PUBLIC_HOST}/docs/;
     }
 
     location ^~ /docs/ {
         auth_request /_matrixspooll_docs_auth;
         error_page 401 = @docs_login;
         proxy_pass http://matrixspooll_docs;
+        proxy_set_header Cookie "";
         proxy_buffering on;
         proxy_read_timeout 60s;
     }
 
     location @docs_login {
-        return 302 /login?from=$request_uri;
+        return 302 https://${PUBLIC_HOST}/login?from=$uri;
     }
 
     location / {

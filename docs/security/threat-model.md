@@ -1,8 +1,8 @@
 # MatrixSpooll Security Threat Model
 
-**Last security review:** 2026-08-06
+**Last security review:** 2026-08-29
 
-**Assessment baseline:** MatrixSpooll commit `6fb9bb1ee9dc19cd45712b47220b3d2a3f1d8b98`
+**Assessment baseline:** MatrixSpooll source tree reviewed on 2026-08-29
 
 ## 1. Purpose and interpretation
 
@@ -10,22 +10,22 @@ This document describes MatrixSpooll's current security model, trust boundaries,
 
 Current vulnerabilities, control gaps, validation tasks, and remediation acceptance criteria are maintained privately through GitHub Security Advisories. Keeping the stable public threat model separate from the changing private finding register reduces duplicate conclusions and avoids disclosing unresolved vulnerabilities before coordinated remediation.
 
-MatrixSpooll is currently a **single-operator administrative application**, not a multi-tenant SaaS platform. Authentication separates the trusted operator from unauthenticated callers. It does not provide meaningful role-based access control, tenant isolation, or least-privilege API scopes:
+MatrixSpooll is a self-hosted multi-user workspace, not a public multi-tenant SaaS platform. Authentication separates registered users from unauthenticated callers, system administration is limited to administrators, and project routes enforce project membership and project roles. The deployment still assumes that users belong to one trusted organization; it does not claim adversarial tenant isolation or least-privilege API scopes:
 
-- `CurrentUserInfo.role` is always `admin`.
-- A login JWT normally authorizes the complete administrative application surface, including API-key management. A configured login username beginning with `apikey:` is currently misclassified as an API key and denied by API-key management routes.
+- Browser login creates a revocable server-side session and a signed JWT stored in an `HttpOnly` cookie.
+- System roles distinguish administrators from members; project roles further constrain project access.
 - An `msp-` API key is a broad automation credential. It authorizes most business and configuration APIs but cannot create, list, or revoke API keys.
-- Repositories generally operate on the default user.
-- A stolen login JWT is therefore treated as complete administrator compromise. A stolen API key or download JWT is a high-impact compromise of the broad surface that credential can access.
+- A stolen administrator session is treated as complete administrator compromise. A stolen member session, API key, or download JWT remains a high-impact compromise of the surface that credential can access.
 
 ## 2. System overview
 
 MatrixSpooll is a self-hosted AI video production workspace with the following principal components:
 
 - A FastAPI backend that exposes authenticated APIs, public/static routes, self-authenticating event/download routes, and serves the React SPA.
-- A React frontend that stores its bearer token in browser `localStorage` and sends it in `Authorization: Bearer ...` headers for normal API calls.
+- A React frontend that authenticates with a same-origin `HttpOnly` session cookie and sends a double-submit CSRF header on unsafe requests. Legacy `localStorage` bearer tokens are consumed once and exchanged for a browser session.
 - Project files stored beneath `app_data_dir()` and managed through project, asset, upload, archive, versioning, and generation services.
-- A SQLAlchemy database, commonly SQLite, that stores configuration, provider credentials, API-key hashes, task state, usage records, and other application data.
+- A PostgreSQL database that stores identities, sessions, membership, configuration, provider credentials, API-key hashes, task state, usage records, and other application data. SQLite is restricted to isolated tests.
+- An Nginx production edge that terminates TLS, authenticates `/docs/` through a FastAPI subrequest, and proxies the static documentation site without forwarding browser cookies to the documentation container.
 - Third-party AI provider integrations using configured credentials and base URLs.
 - Generation workers that submit provider jobs, poll status, download generated artifacts, persist state, and recover interrupted work.
 - Native media processing through ffmpeg and ffprobe.
@@ -165,8 +165,10 @@ A compromised Python package, Node package, container image, SDK, ffmpeg build, 
 - Host permissions and database access controls protect application data, logs, credential files, and backups.
 - The operator accepts that configured AI providers receive submitted prompts and media.
 - Custom-provider endpoints are an intentional administrative capability with SSRF implications.
-- Browser authentication uses explicit bearer tokens rather than authentication cookies. Traditional CSRF is therefore lower priority than XSS, token theft, URL leakage, and active same-origin content.
-- Tokens stored in `localStorage` are readable by any JavaScript executing in the MatrixSpooll origin.
+- Browser authentication uses a root-scoped `HttpOnly`, `SameSite=Lax` session cookie so Nginx can authorize both the SPA/API and `/docs/`. Production Nginx adds the `Secure` flag.
+- Unsafe cookie-authenticated API requests require a matching readable CSRF cookie and `X-CSRF-Token` header. Bearer-authenticated automation requests remain exempt.
+- The authenticated documentation site shares the application origin. Nginx forwards the browser cookie only to the internal authentication subrequest and explicitly removes it before proxying content to the documentation container.
+- Legacy bearer tokens may briefly exist in `localStorage` during upgrade and are deleted when exchanged. Any JavaScript executing in the MatrixSpooll origin can still make same-origin requests with browser credentials and can read the CSRF cookie, so XSS and compromised same-origin content remain high-impact.
 - Docker is not assumed to provide a strong independent second sandbox under the current runtime configuration.
 - Provider responses, model Markdown, project files, archive members, downloaded media, and LLM-selected tool arguments remain untrusted regardless of source.
 
@@ -184,7 +186,7 @@ A compromised Python package, Node package, container image, SDK, ffmpeg build, 
 - Random `msp-` API keys stored as SHA-256 hashes.
 - API-key expiration checks and bounded cache behavior.
 
-There is no account-level RBAC, scoped API key, MFA, JWT revocation list, centralized session inventory, or built-in login throttling. JWTs normally authorize the complete administrative surface. API keys authorize most business and configuration APIs but are rejected by API-key management endpoints. That distinction currently relies on `CurrentUserInfo.sub.startswith("apikey:")`, not on an explicit credential-type claim: because login JWT subjects copy `AUTH_USERNAME`, a configured username beginning with `apikey:` is also rejected by those endpoints.
+Browser JWTs are bound to revocable database sessions. Account state, system roles, project membership, project roles, session replacement, session inventory, login throttling, and login auditing are enforced by the authentication and project-access layers. MFA and scoped API keys are not provided. API keys remain broad automation credentials and are rejected by API-key management endpoints.
 
 **Route authorization is defined centrally in `server/app.py`.** A security review must combine:
 
@@ -247,9 +249,10 @@ SDK built-in `Read`, `Write`, `Edit`, `Glob`, and `Grep` tools execute in the ma
 ### 9.6 Frontend and browser controls
 
 - React escaping reduces ordinary DOM injection risk.
-- Selected URL helpers restrict login return paths and image protocols.
-- The frontend attaches explicit bearer headers to normal API calls.
-- The bearer token is stored in `localStorage`.
+- Login return paths are limited to registered `/app/` routes and the same-origin `/docs` route; documentation returns use a full-page navigation so they are handled by Nginx rather than the SPA router.
+- Browser authentication tokens are `HttpOnly`; frontend code reads only the CSRF cookie and attaches it to unsafe same-origin requests.
+- Production cookies are `Secure` and `SameSite=Lax`. Login and legacy-session migration remove the previous `/api/v1`-scoped cookie, while `/auth/me` migration preserves the existing CSRF token.
+- Nginx authenticates documentation requests against `/api/v1/auth/me` and strips all cookies before forwarding the request to the static documentation service.
 - Model-controlled Markdown is rendered through `streamdown` and requires behavior-specific validation for raw HTML and dangerous URLs.
 
 ### 9.7 CORS and logging
@@ -262,10 +265,10 @@ Application request logging records URL paths rather than complete query strings
 
 ### 10.1 Authentication and bearer tokens
 
-- Automated login attempts may be sent without built-in rate limiting.
-- A stolen login JWT normally provides full administrative access; a stolen API key provides broad access except to API-key management. A login username beginning with `apikey:` collides with the current subject-prefix check and is also denied by API-key management routes. A stolen API key can read custom-provider API keys in plaintext and use them independently of MatrixSpooll.
+- Login attempts are throttled by account and source IP and recorded in the login audit log. Distributed attempts across many accounts and addresses remain an operational monitoring concern.
+- A stolen administrator JWT provides administrative access; a stolen member JWT remains constrained by system and project authorization. A stolen API key provides broad automation access except to API-key management. A login username beginning with `apikey:` collides with the current subject-prefix check and is also denied by API-key management routes. A stolen API key can read custom-provider API keys in plaintext and use them independently of MatrixSpooll.
 - A leaked download token can be replayed and used as a broad administrator bearer credential during its five-minute validity; if minted through an API key, its inherited `apikey:` subject remains excluded from API-key management.
-- Seven-day JWT lifetime increases the useful period of a stolen token.
+- Seven-day JWT lifetime increases the useful period of a stolen token, although browser sessions can be revoked server-side.
 - Event-stream routes may accept a full JWT or API key in a query parameter.
 - `AUTH_ENABLED=false` causes authentication dependencies to return an anonymous administrator identity.
 
@@ -330,7 +333,9 @@ User-uploaded and provider-supplied media crosses into ffmpeg/ffprobe and worker
 
 ### 10.7 Frontend rendering and same-origin content
 
-React escaping does not protect code paths that deliberately render Markdown, URLs, media, or arbitrary same-origin files. Any sanitizer bypass or active-content response may execute with access to `localStorage` and authenticated APIs.
+React escaping does not protect code paths that deliberately render Markdown, URLs, media, or arbitrary same-origin files. Any sanitizer bypass or active-content response may execute authenticated same-origin requests. `HttpOnly` prevents direct session-token reads but does not stop same-origin credential use, and the readable double-submit token permits unsafe API requests once script execution is achieved.
+
+The documentation service is also same-origin active content. Its upstream does not receive browser cookies, but a compromised documentation asset executing in the browser would run in the application origin and must therefore be treated with the same integrity requirements as the SPA bundle.
 
 CSP and browser security headers are defense in depth. They do not replace resource authorization, MIME restrictions, or output sanitization.
 
@@ -401,7 +406,7 @@ Use Low for conditions such as:
 - Operator-configured custom endpoints are intentional administrative functionality. They must not be described as anonymously attacker-controlled without an authentication bypass or stolen-token path.
 - Built-in provider routes are centrally authenticated. The absence of `CurrentUser` in individual route signatures is not evidence of missing authentication.
 - SQL injection requires a concrete unsafe query-construction path; generic SQLAlchemy usage is not a finding.
-- Traditional CSRF is lower priority while state-changing APIs require explicit bearer tokens rather than browser cookies.
+- Cookie-authenticated unsafe requests require the double-submit CSRF control. Reports require a concrete path that bypasses or defeats that comparison; bearer-authenticated automation requests are not subject to browser CSRF.
 - Path traversal and authorization are separate questions. A safely contained path may still be disclosed to an unauthorized caller.
 - Authentication-disabled mode is accepted only for independently isolated local use.
 
@@ -427,7 +432,7 @@ Use Low for conditions such as:
 Rebuild or materially revise this threat model when MatrixSpooll:
 
 - Adds real users, invitations, roles, teams, public sharing, or tenant-specific data.
-- Introduces cookie authentication, OAuth/OIDC, refresh tokens, or browser session cookies.
+- Changes browser-session cookie scope, CSRF behavior, OAuth/OIDC support, refresh-token handling, or documentation-site authentication.
 - Changes centralized route registration or adds public/self-authenticating routers.
 - Adds public project sharing, signed media URLs, external embeds, or new downloadable file types.
 - Changes agent tools, sandbox settings, network policy, MCP capabilities, protected-write rules, or Windows fallback behavior.

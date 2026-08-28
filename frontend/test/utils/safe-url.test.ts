@@ -7,6 +7,14 @@ describe("safeReturnPath", () => {
     expect(safeReturnPath("/app/projects/demo?tab=scene")).toBe("/app/projects/demo?tab=scene");
   });
 
+  it("allows only the documentation server route outside /app/", () => {
+    expect(safeReturnPath("/docs")).toBe("/docs");
+    expect(safeReturnPath("/docs/")).toBe("/docs/");
+    expect(safeReturnPath("/docs/guide?lang=zh#start")).toBe("/docs/guide?lang=zh#start");
+    expect(safeReturnPath("/docs.example/guide")).toBeNull();
+    expect(safeReturnPath("/documentation")).toBeNull();
+  });
+
   it("preserves the URL hash alongside path and query", () => {
     expect(safeReturnPath("/app/projects/demo#shot-3")).toBe("/app/projects/demo#shot-3");
     expect(safeReturnPath("/app/projects/demo?tab=scene#shot-3")).toBe(
@@ -14,7 +22,7 @@ describe("safeReturnPath", () => {
     );
   });
 
-  it("rejects internal paths outside /app/", () => {
+  it("rejects other internal paths outside /app/", () => {
     expect(safeReturnPath("/login")).toBeNull();
     expect(safeReturnPath("/")).toBeNull();
     expect(safeReturnPath("/app")).toBeNull();

@@ -5,6 +5,15 @@ import { memoryLocation } from "wouter/memory-location";
 import { LoginPage } from "@/pages/LoginPage";
 import { useAuthStore } from "@/stores/auth-store";
 
+const { navigateToDocsPathMock } = vi.hoisted(() => ({
+  navigateToDocsPathMock: vi.fn(),
+}));
+
+vi.mock("@/utils/safe-url", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/safe-url")>();
+  return { ...actual, navigateToDocsPath: navigateToDocsPathMock };
+});
+
 // wouter 的 useLocation/useSearch 钩子只暴露 pathname / search，不暴露 hash，
 // 无法用渲染探针断言 #fragment。改用 memoryLocation 的 record 历史：navigate
 // 入参被逐字 push 进 history，因此可直接断言登录成功后导航到的完整目标
@@ -33,6 +42,7 @@ function submitLogin(container: HTMLElement) {
 
 describe("LoginPage returnTo consumption", () => {
   beforeEach(() => {
+    navigateToDocsPathMock.mockClear();
     useAuthStore.setState({
       username: null,
       isAuthenticated: false,
@@ -66,6 +76,17 @@ describe("LoginPage returnTo consumption", () => {
     await waitFor(() => {
       expect(history.at(-1)).toBe("/app/projects/demo?tab=scene");
     });
+  });
+
+  it("uses a full-page navigation for the documentation return path", async () => {
+    const { container, history } = renderLoginAt("/login?from=%2Fdocs%2Fguide%3Flang%3Dzh%23start");
+
+    submitLogin(container);
+
+    await waitFor(() => {
+      expect(navigateToDocsPathMock).toHaveBeenCalledWith("/docs/guide?lang=zh#start");
+    });
+    expect(history.at(-1)).toBe("/login?from=%2Fdocs%2Fguide%3Flang%3Dzh%23start");
   });
 
   // 锁住 hash 在回跳链路中存活：from 携带 #shot-3，登录后导航目标须保留该锚点。

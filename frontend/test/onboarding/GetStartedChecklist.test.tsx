@@ -100,7 +100,7 @@ describe("GetStartedChecklist", () => {
 
     // member 进不去系统设置，配置任务从清单整体消失，不打勾也不留「去配置」按钮。
     expect(screen.queryByText("配置供应商与智能体")).toBeNull();
-    expect(screen.queryByText("去配置")).toBeNull();
+    expect(screen.queryByRole("button", { name: "去配置" })).toBeNull();
     expect(screen.getByText("创建你的第一个项目")).toBeInTheDocument();
   });
 
@@ -113,7 +113,7 @@ describe("GetStartedChecklist", () => {
     mountChecklist();
     const before = useAppStore.getState().createProjectRequest;
 
-    screen.getByText("新建项目").click();
+    screen.getByRole("button", { name: "新建项目" }).click();
 
     expect(useAppStore.getState().createProjectRequest).toBe(before + 1);
   });
