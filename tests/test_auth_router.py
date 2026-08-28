@@ -67,15 +67,17 @@ class TestLoginRoute:
         assert resp.json()["username"] == "testuser"
         assert resp.cookies["matrixspooll_auth_token"]
         assert resp.cookies["matrixspooll_csrf_token"]
-        auth_cookie = next(
+        auth_cookies = [
             value for value in resp.headers.get_list("set-cookie") if value.startswith("matrixspooll_auth_token=")
-        )
+        ]
+        auth_cookie = next(value for value in auth_cookies if "max-age=604800" in value.lower())
         csrf_cookie = next(
             value for value in resp.headers.get_list("set-cookie") if value.startswith("matrixspooll_csrf_token=")
         )
         assert "httponly" in auth_cookie.lower()
         assert "httponly" not in csrf_cookie.lower()
-        assert "path=/api/v1" in auth_cookie.lower()
+        assert "path=/;" in auth_cookie.lower()
+        assert any("path=/api/v1" in value.lower() and "max-age=0" in value.lower() for value in auth_cookies)
         assert "path=/;" in csrf_cookie.lower()
 
     def test_legacy_bearer_can_be_exchanged_for_browser_session(self, client):
@@ -94,6 +96,83 @@ class TestLoginRoute:
         assert response.json()["username"] == "testuser"
         assert response.cookies["matrixspooll_auth_token"] == token
         assert response.cookies["matrixspooll_csrf_token"]
+
+    def test_logout_clears_current_and_legacy_auth_cookie_paths(self, client):
+        login_response = client.post(
+            "/api/v1/auth/session",
+            data={"username": "testuser", "password": "testpass"},
+        )
+        assert login_response.status_code == 200
+
+        response = client.post("/api/v1/auth/logout")
+
+        assert response.status_code == 204
+        auth_cookies = [
+            value for value in response.headers.get_list("set-cookie") if value.startswith("matrixspooll_auth_token=")
+        ]
+        assert any("path=/;" in value.lower() and "max-age=0" in value.lower() for value in auth_cookies)
+        assert any("path=/api/v1" in value.lower() and "max-age=0" in value.lower() for value in auth_cookies)
+
+    def test_current_user_migrates_a_legacy_scoped_session_cookie(self, client, monkeypatch):
+        async def _load_user_profile(_user_id: str):
+            return None, None, None, None, None
+
+        monkeypatch.setattr(auth_router, "_load_user_profile", _load_user_profile)
+        token_response = client.post(
+            "/api/v1/auth/token",
+            data={"username": "testuser", "password": "testpass"},
+        )
+        token = token_response.json()["access_token"]
+        client.cookies.set("matrixspooll_auth_token", token, path="/api/v1")
+
+        response = client.get("/api/v1/auth/me")
+
+        assert response.status_code == 200
+        auth_cookies = [
+            value for value in response.headers.get_list("set-cookie") if value.startswith("matrixspooll_auth_token=")
+        ]
+        assert any("path=/;" in value.lower() and "max-age=604800" in value.lower() for value in auth_cookies)
+        assert any("path=/api/v1" in value.lower() and "max-age=0" in value.lower() for value in auth_cookies)
+        assert not [
+            value for value in response.headers.get_list("set-cookie") if value.startswith("matrixspooll_csrf_token=")
+        ]
+
+    def test_current_user_does_not_rotate_csrf_cookie(self, client, monkeypatch):
+        async def _load_user_profile(_user_id: str):
+            return None, None, None, None, None
+
+        monkeypatch.setattr(auth_router, "_load_user_profile", _load_user_profile)
+        login_response = client.post(
+            "/api/v1/auth/session",
+            data={"username": "testuser", "password": "testpass"},
+        )
+        assert login_response.status_code == 200
+
+        response = client.get("/api/v1/auth/me")
+
+        assert response.status_code == 200
+        assert not [
+            value for value in response.headers.get_list("set-cookie") if value.startswith("matrixspooll_csrf_token=")
+        ]
+
+    def test_current_user_does_not_resign_an_unverified_cookie_on_bearer_auth(self, client, monkeypatch):
+        async def _load_user_profile(_user_id: str):
+            return None, None, None, None, None
+
+        monkeypatch.setattr(auth_router, "_load_user_profile", _load_user_profile)
+        token_response = client.post(
+            "/api/v1/auth/token",
+            data={"username": "testuser", "password": "testpass"},
+        )
+        token = token_response.json()["access_token"]
+        client.cookies.set("matrixspooll_auth_token", "unverified-cookie", path="/")
+
+        response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+        assert response.status_code == 200
+        assert not [
+            value for value in response.headers.get_list("set-cookie") if value.startswith("matrixspooll_auth_token=")
+        ]
 
     def test_login_wrong_password(self, client):
         """错误密码返回 401"""

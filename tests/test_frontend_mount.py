@@ -43,6 +43,24 @@ async def test_deep_link_with_extension_falls_back_to_index_html(
         assert "shell" in res.text
 
 
+async def test_login_route_with_docs_return_target_falls_back_to_index_html(
+    reload_app_cleanup: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    dist_dir = tmp_path / "frontend" / "dist"
+    dist_dir.mkdir(parents=True)
+    (dist_dir / "index.html").write_text("<html>shell</html>", encoding="utf-8")
+    monkeypatch.setattr(lib, "PROJECT_ROOT", tmp_path)
+    importlib.reload(app_module)
+
+    transport = ASGITransport(app=app_module.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/login?from=/docs/", headers={"accept": "text/html"})
+
+    assert res.status_code == 200
+    assert "shell" in res.text
+    assert res.headers["cache-control"] == "no-store, no-cache, must-revalidate, max-age=0"
+
+
 async def test_write_request_to_spa_path_returns_405_not_shell(
     reload_app_cleanup: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):

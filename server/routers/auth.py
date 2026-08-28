@@ -268,17 +268,29 @@ async def _authenticate_login(
     )
 
 
-def _set_browser_session_cookies(response: Response, request: Request, token: str) -> None:
+def _set_browser_auth_cookie(response: Response, request: Request, token: str) -> None:
     secure = request.url.scheme == "https"
+    response.delete_cookie(
+        "matrixspooll_auth_token",
+        path="/api/v1",
+        secure=secure,
+        httponly=True,
+        samesite="lax",
+    )
     response.set_cookie(
         "matrixspooll_auth_token",
         token,
         httponly=True,
         secure=secure,
         samesite="lax",
-        path="/api/v1",
+        path="/",
         max_age=7 * 24 * 3600,
     )
+
+
+def _set_browser_session_cookies(response: Response, request: Request, token: str) -> None:
+    _set_browser_auth_cookie(response, request, token)
+    secure = request.url.scheme == "https"
     response.set_cookie(
         "matrixspooll_csrf_token",
         secrets.token_urlsafe(32),
@@ -409,7 +421,10 @@ def _delete_avatar_file(rel_path: str) -> None:
 
 
 @router.get("/auth/me", response_model=CurrentUserResponse)
-async def current_user(current_user: CurrentUser) -> CurrentUserResponse:
+async def current_user(current_user: CurrentUser, request: Request, response: Response) -> CurrentUserResponse:
+    cookie_token = request.cookies.get("matrixspooll_auth_token")
+    if current_user.auth_method == "jwt" and cookie_token and not request.headers.get("authorization"):
+        _set_browser_auth_cookie(response, request, cookie_token)
     nickname, avatar_path, email, last_login_at, last_login_ip = await _load_user_profile(current_user.id)
     return CurrentUserResponse(
         id=current_user.id,
@@ -566,6 +581,7 @@ async def remove_avatar(
 async def logout(current_user: CurrentUser, response: Response) -> None:
     if current_user.session_id:
         await revoke_user_session(current_user.session_id, current_user.id)
+    response.delete_cookie("matrixspooll_auth_token", path="/")
     response.delete_cookie("matrixspooll_auth_token", path="/api/v1")
     response.delete_cookie("matrixspooll_csrf_token", path="/")
 

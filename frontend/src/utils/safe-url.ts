@@ -18,9 +18,13 @@ export function sanitizeImageSrc(raw: string | null | undefined): string | undef
 
 /**
  * 校验登录后的回跳目标，杜绝 open redirect。
- * 仅放行同源、且路径落在 /app/ 下的站内地址；外站、协议相对（//host）、
- * 以及 /login 等非应用页面一律拒绝，返回 null（由调用方回退到默认页）。
+ * 仅放行同源的 /app/ 页面与由 Nginx 承载的 /docs 页面；外站、协议相对（//host）、
+ * 以及 /login 等其他页面一律拒绝，返回 null（由调用方回退到默认页）。
  */
+function isDocsPathname(pathname: string): boolean {
+  return pathname === "/docs" || pathname.startsWith("/docs/");
+}
+
 export function safeReturnPath(raw: string | null | undefined): string | null {
   if (!raw) return null;
   let url: URL;
@@ -30,6 +34,25 @@ export function safeReturnPath(raw: string | null | undefined): string | null {
     return null;
   }
   if (url.origin !== window.location.origin) return null;
-  if (!url.pathname.startsWith("/app/")) return null;
+  const isAppPath = url.pathname.startsWith("/app/");
+  const isDocsPath = isDocsPathname(url.pathname);
+  if (!isAppPath && !isDocsPath) return null;
   return url.pathname + url.search + url.hash;
+}
+
+export function isDocsReturnPath(path: string): boolean {
+  try {
+    const url = new URL(path, window.location.origin);
+    return url.origin === window.location.origin && isDocsPathname(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function navigateToDocsPath(path: string): void {
+  const safePath = safeReturnPath(path);
+  if (!safePath || !isDocsReturnPath(safePath)) {
+    throw new Error("Invalid documentation return path");
+  }
+  window.location.assign(safePath);
 }

@@ -5,7 +5,7 @@ import { errMsg, voidPromise } from "@/utils/async";
 import { Link, useLocation, useSearch } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth-store";
-import { safeReturnPath } from "@/utils/safe-url";
+import { isDocsReturnPath, navigateToDocsPath, safeReturnPath } from "@/utils/safe-url";
 import { discardLegacyToken, getDeviceId } from "@/utils/auth";
 import { BRAND } from "@/branding";
 import { ROUTE_ADMIN_LOGIN, ROUTE_ADMIN_MANAGER, ROUTE_APP } from "@/app-routes";
@@ -77,6 +77,10 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
         data.avatar_path ?? null,
       );
       const returnTo = safeReturnPath(new URLSearchParams(search).get("from"));
+      if (returnTo && isDocsReturnPath(returnTo)) {
+        navigateToDocsPath(returnTo);
+        return;
+      }
       setLocation(returnTo ?? (adminOnly ? ROUTE_ADMIN_MANAGER : ROUTE_APP));
     } catch (err) {
       setError(errMsg(err, t("auth:login_failed")));

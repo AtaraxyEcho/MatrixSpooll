@@ -13,7 +13,7 @@
 
 import { useTranslation } from "react-i18next";
 import { useLocation } from "wouter";
-import { Check, Circle } from "lucide-react";
+import { ArrowRight, CheckCircle2, Circle } from "lucide-react";
 import { ROUTE_APP_SETTINGS } from "@/app-routes";
 import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
@@ -70,47 +70,54 @@ export function GetStartedChecklist() {
   // 全部完成整卡消失——对 member 而言「完成」只看它实际拥有的两项。
   if (tasks.every((task) => task.done)) return null;
 
+  const doneCount = tasks.filter((task) => task.done).length;
+
   return (
-    <section className="mb-7" aria-labelledby="get-started-heading">
-      <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2
-          id="get-started-heading"
-          className="m-0 font-mono text-[12.5px] font-semibold uppercase tracking-[0.06em] text-accent-2"
-        >
-          {t("checklist_eyebrow")}
-        </h2>
-      </div>
-      <ul className="m-0 grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-3">
-        {tasks.map((task) => (
-          <li
-            key={task.id}
-            className={
-              "flex items-center gap-3 rounded-[12px] border px-4 py-3 " +
-              (task.done
-                ? "border-hairline-soft bg-bg-grad-a/40 text-text-3"
-                : "border-hairline-soft bg-bg-grad-a/70")
-            }
-          >
-            {task.done ? (
-              <Check className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-            ) : (
-              <Circle className="h-4 w-4 shrink-0 text-text-4" aria-hidden />
-            )}
-            <span className={"flex-1 text-[12.5px] " + (task.done ? "line-through decoration-text-4" : "")}>
-              {task.label}
-            </span>
-            {!task.done ? (
-              <button
-                type="button"
-                onClick={task.onAction}
-                className="shrink-0 rounded-md border border-hairline px-2.5 py-1 text-[11.5px] text-text-2 transition-colors hover:border-hairline-strong hover:bg-bg-grad-a hover:text-text focus-ring"
+    <section className="mx-auto w-full max-w-[980px] px-4 pb-8 sm:px-6" aria-labelledby="get-started-heading">
+      {/* 单容器 + 纵向任务行：清单的语义是一份待办，而不是三张等大的功能卡片。容器
+          圆角与首页 composer shell / 项目卡一致，宽窄跟随 hero（980px），视觉上是首屏
+          的收尾而不是另一块喧宾夺主的展示区。 */}
+      <div className="overflow-hidden rounded-[14px] border border-hairline-soft bg-bg-grad-a/45">
+        <header className="flex items-center justify-between gap-3 border-b border-hairline-soft px-4 py-3.5 sm:px-5">
+          <h2 id="get-started-heading" className="m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">
+            {t("checklist_eyebrow")}
+          </h2>
+          <span className="font-mono text-[11px] tabular-nums text-text-3" aria-label={`${doneCount} / ${tasks.length}`}>
+            {doneCount}<span className="text-text-4"> / {tasks.length}</span>
+          </span>
+        </header>
+
+        <ul className="m-0 list-none p-0">
+          {tasks.map((task) =>
+            task.done ? (
+              <li
+                key={task.id}
+                className="flex items-center gap-3 border-b border-hairline-soft px-4 py-3.5 text-text-3 last:border-b-0 sm:px-5"
               >
-                {task.actionLabel}
-              </button>
-            ) : null}
-          </li>
-        ))}
-      </ul>
+                <CheckCircle2 className="h-[18px] w-[18px] shrink-0 text-accent" aria-hidden />
+                <span className="flex-1 text-[13px]">{task.label}</span>
+              </li>
+            ) : (
+              <li key={task.id} className="border-b border-hairline-soft last:border-b-0">
+                {/* 整行可点：把「去完成」的点击区扩到整行，移动端也好点。动作语义由
+                    aria-label（动词短语）承载，可见文案保留任务名。 */}
+                <button
+                  type="button"
+                  onClick={task.onAction}
+                  aria-label={task.actionLabel}
+                  className="group flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-bg-grad-a/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:px-5"
+                >
+                  <Circle className="h-[18px] w-[18px] shrink-0 text-text-4 transition-colors group-hover:text-accent" aria-hidden />
+                  <span className="flex-1 text-[13px] font-medium text-text-2 transition-colors group-hover:text-text">
+                    {task.label}
+                  </span>
+                  <ArrowRight className="h-4 w-4 shrink-0 text-text-4 transition-all group-hover:translate-x-0.5 group-hover:text-text-2" aria-hidden />
+                </button>
+              </li>
+            ),
+          )}
+        </ul>
+      </div>
     </section>
   );
 }
