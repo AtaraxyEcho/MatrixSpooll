@@ -115,7 +115,9 @@ export function LegalPage() {
             <section className="grid gap-4 py-7 md:grid-cols-[180px_1fr]">
               <h2 className="text-[13px] font-semibold">{t("about_source_title")}</h2>
               <div className="min-w-0 text-[13px] leading-6 text-text-3">
-                {legal.source_release.available && legal.source_release.download_url ? (
+                {!legal.source_release.enabled ? (
+                  <p className="text-warning">{t("about_source_disabled")}</p>
+                ) : legal.source_release.available && legal.source_release.download_url ? (
                   <>
                     <p>{t("about_source_available", { version: legal.source_release.version })}</p>
                     {legal.source_release.sha256 && (

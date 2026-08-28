@@ -367,6 +367,7 @@ export default {
   'about_license_title': 'Giấy phép phần mềm',
   'about_license_description': 'Chương trình được cung cấp theo GNU Affero General Public License phiên bản 3. Việc bàn giao thương mại không loại bỏ các quyền theo giấy phép.',
   'about_source_title': 'Mã nguồn tương ứng',
+  'about_source_disabled': 'Tính năng tải mã nguồn hiện chưa được mở.',
   'about_source_available': 'Có thể tải mã nguồn tương ứng đầy đủ của phiên bản {{version}} đang triển khai.',
   'about_source_unavailable': 'Chưa có gói mã nguồn tương ứng cho bản triển khai này. Hãy liên hệ quản trị viên.',
   'about_source_download': 'Tải mã nguồn phiên bản này',

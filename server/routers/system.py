@@ -15,7 +15,12 @@ from pydantic import BaseModel
 
 from lib.env_init import PROJECT_ROOT
 from lib.i18n import Translator
-from lib.legal_notice import read_legal_attribution, read_modified_version_notice, read_source_release
+from lib.legal_notice import (
+    read_legal_attribution,
+    read_modified_version_notice,
+    read_source_release,
+    source_download_enabled,
+)
 from lib.logging_config import resolve_log_dir
 from server.auth import AdminUser
 from server.services.diagnostics import collect_diagnostics
@@ -34,6 +39,7 @@ class LegalAttributionResponse(BaseModel):
 
 
 class SourceReleaseResponse(BaseModel):
+    enabled: bool
     available: bool
     version: str | None = None
     archive_name: str | None = None
@@ -75,21 +81,24 @@ async def get_legal_disclosure(_t: Translator) -> LegalDisclosureResponse:
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=_t("legal_notice_unavailable")) from exc
 
-    source_response = SourceReleaseResponse(available=False)
-    try:
-        source = read_source_release()
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        logger.warning("Invalid source release manifest: %s", exc)
-    else:
-        if source is not None:
-            source_response = SourceReleaseResponse(
-                available=True,
-                version=source.version,
-                archive_name=source.archive_name,
-                sha256=source.sha256,
-                created_at=source.created_at,
-                download_url="/api/v1/system/source-code/download",
-            )
+    download_enabled = source_download_enabled()
+    source_response = SourceReleaseResponse(enabled=download_enabled, available=False)
+    if download_enabled:
+        try:
+            source = read_source_release()
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning("Invalid source release manifest: %s", exc)
+        else:
+            if source is not None:
+                source_response = SourceReleaseResponse(
+                    enabled=True,
+                    available=True,
+                    version=source.version,
+                    archive_name=source.archive_name,
+                    sha256=source.sha256,
+                    created_at=source.created_at,
+                    download_url="/api/v1/system/source-code/download",
+                )
 
     return LegalDisclosureResponse(
         attribution=attribution.attribution,
@@ -113,6 +122,8 @@ async def download_license(_t: Translator) -> FileResponse:
 
 @router.get("/system/source-code/download")
 async def download_source_code(_t: Translator) -> FileResponse:
+    if not source_download_enabled():
+        raise HTTPException(status_code=404, detail=_t("source_release_unavailable"))
     try:
         source = read_source_release()
     except (OSError, ValueError, json.JSONDecodeError) as exc:

@@ -204,6 +204,7 @@ export interface LegalDisclosureResponse extends LegalAttributionResponse {
   modified_by: string;
   modification_date: string;
   source_release: {
+    enabled: boolean;
     available: boolean;
     version?: string | null;
     archive_name?: string | null;

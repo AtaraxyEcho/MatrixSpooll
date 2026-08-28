@@ -400,6 +400,7 @@ export default {
   'about_license_title': 'Software license',
   'about_license_description': 'This program is provided under the GNU Affero General Public License version 3. Commercial delivery does not remove those license rights.',
   'about_source_title': 'Corresponding source',
+  'about_source_disabled': 'Source download is not currently available.',
   'about_source_available': 'The complete corresponding source for deployed version {{version}} is available to download.',
   'about_source_unavailable': 'A corresponding source archive has not been published for this deployment. Contact the administrator.',
   'about_source_download': 'Download source for this version',

@@ -37,6 +37,7 @@ from lib.config.env_keys import PROVIDER_SECRET_KEYS
 from lib.db import async_session_factory, close_db, init_db, is_sqlite_backend
 from lib.generation_worker import GenerationWorker
 from lib.httpx_shared import shutdown_http_client, startup_http_client
+from lib.legal_notice import source_download_enabled
 from lib.logging_config import attach_file_handler, migrate_legacy_log_dir, setup_logging
 from lib.path_safety import try_safe_join
 from lib.project_migrations import cleanup_stale_backups, run_project_migrations
@@ -340,6 +341,7 @@ async def _migrate_source_encoding_on_startup(projects_root: Path) -> dict[str, 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    source_download_enabled()
     assert_subprocess_capable_event_loop()
     app.state.startup_complete = False
     # Startup
