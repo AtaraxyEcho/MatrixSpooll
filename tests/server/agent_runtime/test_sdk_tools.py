@@ -513,6 +513,25 @@ def test_build_matrixspooll_mcp_server_contains_all_tools(tmp_path: Path) -> Non
 
 
 @pytest.mark.unit
+def test_tool_context_resolves_stable_project_id_to_storage_key(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    storage_key = "0b1e1a1cb2154fce80d60ea61f66e193"
+    project_id = "e130b54a134b414ca81380c4af8e0ec1"
+    pm = ProjectManager(projects_root)
+    pm.create_project(storage_key, content_mode="free")
+    pm.create_project_metadata(storage_key, "雨夜车站", content_mode="free")
+
+    ctx = ToolContext(
+        project_name=project_id,
+        projects_root=projects_root,
+        project_storage_key=storage_key,
+    )
+
+    assert ctx.project_path == projects_root / storage_key
+    assert ctx.pm.load_project(project_id)["title"] == "雨夜车站"
+
+
+@pytest.mark.unit
 def test_generate_narration_audio_registered() -> None:
     """旁白配音工具必须同时进 MCP 工具 id 集（前端 chip 三语校验依赖它）。"""
     from server.agent_runtime.sdk_tools import MATRIXSPOOLL_MCP_TOOL_IDS

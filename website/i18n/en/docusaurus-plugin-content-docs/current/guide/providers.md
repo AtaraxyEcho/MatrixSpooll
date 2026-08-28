@@ -50,8 +50,10 @@ Providers' specific models, parameters, regional availability, and pricing chang
 
 | Provider | Text | Image | Video | TTS | Typical Uses |
 |---|:---:|:---:|:---:|:---:|---|
-| Gemini | ✅ | ✅ | ✅ | — | Multimodal text, reference images, and video generation |
+| AI Studio | ✅ | ✅ | ✅ | — | Google AI Studio text, image, and video capabilities |
+| Vertex AI | ✅ | ✅ | ✅ | — | Google Cloud Vertex AI text, image, and video capabilities |
 | Volcengine Ark | ✅ | ✅ | ✅ | — | Text, image, and video generation in mainland China network environments |
+| Volcengine Ark Agent Plan | ✅ | ✅ | ✅ | — | Separate Agent Plan integration and media capabilities |
 | Grok | ✅ | ✅ | ✅ | — | Text, image, and video generation |
 | OpenAI | ✅ | ✅ | ✅ | — | Text, image, and video generation |
 | Vidu | — | ✅ | ✅ | — | Image, image-to-video, and reference-to-video generation |

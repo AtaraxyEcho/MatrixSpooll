@@ -7,6 +7,33 @@ x-json-logging: &json-logging
     max-file: "5"
 
 services:
+  source-release:
+    image: python:3.12-slim
+    pull_policy: missing
+    command:
+      - python
+      - scripts/build_source_release.py
+      - --project-root
+      - /source
+      - --output-dir
+      - /output
+      - --version
+      - ${MATRIXSPOOLL_VERSION:-1.2.0}
+    working_dir: /source
+    volumes:
+      - ../../:/source:ro
+      - ./legal-source:/output
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+    logging: *json-logging
+
   postgres:
     image: postgres:18-alpine
     environment:
@@ -30,8 +57,8 @@ services:
       retries: 5
 
   matrixspooll:
-    image: ${MATRIXSPOOLL_IMAGE:-ccr.ccs.tencentyun.com/mock_mine/image-warehouse:production-1.2.0}
-    pull_policy: always
+    image: ${MATRIXSPOOLL_IMAGE:-matrixspooll:production-1.2.0}
+    pull_policy: ${MATRIXSPOOLL_PULL_POLICY:-missing}
     env_file: .env
     environment:
       AUTH_ENABLED: "true"
@@ -40,6 +67,7 @@ services:
       AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?Set AUTH_TOKEN_SECRET in deploy/production/.env}
       CORS_ORIGINS: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in deploy/production/.env}
       DATABASE_URL: postgresql+asyncpg://matrixspooll:${POSTGRES_PASSWORD}@postgres:5432/matrixspooll
+      MATRIXSPOOLL_SOURCE_RELEASE_DIR: /app/legal-source
       TZ: ${TZ:-Asia/Shanghai}
     command:
       - /app/.venv/bin/uvicorn
@@ -71,7 +99,10 @@ services:
       - ./logs:/app/logs
       - ./vertex_keys:/app/vertex_keys
       - ./claude_data:/root/.claude
+      - ./legal-source:/app/legal-source:ro
     depends_on:
+      source-release:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     init: true
@@ -83,6 +114,32 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  docs:
+    image: ${MATRIXSPOOLL_DOCS_IMAGE:-matrixspooll-docs:production-1.2.0}
+    pull_policy: ${MATRIXSPOOLL_PULL_POLICY:-missing}
+    expose:
+      - "8080"
+    networks:
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,uid=101,gid=101,mode=1777
+      - /var/cache/nginx:size=16m,uid=101,gid=101,mode=0755
+      - /var/log/nginx:size=16m,uid=101,gid=101,mode=0755
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 15s
+    logging: *json-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
 
   nginx:
     image: nginxinc/nginx-unprivileged:1.30.4-alpine
@@ -113,6 +170,8 @@ services:
     depends_on:
       matrixspooll:
         condition: service_started
+      docs:
+        condition: service_healthy
     init: true
     restart: unless-stopped
     stop_grace_period: 15s

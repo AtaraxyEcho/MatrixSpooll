@@ -6,30 +6,34 @@
  * 字面量。`route` 是该步所需落地的页面（`OnboardingTour` 据此在步骤切换前先行导航），
  * 省略表示不要求特定路由。
  *
- * 全程 12 步，跨三个页面：大厅段（欢迎 → 新建项目入口 → 设置入口）→ 设置页段（供应商
- * → 智能体）→ 回大厅（演示卡，进工作台的桥）→ 演示工作台段（项目概览 → 智能体 →
- * 角色/场景/道具 → 剧集分镜 → 导出）→ 收尾。每一次换页都由上一步高亮的入口提供动机：
- * 设置图标讲完进设置页，演示卡讲完进工作台，不存在没有来路的跳转。
+ * 导览只负责「认界面、建心智模型」：大纲按三段组织——大厅段（欢迎 / 新建入口 / 设置
+ * 指路）、演示段（演示卡进只读演示工作台，认识概览 / 智能体 / 资产 / 分镜 / 导出）、
+ * 收尾（行动闭环）。配置教学不进导览：设置入口一步只指路，详情由大厅的上手清单承接
+ * （`GetStartedChecklist.tsx`），用户带着目的去配置，比被拽着走学得进去。
  *
- * 步骤文案里指路用的名字（「供应商」「智能体」等）一律取被高亮元素在界面上的实际标签，
- * 不另造概念——用户照着文案在界面上找得到，才算指对了路。
+ * 段落条件与路由守卫消费同一份 `canAccessSystemSettings`（见 utils/access.ts）：不可
+ * 访问系统设置的会话（member）跳过设置指路步，界面到不了的地方大纲里就不会出现。
  *
- * 工作台段落在演示项目的只读工作台上（`demo-project.ts`）。第 6 步的演示卡是
- * `interactive`：用户点卡片本身或点「下一步」都会进入演示工作台，引导顺势推进到工作台
- * 首步（判定见 `OnboardingTour.tsx`）；工作台段内部的换路由仍由 `route` 强制导航驱动。
+ * 步骤文案里指路用的名字一律取被高亮元素在界面上的实际标签，不另造概念——用户照着
+ * 文案在界面上找得到，才算指对了路。
  *
- * 收尾步落回大厅：文案让用户新建项目开始制作，落点就该是新建入口所在的页面，而不是停
- * 在只读演示工作台上。
+ * 演示段落在演示项目的只读工作台上（`demo-project.ts`）。演示卡是 `interactive`：
+ * 用户点卡片本身或点「下一步」都会进入演示工作台，引导顺势推进到工作台首步（判定见
+ * `OnboardingTour.tsx`）；演示段内部的换路由仍由 `route` 强制导航驱动。
+ *
+ * 收尾步落回大厅并声明 `action: "create-project"`——气泡上的「立即创建项目」按钮点击
+ * 后关闭引导并打开新建弹窗，把「学完」直接接到「动手」。落点选大厅（新建入口所在页）
+ * 而不是演示工作台：创建项目的大厅才是引导结束后的自然去处。
  */
 
 import type { TFunction } from "i18next";
 import {
   ROUTE_APP,
   ROUTE_APP_PROJECTS,
-  ROUTE_APP_SETTINGS,
   WORKSPACE_ROUTE_CHARACTERS,
   WORKSPACE_ROUTE_EPISODES,
 } from "@/app-routes";
+import { canAccessSystemSettings } from "@/utils/access";
 import { ONBOARDING_ANCHORS } from "./anchors";
 import { DEMO_PROJECT_NAME, DEMO_SCRIPTED_EPISODE } from "./demo-project";
 import type { TourStep } from "./tour";
@@ -39,8 +43,12 @@ const DEMO_WORKBENCH = `${ROUTE_APP_PROJECTS}/${DEMO_PROJECT_NAME}`;
 const DEMO_LOREBOOK = `${DEMO_WORKBENCH}/${WORKSPACE_ROUTE_CHARACTERS}`;
 const DEMO_EPISODE = `${DEMO_WORKBENCH}/${WORKSPACE_ROUTE_EPISODES}/${DEMO_SCRIPTED_EPISODE}`;
 
-export function buildTourSteps(t: TFunction<"onboarding">): TourStep[] {
+export function buildTourSteps(
+  t: TFunction<"onboarding">,
+  role: "admin" | "member" | null,
+): TourStep[] {
   return [
+    // -- 大厅段 ---------------------------------------------------------------
     { anchor: null, title: t("welcome_title"), body: t("welcome_body"), route: ROUTE_APP_PROJECTS },
     {
       anchor: ONBOARDING_ANCHORS.lobbyCreateProject,
@@ -48,35 +56,25 @@ export function buildTourSteps(t: TFunction<"onboarding">): TourStep[] {
       body: t("lobby_create_body"),
       route: ROUTE_APP_PROJECTS,
     },
-    {
-      anchor: ONBOARDING_ANCHORS.lobbySettings,
-      title: t("lobby_settings_title"),
-      body: t("lobby_settings_body"),
-      route: ROUTE_APP_PROJECTS,
-    },
-    {
-      anchor: ONBOARDING_ANCHORS.settingsProviders,
-      title: t("settings_providers_title"),
-      body: t("settings_providers_body"),
-      route: ROUTE_APP_SETTINGS,
-      // 设置页的内容区由 `section` 查询参数驱动（`SystemConfigPage`），锚点只在侧栏
-      // 入口上——不声明查询参数的话，两步之间内容区不会跟着切，讲智能体时右边还摆着
-      // 供应商。取值须与 `SystemConfigPage` 的 SettingsSection id 一致。
-      query: { section: "providers" },
-    },
-    {
-      anchor: ONBOARDING_ANCHORS.settingsAgent,
-      title: t("settings_agent_title"),
-      body: t("settings_agent_body"),
-      route: ROUTE_APP_SETTINGS,
-      query: { section: "agent" },
-    },
+    // 设置指路步：只讲入口与时机，不进设置页讲配置详情。不可访问系统设置的会话没有
+    // 这个入口，这一步也随之消失。
+    ...(canAccessSystemSettings(role)
+      ? [
+          {
+            anchor: ONBOARDING_ANCHORS.lobbySettings,
+            title: t("lobby_settings_title"),
+            body: t("lobby_settings_body"),
+            route: ROUTE_APP_PROJECTS,
+          } satisfies TourStep,
+        ]
+      : []),
+    // -- 演示段 ---------------------------------------------------------------
     {
       anchor: ONBOARDING_ANCHORS.lobbyDemoCard,
       title: t("lobby_demo_title"),
       body: t("lobby_demo_body"),
       // 演示卡由首页（/app）的 home 模式挂载；项目列表页（/app/projects）不会渲染它，
-      // 否则从设置页进入这一步时 driver 会等待不存在的锚点直到超时。
+      // 否则从大厅指路步进入这一步时 driver 会等待不存在的锚点直到超时。
       route: ROUTE_APP,
       // 全程只读的例外：这一步的落点动作是导航进演示工作台，不是写操作，因此开放
       // 交互（见 tour.ts 的 `interactive` 语义）；演示卡本身仅在引导运行期间挂载，
@@ -118,6 +116,13 @@ export function buildTourSteps(t: TFunction<"onboarding">): TourStep[] {
       // 顶栏在所有工作台路由上都挂着，留在上一步的分镜画布讲，省掉一次无谓导航。
       route: DEMO_EPISODE,
     },
-    { anchor: null, title: t("finish_title"), body: t("finish_body"), route: ROUTE_APP_PROJECTS },
+    // -- 收尾 -----------------------------------------------------------------
+    {
+      anchor: null,
+      title: t("finish_title"),
+      body: t("finish_body"),
+      route: ROUTE_APP_PROJECTS,
+      action: "create-project" as const,
+    },
   ];
 }

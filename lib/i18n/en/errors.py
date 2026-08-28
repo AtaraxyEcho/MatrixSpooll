@@ -520,6 +520,7 @@ MESSAGES = {
     "free_creation_merge_limits_exceeded": "The selected videos exceed the merge size or duration limit. Select fewer clips and try again.",
     "invalid_image_format": "Unsupported image format",
     "video_model_unsupported": "{provider}/{model} is not supported by this video endpoint; choose a compatible model",
+    "video_provider_response_invalid": "{provider} returned an unrecognized response ({content_type}, request ID: {request_id}). Check the provider base URL and model endpoint configuration",
     "video_start_image_unsupported": "Model {model} does not support first-frame input",
     "video_end_image_unsupported": "Model {model} does not support last-frame input",
     "video_t2v_unsupported": "Model {model} does not support text-to-video generation",

@@ -58,6 +58,7 @@ class ToolContext:
         projects_root: Path,
         pm: ProjectManager | None = None,
         actor_user_id: str = DEFAULT_USER_ID,
+        project_storage_key: str | None = None,
     ):
         self.project_name = project_name
         self.projects_root = projects_root
@@ -65,6 +66,11 @@ class ToolContext:
         # Avoid ``ProjectManager.from_cwd()`` — the server main process cwd is
         # the repo root, not ``projects/<name>/``. Tests may inject a fake pm.
         self.pm: ProjectManager = pm if pm is not None else ProjectManager(str(projects_root))
+        if pm is None and project_storage_key:
+            # Agent APIs use the stable database project ID, while project files
+            # live under an independent UUID storage key. The per-session manager
+            # must receive the same alias that resolved the SDK cwd.
+            self.pm.register_project_id_alias(project_name, project_name, project_storage_key)
 
     @property
     def project_path(self) -> Path:

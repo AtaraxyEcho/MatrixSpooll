@@ -6,14 +6,13 @@ sidebar_position: 1
 
 # Deployment and Operations {#deployment}
 
-This document covers MatrixSpooll's single PostgreSQL runtime, environment variables, data persistence, upgrades, backups, restoration, reverse proxies, and troubleshooting. See the [Security Policy](https://github.com/MockMine/MatrixSpooll/blob/main/SECURITY.md) for the official support boundaries and the [Security Threat Model](https://github.com/MockMine/MatrixSpooll/blob/main/docs/security/threat-model.md) for the complete trust boundaries.
+This document covers MatrixSpooll's single PostgreSQL runtime, environment variables, data persistence, upgrades, backups, restoration, reverse proxies, and troubleshooting. The support boundary is in `SECURITY.md` in the delivery package; the full trust boundary is in `docs/security/threat-model.md`.
 
 ## Choosing a Deployment Mode {#choose-deployment-mode}
 
 | Scenario | Recommended Method | Database | Notes |
 |---|---|---|---|
 | Local Docker build | `deploy/production/docker-compose.yml` | PostgreSQL | Builds the complete image from the current source |
-| Published image deployment | `deploy/production/docker-compose-img.yml` | PostgreSQL | Pulls a prebuilt complete image |
 | Local development | Docker PostgreSQL + source | PostgreSQL | Containerized database with application hot reload; see the [Contributing Guide](../dev/contributing.md) |
 
 Regardless of the method you choose, project images, videos, and other generated assets must be stored persistently.
@@ -30,7 +29,8 @@ In development, Docker runs only PostgreSQL while the backend and frontend conti
 docker compose -f deploy/development/docker-compose.yml up -d
 cp .env.example .env
 uv run alembic upgrade head
-uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241
+uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241 \
+  --loop server.event_loop:subprocess_capable_event_loop_factory
 ```
 
 The default development connection is
@@ -51,7 +51,8 @@ docker compose -f deploy/development/docker-compose.yml down
 ### 1.1 Start {#postgresql-start}
 
 ```bash
-cd "$(git rev-parse --show-toplevel)/deploy/production"
+# This guide assumes the delivered source package is in /srv/matrixspooll.
+cd /srv/matrixspooll/deploy/production
 cp .env.example .env
 ```
 
@@ -62,6 +63,9 @@ AUTH_USERNAME=admin
 AUTH_PASSWORD=set a strong password
 AUTH_TOKEN_SECRET=set a long-lived random secret
 POSTGRES_PASSWORD=set a database password
+PUBLIC_HOST=video.example.com
+PUBLIC_ORIGIN=https://video.example.com
+CERTBOT_EMAIL=admin@example.com
 # LOG_LEVEL=INFO
 ```
 
@@ -82,10 +86,10 @@ POSTGRES_PASSWORD_URLENCODED=p%40ss%2Fword
 
 Then change only the password segment of `DATABASE_URL` in `deploy/production/docker-compose.yml` to `${POSTGRES_PASSWORD_URLENCODED}`; leave the PostgreSQL container's `POSTGRES_PASSWORD` unchanged. You can generate the encoded value with `urllib.parse.quote(raw_password, safe="")`. If you do not want to maintain this Compose customization, use the hexadecimal password described above.
 
-Start the service:
+Build locally with the Dockerfile included in the delivery package and start the service:
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml up -d --build
 ```
 
 Verify it:
@@ -94,7 +98,7 @@ Verify it:
 docker compose ps
 docker compose logs --tail=100 postgres
 docker compose logs --tail=100 matrixspooll
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
 ### 1.2 Migrate an Existing PostgreSQL Identity {#rename-postgresql-identity}
@@ -114,16 +118,15 @@ case "$old_pg_role:$old_pg_database" in
 esac
 ```
 
-Stop the application and create a database backup. Select the Compose file used by the deployment:
+Stop the application and create a database backup:
 
 ```bash
-cd "$(git rev-parse --show-toplevel)/deploy/production"
-compose_file=docker-compose.yml  # Use docker-compose-img.yml for image deployments
+cd /srv/matrixspooll/deploy/production
 
-docker compose -f "$compose_file" stop matrixspooll || true
-docker compose -f "$compose_file" up -d --no-deps postgres
+docker compose stop matrixspooll || true
+docker compose up -d --no-deps postgres
 mkdir -p backups
-docker compose -f "$compose_file" exec -T postgres \
+docker compose exec -T postgres \
   pg_dump -U "$old_pg_role" -d "$old_pg_database" > backups/matrixspooll-before-identity-rename.sql
 ```
 
@@ -132,20 +135,20 @@ The container may report `unhealthy` until the rename is complete because the up
 connections and perform the rename:
 
 ```bash
-docker compose -f "$compose_file" exec -T postgres \
+docker compose exec -T postgres \
   psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
   -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$old_pg_database' AND pid <> pg_backend_pid()"
 
-docker compose -f "$compose_file" exec -T postgres \
+docker compose exec -T postgres \
   psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
   -c "ALTER DATABASE \"$old_pg_database\" RENAME TO matrixspooll"
 
-docker compose -f "$compose_file" exec -T postgres \
+docker compose exec -T postgres \
   psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
   -c "ALTER ROLE \"$old_pg_role\" RENAME TO matrixspooll"
 
-docker compose -f "$compose_file" up -d
-curl -f http://localhost:1241/health/ready
+docker compose up -d
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
 Renaming a role preserves its internal OID, so ownership of existing tables, sequences, and other objects remains
@@ -205,16 +208,22 @@ Non-secret configuration such as `ANTHROPIC_BASE_URL` and model names does not i
 
 ### 4.1 Health Check {#health-check}
 
-Compose uses:
+The application container readiness check uses:
 
 ```text
 GET /health/ready
 ```
 
-To check manually:
+From the host or external monitoring, check the Nginx public entry point:
 
 ```bash
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
+```
+
+To distinguish gateway and application failures, check application readiness inside the container network:
+
+```bash
+docker compose exec matrixspooll curl -f http://localhost:1241/health/ready
 ```
 
 ### 4.2 View Logs {#view-logs}
@@ -230,7 +239,7 @@ docker compose logs -f matrixspooll
 docker compose logs -f postgres
 ```
 
-Do not paste complete logs directly into a public issue. Remove the following before submitting them:
+Before sharing complete logs with delivery support or the customer internal operations team, remove:
 
 - API keys;
 - Tokens;
@@ -242,10 +251,10 @@ Do not paste complete logs directly into a public issue. Remove the following be
 
 ### 5.1 Before Upgrading {#before-upgrade}
 
-1. Read the [CHANGELOG](https://github.com/MockMine/MatrixSpooll/blob/main/CHANGELOG.md) and the target release notes;
+1. Read `CHANGELOG.md` in the delivery package and the upgrade notes;
 2. Check for breaking changes;
 3. Back up the database and project directory;
-4. Record the current source commit;
+4. Record the current delivery version identifier;
 5. Perform the upgrade during an acceptable maintenance window.
 
 ### 5.2 Upgrade the Production Deployment {#upgrade-postgresql-deployment}
@@ -260,7 +269,7 @@ docker compose up -d
 docker compose ps
 docker compose logs --tail=100 postgres
 docker compose logs --tail=200 matrixspooll
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
 The application runs database migrations when it starts. Do not skip multiple versions and upgrade directly without a backup.
@@ -287,7 +296,7 @@ If a project migration fails, preserve the files and inspect the startup logs. D
 
 ### 5.4 Build Locally {#local-build}
 
-The production Compose file builds the application image from the repository root and does not depend on a public image registry. Rebuild the application service after updating the source:
+The production Compose file builds the application image from the delivered source root and does not depend on a public image registry. Rebuild the application service after updating the source:
 
 ```bash
 docker compose build matrixspooll
@@ -301,7 +310,7 @@ docker compose up -d
 Stop the MatrixSpooll application first, but leave PostgreSQL running, so no new writes occur while you back up the database and project files:
 
 ```bash
-cd "$(git rev-parse --show-toplevel)/deploy/production"
+cd /srv/matrixspooll/deploy/production
 umask 077
 mkdir -p backups
 chmod 700 backups
@@ -330,7 +339,7 @@ If `tar` reports `Permission denied`, the mounted directory contains files creat
 Before restoring, stop MatrixSpooll but leave PostgreSQL running:
 
 ```bash
-cd "$(git rev-parse --show-toplevel)/deploy/production"
+cd /srv/matrixspooll/deploy/production
 docker compose stop matrixspooll
 
 backup_stamp=YYYYMMDD-HHMMSS
@@ -356,61 +365,28 @@ After the database import succeeds, restart the application:
 
 ```bash
 docker compose start matrixspooll
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
 > The restoration strategy depends on whether you are overwriting an existing database, restoring across versions, and whether the service was still accepting writes when the backup was created. Production environments should regularly perform real restoration drills, not merely verify that backup files exist.
 
-## 7. Reverse Proxy and HTTPS {#reverse-proxy-and-https}
+## 7. Nginx, Certbot, and HTTPS {#reverse-proxy-and-https}
 
-MatrixSpooll does not currently support direct exposure to the public Internet. Private remote deployments must enable authentication and protect traffic with TLS, a VPN, or a secure tunnel. Do not publish port `1241` directly to an untrusted network. Recommended practices:
+Production Compose includes Nginx and Certbot with this topology:
 
-- Use Nginx, Caddy, Traefik, or a cloud load balancer;
-- Configure HTTPS;
-- Allow only the proxy server to access the MatrixSpooll container port;
-- Preserve long-lived SSE connections;
-- Set sufficiently large upload limits and read timeouts.
-
-The official Compose files use `1241:1241` by default, which publishes the backend port on every host network interface. Adding a reverse proxy alone does not close this direct access path. When the reverse proxy runs on the same host, change the `matrixspooll` service's port mapping before startup so it listens only on loopback:
-
-```yaml
-ports:
-  - "127.0.0.1:1241:1241"
+```text
+Internet :80/:443 -> nginx -> matrixspooll:1241 -> postgres:5432
 ```
 
-If the reverse proxy runs on a container network or another host, remove any unnecessary host port publishing and use the container network, host firewall, or an equivalent network policy to ensure only the proxy can access the MatrixSpooll backend.
+- Only Nginx ports `80/443` are published on the host.
+- Application port `1241` is reachable only on the `edge` network.
+- PostgreSQL port `5432` is reachable only on the internal `database` network.
+- Nginx disables proxy buffering for Agent and project-event SSE and configures long connections and upload limits.
+- Certbot uses an HTTP-01 webroot challenge and reloads Nginx after renewal.
 
-Nginx example:
+The first certificate issuance requires public reachability on port `80`; `PUBLIC_HOST` must match either the domain DNS record or public IPv4 address. Domains use standard certificates. A public IPv4 uses the configured Let's Encrypt short-lived profile and Certbot renewal. Do not start a standalone Certbot that occupies port `80`, and do not republish application port `1241` to the public Internet.
 
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name matrixspooll.example.com;
-
-    ssl_certificate /etc/letsencrypt/live/matrixspooll.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/matrixspooll.example.com/privkey.pem;
-
-    client_max_body_size 2g;
-
-    location / {
-        proxy_pass http://127.0.0.1:1241;
-        proxy_http_version 1.1;
-
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # MatrixSpooll uses SSE to push Agent replies and project events
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-    }
-}
-```
-
-Certificate configuration depends on your infrastructure. You can use ACME/Let's Encrypt or certificates managed by your cloud platform.
+If an organization already operates a cloud load balancer or central gateway, validate it as an alternate deployment design, especially SSE, upload limits, real client addresses, and the HTTPS origin. Do not create a second route that bypasses the authentication boundary while the built-in Nginx public ports remain active.
 
 ## 8. Container Permissions and the Agent Sandbox {#container-permissions-and-sandbox}
 
@@ -470,16 +446,16 @@ docker compose logs --tail=300 matrixspooll
 Check:
 
 - Whether `.env` exists;
-- Whether port `1241` is already in use;
-- Whether the image was pulled successfully;
+- Whether ports `80/443` are already in use and public port `80` can complete certificate validation;
 - Whether the mounted directories are writable;
-- Whether `POSTGRES_PASSWORD` is set for production deployments.
+- Whether production authentication, PostgreSQL, `PUBLIC_HOST`, `PUBLIC_ORIGIN`, and `CERTBOT_EMAIL` values are complete.
 
 ### Health Check Fails {#health-check-fails}
 
 ```bash
-curl -v http://localhost:1241/health/ready
+curl -fsv https://<PUBLIC_HOST>/health/live
 docker compose logs --tail=300 matrixspooll
+docker compose logs --tail=300 nginx certbot
 ```
 
 If the container has just started, check whether database migrations are still running.
@@ -488,7 +464,7 @@ If the container has just started, check whether database migrations are still r
 
 - Check `AUTH_USERNAME`;
 - Check `AUTH_PASSWORD` in `.env`;
-- If the password was left empty on first startup, check whether it was written back to the file;
+- Production Compose rejects an empty password and does not write one back automatically;
 - Log in again after changing `AUTH_TOKEN_SECRET`.
 
 ### Agent Requests Fail {#agent-request-fails}

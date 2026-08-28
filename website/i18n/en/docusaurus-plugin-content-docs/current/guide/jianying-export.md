@@ -57,7 +57,7 @@ Extract the downloaded ZIP file into the Jianying draft directory entered above.
 ```
 com.lveditor.draft/
 ├── ... (other existing drafts)
-└── {项目名}_第{N}集/          ← the extracted folder
+└── {draft name}/               ← the extracted folder
     ├── draft_info.json        (Jianying 6+) or draft_content.json (5.x)
     ├── draft_meta_info.json
     └── assets/
@@ -69,7 +69,7 @@ com.lveditor.draft/
 ### 5. Open in Jianying {#open-in-jianying}
 
 1. Open (or restart) Jianying Desktop
-2. Find the newly added **{项目名}\_第{N}集** draft in the "Drafts" list
+2. Find the new draft in the "Drafts" list. Narration and drama projects normally use **{project name}\_Episode {N}**; ads and shorts use a sanitized project title.
 3. Double-click it to see all video clips on the timeline
 
 ## Exported Content {#export-contents}
@@ -88,6 +88,12 @@ A manually uploaded video without generation provenance is exported unchanged an
 
 - **Video track**: All generated video clips arranged in scene order
 - **Subtitle track**: Character dialogue and voice-over from the screenplay are added automatically; the style, position, and timing can be adjusted further in Jianying
+
+### Ad and Short Mode {#ad-mode-export}
+
+- **Video track**: Selected and readable videos are arranged in short-film shot order.
+- **Subtitle track**: Spoken copy or the script presentation text is written to the subtitle track.
+- **Audio boundary**: Ads and shorts do not add a separate TTS narration track automatically; add narration in Jianying when needed.
 
 ### Canvas Size {#canvas-size}
 
@@ -115,4 +121,4 @@ If you selected the wrong version, export again and select the correct one.
 
 ### Some video clips are missing {#missing-clips}
 
-The export includes only video clips that were generated successfully. Clips that have not yet been generated or whose generation failed do not appear in the draft. Return to MatrixSpooll, generate the missing clips, and export again.
+The export includes readable video artifacts in the current selection. It can also include manually uploaded videos or videos marked obsolete when they remain usable. Missing, failed, corrupt, or unselected clips do not appear in the draft. Repair or reselect the affected clips in MatrixSpooll, then export again.

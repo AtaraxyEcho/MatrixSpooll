@@ -1,15 +1,20 @@
 import type {
   FreeCreation,
   FreeCreationReferenceRole,
+  FreeSubtitleTrack,
 } from "@/types";
 
 export type CanvasRelationMode = "selected" | "all" | "off";
-export type CanvasRelationRole = FreeCreationReferenceRole | "edit_source" | "reference";
+export type CanvasRelationRole = FreeCreationReferenceRole
+  | "edit_source"
+  | "reference"
+  | "subtitle_source"
+  | "subtitle_render";
 
 export interface CanvasRelation {
   id: string;
   sourceId: string;
-  sourceType: "creation" | "upload";
+  sourceType: "creation" | "upload" | "subtitle";
   targetId: string;
   roles: CanvasRelationRole[];
 }
@@ -42,6 +47,8 @@ const ROLE_ORDER: CanvasRelationRole[] = [
   "reference_audio",
   "prompt_context",
   "edit_source",
+  "subtitle_source",
+  "subtitle_render",
   "reference",
 ];
 
@@ -54,7 +61,10 @@ function sortedRelations(relations: Iterable<CanvasRelation>): CanvasRelation[] 
   return [...relations].sort((left, right) => left.id.localeCompare(right.id));
 }
 
-export function createCanvasRelationGraph(creations: readonly FreeCreation[]): CanvasRelationGraph {
+export function createCanvasRelationGraph(
+  creations: readonly FreeCreation[],
+  subtitleTracks: readonly FreeSubtitleTrack[] = [],
+): CanvasRelationGraph {
   const relationsById = new Map<string, CanvasRelation>();
   const addRelation = (
     sourceId: string,
@@ -75,14 +85,35 @@ export function createCanvasRelationGraph(creations: readonly FreeCreation[]): C
     relationsById.set(id, { id, sourceId, sourceType, targetId, roles: [role] });
   };
 
+  const subtitleIds = new Set(subtitleTracks.map((track) => track.subtitle_id));
+  const renderedSubtitleIds = new Set(
+    creations.flatMap((creation) => (
+      creation.effective_mode === "subtitle_burn"
+      && typeof creation.subtitle_id === "string"
+      && subtitleIds.has(creation.subtitle_id)
+        ? [creation.subtitle_id]
+        : []
+    )),
+  );
+  for (const track of subtitleTracks) {
+    if (!renderedSubtitleIds.has(track.subtitle_id)) {
+      addRelation(track.creation_id, "creation", track.subtitle_id, "subtitle_source");
+    }
+  }
   for (const creation of creations) {
+    const subtitleId = creation.subtitle_id;
+    const routesThroughSubtitle = creation.effective_mode === "subtitle_burn"
+      && typeof subtitleId === "string"
+      && subtitleIds.has(subtitleId);
     const claimedSourceIds = new Set<string>();
     for (const claim of creation.reference_claims ?? []) {
       const sourceId = claim.type === "creation" ? claim.creation_id : claim.reference_id;
       claimedSourceIds.add(sourceId);
       addRelation(sourceId, claim.type, creation.creation_id, claim.role ?? "reference");
     }
-    if (creation.parent_creation_id && !claimedSourceIds.has(creation.parent_creation_id)) {
+    if (routesThroughSubtitle) {
+      addRelation(subtitleId, "subtitle", creation.creation_id, "subtitle_render");
+    } else if (creation.parent_creation_id && !claimedSourceIds.has(creation.parent_creation_id)) {
       addRelation(creation.parent_creation_id, "creation", creation.creation_id, "edit_source");
     }
   }

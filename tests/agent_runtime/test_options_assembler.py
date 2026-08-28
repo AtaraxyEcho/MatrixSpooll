@@ -117,6 +117,47 @@ async def test_build_threads_injected_deps_into_options(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_build_passes_resolved_storage_key_to_mcp_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projects_root = (tmp_path / "projects").resolve()
+    projects_root.mkdir(parents=True)
+    storage_key = "0b1e1a1cb2154fce80d60ea61f66e193"
+    project_id = "e130b54a134b414ca81380c4af8e0ec1"
+    project_cwd = projects_root / storage_key
+    project_cwd.mkdir()
+    policy = _make_policy(tmp_path)
+    captured: dict[str, object] = {}
+
+    from server.agent_runtime import options_assembler as options_module
+
+    real_builder = options_module.build_matrixspooll_mcp_server
+
+    def capture_builder(**kwargs):
+        captured.update(kwargs)
+        return real_builder(**kwargs)
+
+    monkeypatch.setattr(options_module, "build_matrixspooll_mcp_server", capture_builder)
+
+    async def fake_loader():
+        return {}
+
+    assembler = OptionsAssembler(
+        projects_root=projects_root,
+        allowed_tools=_ALLOWED_TOOLS,
+        setting_sources=_SETTING_SOURCES,
+        access_policy_provider=lambda: policy,
+        max_turns_provider=lambda: None,
+        resolve_project_cwd=lambda _name: project_cwd,
+        provider_env_loader=fake_loader,
+    )
+
+    options = await assembler.build(project_id)
+
+    assert options.cwd == str(project_cwd)
+    assert captured["project_name"] == project_id
+    assert captured["project_storage_key"] == storage_key
+
+
+@pytest.mark.asyncio
 async def test_build_adds_keep_alive_hook_with_can_use_tool(tmp_path: Path) -> None:
     """can_use_tool 存在时，keep-alive hook 排在 file access hook 之前。"""
 

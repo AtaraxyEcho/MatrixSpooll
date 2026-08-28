@@ -60,6 +60,7 @@ from lib.video_backends.base import (
     VideoCapabilityError,
     VideoGenerationRequest,
     VideoGenerationResult,
+    VideoProviderError,
     download_video,
     poll_with_retry,
     reference_audio_to_data_uri,
@@ -80,6 +81,47 @@ _S2V = "S2V-01"
 _H3 = "MiniMax-H3"
 
 DEFAULT_MODEL = _H3
+
+
+def _json_object_response(response: httpx.Response, *, operation: str) -> dict[str, Any]:
+    """Decode a MiniMax response without leaking JSON parser failures to users."""
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        content_type = response.headers.get("content-type") or "unknown"
+        request_id = response.headers.get("x-request-id") or "-"
+        logger.warning(
+            "MiniMax %s returned a non-JSON response status=%s content_type=%s request_id=%s body=%r",
+            operation,
+            response.status_code,
+            content_type,
+            request_id,
+            response.text[:500],
+        )
+        raise VideoProviderError(
+            "video_provider_response_invalid",
+            provider=PROVIDER_MINIMAX,
+            content_type=content_type,
+            request_id=request_id,
+        ) from exc
+    if not isinstance(payload, dict):
+        content_type = response.headers.get("content-type") or "unknown"
+        request_id = response.headers.get("x-request-id") or "-"
+        logger.warning(
+            "MiniMax %s returned a non-object JSON response status=%s content_type=%s request_id=%s",
+            operation,
+            response.status_code,
+            content_type,
+            request_id,
+        )
+        raise VideoProviderError(
+            "video_provider_response_invalid",
+            provider=PROVIDER_MINIMAX,
+            content_type=content_type,
+            request_id=request_id,
+        )
+    return payload
+
 
 _SUBMIT_ENDPOINT = "/video_generation"
 _QUERY_ENDPOINT = "/query/video_generation"
@@ -445,7 +487,7 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
             ),
             provider=PROVIDER_MINIMAX,
         )
-        return extract_minimax_video_task_id(resp.json())
+        return extract_minimax_video_task_id(_json_object_response(resp, operation="create"))
 
     async def _poll_query(self, client: httpx.AsyncClient, task_id: str) -> dict:
         # v2 把 task_id 放路径段，v1 放 query string。task_id 来自上游响应/持久化记录，
@@ -456,7 +498,7 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
             url = f"{url}/{quote(task_id, safe='')}"
         resp = await client.get(url, params=params, headers=minimax_headers(self._api_key))
         resp.raise_for_status()
-        return resp.json()
+        return _json_object_response(resp, operation="query")
 
     @with_retry_async(
         max_attempts=DEFAULT_MAX_ATTEMPTS,
@@ -471,7 +513,7 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
             headers=minimax_headers(self._api_key),
         )
         resp.raise_for_status()
-        return extract_minimax_download_url(resp.json())
+        return extract_minimax_download_url(_json_object_response(resp, operation="retrieve"))
 
     async def _poll_and_build(
         self,

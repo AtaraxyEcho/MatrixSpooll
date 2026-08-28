@@ -56,6 +56,7 @@ import {
   usePhaseLabels,
 } from "./ProjectCard";
 import { ONBOARDING_ANCHORS } from "@/onboarding/anchors";
+import { GetStartedChecklist } from "@/onboarding/GetStartedChecklist";
 import { OnboardingDemoCard } from "@/onboarding/OnboardingDemoCard";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { BRAND } from "@/branding";
@@ -944,6 +945,16 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
     setShowCreateModal,
   } = useProjectsStore();
   const tourActive = useOnboardingStore((s) => s.active);
+  // 引导收尾的行动按钮、上手清单的「新建项目」都经这个信号请求打开创建弹窗——弹窗
+  // 开关是本页本地状态，请求方（路由根的引导挂载点、清单）够不着。只在计数前进时
+  // 打开，初次挂载不触发。
+  const createProjectRequest = useAppStore((s) => s.createProjectRequest);
+  const handledCreateRequestRef = useRef(createProjectRequest);
+  useEffect(() => {
+    if (createProjectRequest === handledCreateRequestRef.current) return;
+    handledCreateRequestRef.current = createProjectRequest;
+    setShowCreateModal(true);
+  }, [createProjectRequest, setShowCreateModal]);
 
   const [importingProject, setImportingProject] = useState(false);
   const [conflictProject, setConflictProject] = useState<string | null>(null);
@@ -1232,6 +1243,7 @@ export function ProjectsPage({ mode = "home" }: ProjectsPageProps) {
           }}
         />
       ) : null}
+      {mode === "home" ? <GetStartedChecklist /> : null}
 
       {hasVisibleOrFilteredProjects ? (
         <FilterPills

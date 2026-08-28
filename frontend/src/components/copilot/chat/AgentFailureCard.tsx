@@ -26,6 +26,7 @@ export function AgentFailureCard({ failure, onRetry }: Readonly<AgentFailureCard
   const raw = JSON.stringify(failure, null, 2);
   const unavailable = t("agent_failure_not_provided");
   const startup = failure.phase === "startup";
+  const modelOrEndpointIncompatible = failure.summary.diagnosis === "model_or_endpoint_incompatible";
   const facts: Array<[string, unknown]> = [
     [t("agent_failure_source_label"), failure.summary.source],
     [t("agent_failure_type_label"), failure.summary.type],
@@ -56,6 +57,12 @@ export function AgentFailureCard({ failure, onRetry }: Readonly<AgentFailureCard
             </p>
           </div>
         </header>
+
+        {modelOrEndpointIncompatible && (
+          <p className="rounded-lg border border-amber-300/25 bg-amber-300/[0.06] px-3 py-2 text-[11.5px] leading-relaxed text-amber-100">
+            {t("agent_failure_diagnosis_model_or_endpoint_incompatible")}
+          </p>
+        )}
 
         <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[11px]">
           {facts.map(([label, value]) => (
@@ -89,7 +96,7 @@ export function AgentFailureCard({ failure, onRetry }: Readonly<AgentFailureCard
           {copied ? <Check aria-hidden className="h-3.5 w-3.5" /> : <Copy aria-hidden className="h-3.5 w-3.5" />}
           {t(copied ? "agent_failure_copied" : "agent_failure_copy")}
         </button>
-        <Link href="/app/settings?section=agent" className={GHOST_BTN_CLS}>
+        <Link href="~/app/settings?section=agent" className={GHOST_BTN_CLS}>
           <Settings aria-hidden className="h-3.5 w-3.5" />
           {t("agent_failure_open_settings")}
         </Link>

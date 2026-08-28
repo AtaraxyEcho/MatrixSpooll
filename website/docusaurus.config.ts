@@ -5,6 +5,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const docsSiteUrl = process.env.DOCS_SITE_URL ?? "http://localhost:3000";
+const requestedBaseUrl = process.env.DOCS_BASE_URL ?? "/";
+const docsBaseUrl = `/${requestedBaseUrl.replace(/^\/+|\/+$/g, "")}/`.replace("//", "/");
 const configDir = dirname(fileURLToPath(import.meta.url));
 const notice = readFileSync(resolve(configDir, "..", "NOTICE"), "utf8");
 const legalAttribution = notice.match(/^"(Powered by .+?https:\/\/github\.com\/[^\s"]+)"$/m)?.[1];
@@ -27,7 +29,7 @@ const config: Config = {
   favicon: "img/logo.jpg",
 
   url: docsSiteUrl,
-  baseUrl: "/",
+  baseUrl: docsBaseUrl,
 
   organizationName: "MatrixSpooll",
   projectName: "MatrixSpooll",
@@ -59,7 +61,6 @@ const config: Config = {
           // docs-only 模式：文档直接挂在站点根，因此 src/pages/index.* 不能存在（路由冲突）
           routeBasePath: "/",
           sidebarPath: "./sidebars.ts",
-          editUrl: "https://github.com/MockMine/MatrixSpooll/tree/main/website/",
         },
         blog: false,
         theme: {
@@ -99,11 +100,6 @@ const config: Config = {
           type: "localeDropdown",
           position: "right",
         },
-        {
-          href: "https://github.com/MockMine/MatrixSpooll",
-          label: "GitHub 仓库",
-          position: "right",
-        },
       ],
     },
     footer: {
@@ -112,13 +108,12 @@ const config: Config = {
         {
           title: "资源",
           items: [
-            { label: "GitHub 仓库", href: "https://github.com/MockMine/MatrixSpooll" },
-            { label: "许可证", href: "https://github.com/MockMine/MatrixSpooll/blob/main/LICENSE" },
-            { label: "NOTICE", href: "https://github.com/MockMine/MatrixSpooll/blob/main/NOTICE" },
+            { label: "许可与来源", to: "/legal/license-and-source" },
+            { label: "免责声明与使用条款", to: "/legal/disclaimer" },
           ],
         },
       ],
-      copyright: `${legalAttributionHtml} · MatrixSpooll Copyright © 2026 MatrixSpooll contributors · AGPL-3.0.`,
+      copyright: `${legalAttributionHtml} · MatrixSpooll Copyright © 2026 AtaraxyEcho · AGPL-3.0.`,
     },
   } satisfies Preset.ThemeConfig,
 };

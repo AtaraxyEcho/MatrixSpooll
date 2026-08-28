@@ -470,6 +470,7 @@ MESSAGES = {
     "free_creation_aspect_ratio_not_supported": "模型 {model} 不支持 {ratio} 画面比例；请选择：{supported}",
     "free_creation_aspect_ratio_capabilities_missing": "模型 {model} 未声明支持的画面比例，无法安全提交自由创作",
     "video_model_unsupported": "当前视频端点不支持 {provider}/{model}，请选择兼容模型",
+    "video_provider_response_invalid": "{provider} 返回了无法识别的响应（{content_type}，请求 ID：{request_id}），请检查供应商基础地址和模型端点配置",
     "video_start_image_unsupported": "模型 {model} 不支持首帧输入",
     "video_end_image_unsupported": "模型 {model} 不支持尾帧输入",
     "video_t2v_unsupported": "模型 {model} 不支持文生视频",

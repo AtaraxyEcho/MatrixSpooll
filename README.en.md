@@ -22,11 +22,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MockMine/MatrixSpooll/releases/latest"><img src="https://img.shields.io/github/v/release/MockMine/MatrixSpooll?style=flat-square&label=release" alt="Release"></a>
-  <a href="https://github.com/MockMine/MatrixSpooll/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/MockMine/MatrixSpooll/test.yml?style=flat-square&label=tests" alt="Tests"></a>
-  <a href="https://codecov.io/gh/MockMine/MatrixSpooll"><img src="https://img.shields.io/codecov/c/github/MockMine/MatrixSpooll?style=flat-square&label=coverage" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-2ea44f?style=flat-square" alt="License"></a>
-  <a href="https://github.com/MockMine/MatrixSpooll"><img src="https://img.shields.io/github/stars/MockMine/MatrixSpooll?style=flat-square" alt="Stars"></a>
+  <a href="NOTICE"><img src="https://img.shields.io/badge/notice-included-596780?style=flat-square" alt="Notice"></a>
 </p>
 
 <p align="center">
@@ -35,8 +32,6 @@
   <a href="website/docs/guide/getting-started.md">Getting Started</a>
   ·
   <a href="website/docs/index.mdx">Documentation</a>
-  ·
-  <a href="#community">Community</a>
 </p>
 
 <p align="center">
@@ -49,8 +44,11 @@ MatrixSpooll is an open-source, self-hosted workspace for AI drama and novel ada
 
 - **One production workflow**: turn novels, finished screenplays, or product assets into characters, scenes, props, storyboards, video clips, and final videos step by step.
 - **Visual continuity with human control**: reuse reference assets across shots, review key stages, regenerate individual assets, and roll back to earlier versions.
+- **Free-creation canvas**: generate images or videos directly, manage first/last frames and mixed reference assets, inspect source and derived relationships, and use a minimap, smart guides, undo, and redo on large canvases.
+- **Agent-assisted creation**: let Agent auto-select the media type, model, resolution, and aspect ratio, or switch to custom mode and override them manually.
+- **Multi-user collaboration**: administrators manage accounts and online sessions, while project owners assign editor/viewer roles and transfer ownership.
 - **Manageable models and costs**: configure text, image, video, and TTS capabilities in one place, then review estimated costs and actual usage.
-- **Editable delivery**: render final videos directly or export Jianying drafts to refine subtitles, voice-over, pacing, and transitions. Exports target the mainland-China edition of Jianying; CapCut compatibility has not been verified.
+- **Delivery and migration**: render videos, export Jianying drafts for further editing, or export a complete project ZIP backup and import it again from the project list. Jianying exports target the mainland-China edition; CapCut compatibility has not been verified.
 
 ## From source to final video
 
@@ -72,18 +70,19 @@ Every stage can be orchestrated by the AI assistant, or reviewed, adjusted, and 
 Install Docker and Docker Compose, then run:
 
 ```bash
-git clone https://github.com/MockMine/MatrixSpooll.git
-cd MatrixSpooll/deploy/production
+# Extract the delivered complete source package on the customer server first.
+cd /srv/matrixspooll/deploy/production
 
 cp .env.example .env
-docker compose up -d
+# Set authentication, PostgreSQL, PUBLIC_HOST, PUBLIC_ORIGIN, and CERTBOT_EMAIL
+docker compose -f docker-compose.yml up -d --build
 ```
 
-Open <http://localhost:1241>. The default username is `admin`. If `AUTH_PASSWORD` is empty, MatrixSpooll generates a password on first startup and writes it back to `deploy/production/.env`.
+Point the `PUBLIC_HOST` domain or public IPv4 address to the server and allow TCP ports `80` and `443` through the firewall. After certificate issuance, open `https://<PUBLIC_HOST>`. The default administrator username is `admin`; deployment settings live in `deploy/production/.env`.
 
-> Default Compose publishes port `1241` on all host interfaces. Do not expose MatrixSpooll directly to the public Internet; before enabling remote access, configure authentication and use HTTPS, a VPN, or a secure tunnel. See [Reverse Proxy and HTTPS](website/docs/ops/deployment.md).
+> Production Compose uses Nginx as the only public entry point. Application port `1241` and PostgreSQL port `5432` remain inside Docker networks. Certbot obtains and renews certificates for a domain or public IPv4 address. See [Deployment and Operations](website/docs/ops/deployment.md) for prerequisites.
 
-After signing in, open **Settings**, configure the MatrixSpooll AI assistant and the required text, image, and video generation capabilities, then create a project.
+After signing in as an administrator, open **Settings**, configure the MatrixSpooll AI assistant and the required text, image, and video capabilities, then create other accounts and projects as needed. Regular users only see entries allowed by their permissions.
 
 For the complete first-run workflow, see [Getting Started](website/docs/guide/getting-started.md). For production deployment, upgrades, backups, and reverse proxies, see [Deployment and Operations](website/docs/ops/deployment.md).
 
@@ -106,9 +105,9 @@ For the complete first-run workflow, see [Getting Started](website/docs/guide/ge
 
 ## Contributing
 
-Contributions to code, documentation, tests, provider adapters, and reproducible bug reports are welcome.
+The delivered source package is the basis for customer maintenance, customization, and reproducible problem reports.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before starting. After cloning the repository, install the pre-commit hooks:
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before maintenance work. In the source working directory, install the pre-commit hooks:
 
 ```bash
 uv run pre-commit install
@@ -118,8 +117,8 @@ uv run pre-commit install
 
 This project is released under the [GNU Affero General Public License v3.0](LICENSE), with the attribution and modification-notice requirements in [NOTICE](NOTICE). The software is provided without warranty; users may use, modify, and redistribute it under AGPL-3.0.
 
-This repository is a modified version of the upstream project. It adds MatrixSpooll multi-user access, free creation, stable project identity, and PostgreSQL deployment support, and is clearly distinguished from the upstream release.
+This delivered version is a modified version of the upstream project. It adds MatrixSpooll multi-user access, free creation, stable project identity, and PostgreSQL deployment support, and is clearly distinguished from the upstream release. The complete corresponding source is included with the delivery package; the deployment operator must provide network users with a controlled way to obtain it from the running system.
 
-Current source: <https://github.com/MockMine/MatrixSpooll>
+Users remain responsible for ensuring that input assets and generated content comply with applicable law, contracts, copyright, personality and privacy rights, and provider policies. Do not use this software to evade content safeguards or create unlawful, infringing, deceptive, or otherwise harmful material. See [DISCLAIMER.en.md](DISCLAIMER.en.md). This notice does not restrict rights granted by AGPL-3.0.
 
-MatrixSpooll Copyright © 2026 MatrixSpooll contributors.
+MatrixSpooll Copyright © 2026 AtaraxyEcho.

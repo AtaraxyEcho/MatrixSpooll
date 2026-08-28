@@ -34,7 +34,8 @@ update_docs: engine-b
 ### 1. 停止 MatrixSpooll 服务 {#stop-services}
 
 ```bash
-cd "$(git rev-parse --show-toplevel)"
+# 假设完整源码包位于 /srv/matrixspooll；请按实际目录调整
+cd /srv/matrixspooll
 
 source_projects="$(cd deploy/projects && pwd)"
 # 自定义数据目录示例：source_projects="/srv/matrixspooll/projects"
@@ -214,10 +215,10 @@ sqlite3 "${source_db}" "
 ```bash
 docker compose -f deploy/production/docker-compose.yml up -d
 docker compose -f deploy/production/docker-compose.yml ps
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
-访问 `http://<你的IP>:1241` 验证服务正常。
+访问 `https://<PUBLIC_HOST>` 验证服务正常；当前生产 Compose 不向宿主机发布应用 `1241`。
 
 ---
 
@@ -228,7 +229,7 @@ curl -f http://localhost:1241/health/ready
 1. 停止 PostgreSQL 生产部署：
 
    ```bash
-   cd "$(git rev-parse --show-toplevel)"
+   cd /srv/matrixspooll
    docker compose -f deploy/production/docker-compose.yml down
    ```
 

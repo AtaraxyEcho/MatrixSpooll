@@ -33,7 +33,8 @@ The commands below consistently use the shell variable `source_projects` for the
 ### 1. Stop the MatrixSpooll services {#stop-services}
 
 ```bash
-cd "$(git rev-parse --show-toplevel)"
+# This guide assumes the delivered source package is in /srv/matrixspooll.
+cd /srv/matrixspooll
 
 source_projects="$(cd deploy/projects && pwd)"
 # Custom data directory example: source_projects="/srv/matrixspooll/projects"
@@ -214,10 +215,10 @@ sqlite3 "${source_db}" "
 ```bash
 docker compose -f deploy/production/docker-compose.yml up -d
 docker compose -f deploy/production/docker-compose.yml ps
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
-Visit `http://<your-ip>:1241` and verify that the service is working.
+Visit `https://<PUBLIC_HOST>` and verify the service. The current production Compose configuration does not publish application port `1241` on the host.
 
 ---
 
@@ -228,7 +229,7 @@ The migration procedure above does not modify the source data directory referenc
 1. Stop the PostgreSQL production deployment:
 
    ```bash
-   cd "$(git rev-parse --show-toplevel)"
+   cd /srv/matrixspooll
    docker compose -f deploy/production/docker-compose.yml down
    ```
 

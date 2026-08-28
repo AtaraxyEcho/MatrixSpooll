@@ -1095,6 +1095,34 @@ export function FreeCreationWorkspace({
     }
   };
 
+  const renderSubtitleTrack = async (subtitleId: string) => {
+    if (readOnly) return;
+    try {
+      await API.renderFreeSubtitleTrack(projectName, subtitleId);
+      await loadCreations();
+      useAppStore.getState().pushToast(t("free_creation_subtitle_render_succeeded"), "success");
+    } catch (renderError) {
+      useAppStore.getState().pushToast(
+        t("free_creation_subtitle_render_failed", { message: errMsg(renderError) }),
+        "error",
+      );
+    }
+  };
+
+  const deleteSubtitleTrack = async (subtitleId: string) => {
+    if (readOnly) return;
+    try {
+      await API.deleteFreeSubtitleTrack(projectName, subtitleId);
+      await loadCreations();
+      useAppStore.getState().pushToast(t("free_creation_subtitle_delete_succeeded"), "success");
+    } catch (deleteError) {
+      useAppStore.getState().pushToast(
+        t("free_creation_subtitle_delete_failed", { message: errMsg(deleteError) }),
+        "error",
+      );
+    }
+  };
+
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-background)] text-[var(--color-text)]">
       {composerMode === "agent" ? (
@@ -1131,6 +1159,8 @@ export function FreeCreationWorkspace({
             setSubtitleCreationId(creationId);
             setSubtitleOpen(true);
           }}
+          onRenderSubtitle={(subtitleId) => void renderSubtitleTrack(subtitleId)}
+          onDeleteSubtitle={(subtitleId) => void deleteSubtitleTrack(subtitleId)}
           onDeleteItems={deleteItems}
           onRestoreCreations={restoreCreations}
           onRestoreUpload={restoreUpload}

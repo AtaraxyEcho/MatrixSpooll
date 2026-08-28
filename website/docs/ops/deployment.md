@@ -7,14 +7,13 @@ update_docs: engine-b
 
 # 部署与运维 {#deployment}
 
-本文档说明 MatrixSpooll 的 PostgreSQL 单库部署、环境变量、数据持久化、升级、备份、恢复、反向代理和故障排查。正式支持边界见 [安全政策](https://github.com/MockMine/MatrixSpooll/blob/main/SECURITY.md)，完整信任边界见 [安全威胁模型](https://github.com/MockMine/MatrixSpooll/blob/main/docs/security/threat-model.md)。
+本文档说明 MatrixSpooll 的 PostgreSQL 单库部署、环境变量、数据持久化、升级、备份、恢复、反向代理和故障排查。正式支持边界以交付包中的 `SECURITY.md` 为准，完整信任边界见 `docs/security/threat-model.md`。
 
 ## 部署方式选择 {#choose-deployment-mode}
 
 | 场景 | 推荐方式 | 数据库 | 说明 |
 |---|---|---|---|
 | Docker 本地构建 | `deploy/production/docker-compose.yml` | PostgreSQL | 从当前源码构建完整镜像 |
-| Docker 镜像部署 | `deploy/production/docker-compose-img.yml` | PostgreSQL | 拉取已发布的完整镜像 |
 | 本地开发 | Docker PostgreSQL + 源码启动 | PostgreSQL | 数据库容器化，应用保留热重载，见[贡献指南](../dev/contributing.md) |
 
 无论选择哪种方式，项目图片、视频和其他生成资产都需要持久化保存。
@@ -31,7 +30,8 @@ MatrixSpooll 支持管理员、成员与项目 owner/editor/viewer 角色，但�
 docker compose -f deploy/development/docker-compose.yml up -d
 cp .env.example .env
 uv run alembic upgrade head
-uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241
+uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241 \
+  --loop server.event_loop:subprocess_capable_event_loop_factory
 ```
 
 默认开发连接为
@@ -52,7 +52,8 @@ docker compose -f deploy/development/docker-compose.yml down
 ### 1.1 启动 {#postgresql-start}
 
 ```bash
-cd "$(git rev-parse --show-toplevel)/deploy/production"
+# 假设完整源码包位于 /srv/matrixspooll；请按实际目录调整
+cd /srv/matrixspooll/deploy/production
 cp .env.example .env
 ```
 
@@ -63,6 +64,9 @@ AUTH_USERNAME=admin
 AUTH_PASSWORD=请设置强密码
 AUTH_TOKEN_SECRET=请设置长期固定的随机密钥
 POSTGRES_PASSWORD=请设置数据库密码
+PUBLIC_HOST=video.example.com
+PUBLIC_ORIGIN=https://video.example.com
+CERTBOT_EMAIL=admin@example.com
 # LOG_LEVEL=INFO
 ```
 
@@ -95,7 +99,7 @@ docker compose -f docker-compose.yml up -d --build
 docker compose ps
 docker compose logs --tail=100 postgres
 docker compose logs --tail=100 matrixspooll
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
 ### 1.2 迁移既有 PostgreSQL 身份 {#rename-postgresql-identity}
@@ -114,16 +118,15 @@ case "$old_pg_role:$old_pg_database" in
 esac
 ```
 
-先停止应用并生成数据库备份。根据实际部署选择 Compose 文件：
+先停止应用并生成数据库备份：
 
 ```bash
-cd "$(git rev-parse --show-toplevel)/deploy/production"
-compose_file=docker-compose.yml  # 镜像部署改为 docker-compose-img.yml
+cd /srv/matrixspooll/deploy/production
 
-docker compose -f "$compose_file" stop matrixspooll || true
-docker compose -f "$compose_file" up -d --no-deps postgres
+docker compose stop matrixspooll || true
+docker compose up -d --no-deps postgres
 mkdir -p backups
-docker compose -f "$compose_file" exec -T postgres \
+docker compose exec -T postgres \
   pg_dump -U "$old_pg_role" -d "$old_pg_database" > backups/matrixspooll-before-identity-rename.sql
 ```
 
@@ -131,40 +134,24 @@ docker compose -f "$compose_file" exec -T postgres \
 `docker compose exec`。随后使用旧的超级用户断开旧数据库连接并完成重命名：
 
 ```bash
-docker compose -f "$compose_file" exec -T postgres \
+docker compose exec -T postgres \
   psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
   -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$old_pg_database' AND pid <> pg_backend_pid()"
 
-docker compose -f "$compose_file" exec -T postgres \
+docker compose exec -T postgres \
   psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
   -c "ALTER DATABASE \"$old_pg_database\" RENAME TO matrixspooll"
 
-docker compose -f "$compose_file" exec -T postgres \
+docker compose exec -T postgres \
   psql -v ON_ERROR_STOP=1 -U "$old_pg_role" -d postgres \
   -c "ALTER ROLE \"$old_pg_role\" RENAME TO matrixspooll"
 
-docker compose -f "$compose_file" up -d
-curl -f http://localhost:1241/health/ready
+docker compose up -d
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
 角色重命名保留其内部 OID，因此现有表、序列和其他对象的所有权无需逐项转移。命令中断时先检查
 `pg_roles` 和 `pg_database` 的当前名称，再从未完成的步骤继续。不要把新名称重复执行为“重命名目标”。
-
-如需避免服务器安装 Python/Node 依赖，先在开发机或 CI 构建完整 Linux 镜像并推送：
-
-```bash
-docker build -t production:1.1.0 -t ccr.ccs.tencentyun.com/mock_mine/image-warehouse:production-1.1.0 .
-docker push ccr.ccs.tencentyun.com/mock_mine/image-warehouse:production-1.1.0
-```
-
-服务器在 `deploy/production/` 中使用镜像版 Compose：
-
-```bash
-docker compose -f docker-compose-img.yml pull
-docker compose -f docker-compose-img.yml up -d
-```
-
-`docker-compose.yml` 与 `docker-compose-img.yml` 分别代表“服务器构建”和“拉取完整镜像”，不要混用。镜像构建阶段已经安装全部 Linux 依赖，容器启动不会执行 `uv sync` 或 `pnpm install`。Windows 的 `.venv` 和 `node_modules` 不能复制到 Linux 镜像中。
 
 ### 2.2 PostgreSQL 持久化目录 {#postgresql-volumes}
 
@@ -196,6 +183,9 @@ MatrixSpooll 在应用启动时运行 Alembic 迁移，将数据库结构升级�
 | `AUTH_TOKEN_SECRET` | 空 | 正式部署必须设置长期固定随机值 |
 | `LOG_LEVEL` | `INFO` | 排障时临时改为 `DEBUG`，完成后恢复 |
 | `POSTGRES_PASSWORD` | 无 | Docker 部署必须设置 |
+| `PUBLIC_HOST` | 无 | 必填；公网域名或 IPv4，不带协议、端口和路径 |
+| `PUBLIC_ORIGIN` | 无 | 必填；浏览器实际使用的 HTTPS origin |
+| `CERTBOT_EMAIL` | 无 | 必填；证书申请和续期通知邮箱 |
 | `TZ` | `Asia/Shanghai` | 可在 Compose 环境中覆盖 |
 | `DATABASE_URL` | 无 | 源码运行必须显式设置 PostgreSQL URL；Compose 自动注入 |
 | `MATRIXSPOOLL_DATA_DIR` | `projects` | 需要自定义应用数据根目录时使用 |
@@ -220,16 +210,22 @@ MatrixSpooll 的沙箱要求父进程环境中不保留供应商密钥。以下�
 
 ### 4.1 健康检查 {#health-check}
 
-Compose 使用：
+应用容器内部的 readiness 检查使用：
 
 ```text
 GET /health/ready
 ```
 
-手动检查：
+从宿主机或外部监控检查 Nginx 公网入口：
 
 ```bash
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
+```
+
+需要区分网关与应用故障时，可以在容器网络内检查应用 readiness：
+
+```bash
+docker compose exec matrixspooll curl -f http://localhost:1241/health/ready
 ```
 
 ### 4.2 查看日志 {#view-logs}
@@ -245,7 +241,7 @@ docker compose logs -f matrixspooll
 docker compose logs -f postgres
 ```
 
-不要在公开 Issue 中直接粘贴完整日志。提交前先清理：
+向交付方技术支持或客户内部运维团队提供日志前，先清理：
 
 - API Key；
 - Token；
@@ -257,10 +253,10 @@ docker compose logs -f postgres
 
 ### 5.1 升级前 {#before-upgrade}
 
-1. 阅读 [CHANGELOG](https://github.com/MockMine/MatrixSpooll/blob/main/CHANGELOG.md) 和目标 Release 说明；
+1. 阅读交付包中的 `CHANGELOG.md` 和本次升级说明；
 2. 确认是否存在破坏性变更；
 3. 备份数据库和项目目录；
-4. 记录当前源码 commit；
+4. 记录当前交付版本标识；
 5. 在可接受的维护窗口执行升级。
 
 ### 5.2 部署升级 {#upgrade-postgresql-deployment}
@@ -275,7 +271,7 @@ docker compose up -d
 docker compose ps
 docker compose logs --tail=100 postgres
 docker compose logs --tail=200 matrixspooll
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
 应用启动时会执行数据库迁移。不要在没有备份的情况下跳过多个版本直接升级。
@@ -302,14 +298,14 @@ curl -f http://localhost:1241/health/ready
 
 ### 5.4 本地构建 {#local-build}
 
-`docker-compose.yml` 使用仓库根目录构建应用镜像。首次构建仍需下载 Linux 基础镜像和锁文件中的依赖；Dockerfile 的 BuildKit 缓存会复用后续构建所需的软件包。升级代码后重新构建应用服务：
+`docker-compose.yml` 使用交付源码根目录构建应用镜像。首次构建仍需下载 Linux 基础镜像和锁文件中的依赖；Dockerfile 的 BuildKit 缓存会复用后续构建所需的软件包。升级交付源码后重新构建应用服务：
 
 ```bash
 docker compose build matrixspooll
 docker compose up -d
 ```
 
-依赖会在构建阶段固化进最终镜像，运行阶段不再同步。若部署服务器网络不适合执行首次构建，请在可联网的开发机或 CI 构建并推送镜像，然后改用 `docker-compose-img.yml`。
+依赖会在构建阶段固化进最终镜像，运行阶段不再同步。若客户服务器无法完成首次构建，应先处理该服务器的基础镜像与依赖网络访问条件；正式交付仍以完整源码包和本地构建配置为准。
 
 ## 6. 备份与恢复 {#backup-and-restore}
 
@@ -318,7 +314,7 @@ docker compose up -d
 先停止 MatrixSpooll 应用，保留 PostgreSQL 运行，避免备份数据库和项目文件期间继续产生写入：
 
 ```bash
-cd "$(git rev-parse --show-toplevel)/deploy/production"
+cd /srv/matrixspooll/deploy/production
 umask 077
 mkdir -p backups
 chmod 700 backups
@@ -347,7 +343,7 @@ docker compose start matrixspooll
 恢复前停止 MatrixSpooll，保留 PostgreSQL：
 
 ```bash
-cd "$(git rev-parse --show-toplevel)/deploy/production"
+cd /srv/matrixspooll/deploy/production
 docker compose stop matrixspooll
 
 backup_stamp=YYYYMMDD-HHMMSS
@@ -373,61 +369,28 @@ cat "backups/matrixspooll-db-${backup_stamp}.sql" | \
 
 ```bash
 docker compose start matrixspooll
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
 > 恢复策略取决于是否覆盖现有数据库、是否跨版本以及备份时服务是否仍有写入。生产环境应定期做真实恢复演练，而不只是确认备份文件存在。
 
-## 7. 反向代理与 HTTPS {#reverse-proxy-and-https}
+## 7. Nginx、Certbot 与 HTTPS {#reverse-proxy-and-https}
 
-MatrixSpooll 当前不支持直接暴露到公网。私有远程部署必须启用认证，并通过 TLS、VPN 或安全隧道保护传输。不要把 `1241` 端口直接发布到不受信任的网络。建议：
+生产 Compose 已内置 Nginx 与 Certbot，拓扑为：
 
-- 使用 Nginx、Caddy、Traefik 或云负载均衡器；
-- 配置 HTTPS；
-- 只允许代理服务器访问 MatrixSpooll 容器端口；
-- 保留 SSE 长连接；
-- 设置足够的上传大小和读取超时。
-
-官方 Compose 文件默认使用 `1241:1241`，会把后端端口发布到宿主机的所有网络接口；仅添加反向代理不会关闭这条直连路径。反向代理运行在同一宿主机时，启动前将 `matrixspooll` 服务的端口映射改为仅监听 loopback：
-
-```yaml
-ports:
-  - "127.0.0.1:1241:1241"
+```text
+Internet :80/:443 -> nginx -> matrixspooll:1241 -> postgres:5432
 ```
 
-如果反向代理运行在容器网络或其他主机上，应取消不必要的宿主机端口发布，并通过容器网络、主机防火墙或等效网络策略保证只有代理能够访问 MatrixSpooll 后端。
+- 宿主机只发布 Nginx 的 `80/443`；
+- 应用 `1241` 只在 `edge` 网络内可达；
+- PostgreSQL `5432` 只在内部 `database` 网络内可达；
+- Nginx 已为 Agent 和项目事件 SSE 关闭代理缓冲，并配置长连接和上传限制；
+- Certbot 通过 HTTP-01 webroot 申请证书，并在续期后触发 Nginx 热加载。
 
-Nginx 示例：
+首次签发要求公网 `80` 可达，`PUBLIC_HOST` 必须与域名 DNS 或公网 IPv4 一致。域名使用常规证书；公网 IPv4 使用 Let's Encrypt short-lived 配置并由 Certbot 持续续期。不要另起占用 `80` 的 standalone Certbot，也不要把应用 `1241` 重新发布到公网。
 
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name matrixspooll.example.com;
-
-    ssl_certificate /etc/letsencrypt/live/matrixspooll.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/matrixspooll.example.com/privkey.pem;
-
-    client_max_body_size 2g;
-
-    location / {
-        proxy_pass http://127.0.0.1:1241;
-        proxy_http_version 1.1;
-
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # MatrixSpooll 使用 SSE 推送 Agent 回复和项目事件
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-    }
-}
-```
-
-证书配置取决于你的基础设施，可以使用 ACME/Let's Encrypt 或云平台托管证书。
+如企业已有云负载均衡器或统一网关，应将其作为替代部署设计单独验证，尤其要保留 SSE、上传限制、真实客户端地址和 HTTPS origin；不要在保留官方 Nginx 公网端口的同时再创建第二条绕过认证边界的入口。
 
 ## 8. 容器权限与 Agent 沙箱 {#container-permissions-and-sandbox}
 
@@ -487,16 +450,17 @@ docker compose logs --tail=300 matrixspooll
 检查：
 
 - `.env` 是否存在；
-- 端口 `1241` 是否被占用；
+- 端口 `80/443` 是否被占用，公网 `80` 是否能完成证书校验；
 - 镜像是否成功拉取；
 - 挂载目录是否可写；
-- 生产部署是否设置 `POSTGRES_PASSWORD`。
+- 生产部署必填的认证、PostgreSQL、`PUBLIC_HOST`、`PUBLIC_ORIGIN` 和 `CERTBOT_EMAIL` 是否完整。
 
 ### 健康检查失败 {#health-check-fails}
 
 ```bash
-curl -v http://localhost:1241/health/ready
+curl -fsv https://<PUBLIC_HOST>/health/live
 docker compose logs --tail=300 matrixspooll
+docker compose logs --tail=300 nginx certbot
 ```
 
 如果容器刚启动，先确认是否仍在执行数据库迁移。
@@ -505,7 +469,7 @@ docker compose logs --tail=300 matrixspooll
 
 - 检查 `AUTH_USERNAME`；
 - 检查 `.env` 中的 `AUTH_PASSWORD`；
-- 如果首次启动时密码留空，查看是否已被回写；
+- 生产 Compose 不接受空密码，也不会自动回写密码；
 - 修改 `AUTH_TOKEN_SECRET` 后需要重新登录。
 
 ### Agent 请求失败 {#agent-request-fails}

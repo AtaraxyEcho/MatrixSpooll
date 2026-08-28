@@ -14,7 +14,7 @@ This page covers the most common installation, configuration, production, and tr
 - Long-form content still requires human review of episode boundaries, character assets, and key plot decisions. MatrixSpooll is designed to empower creators, not eliminate review entirely.
 - Video models differ in their support for reference-image counts, video duration, start and end frames, audio, and regional availability.
 - Native Windows can run parts of the basic workflow, but POSIX capabilities such as the Agent sandbox degrade. Prefer Linux, macOS, WSL2, or Docker.
-- Production environments should use PostgreSQL, HTTPS, strong passwords, and regular backups. Do not expose an unprotected port `1241` directly to the public Internet.
+- Production environments use PostgreSQL, Nginx, HTTPS, strong passwords, and regular backups. Only ports `80/443` are public; do not publish application port `1241` directly to the Internet.
 
 ## Installation, deployment, and updates {#install-deploy-update}
 
@@ -23,14 +23,14 @@ This page covers the most common installation, configuration, production, and tr
 Docker is the preferred option for most users. The recommended environments are Linux, macOS, WSL2, or Docker Desktop:
 
 ```bash
-git clone https://github.com/MockMine/MatrixSpooll.git
-cd MatrixSpooll/deploy/production
+# Extract the complete delivered source package on the customer server first.
+cd /srv/matrixspooll/deploy/production
 cp .env.example .env
-# Edit .env and set POSTGRES_PASSWORD plus authentication values
+# Edit .env and set authentication, PostgreSQL, PUBLIC_HOST, PUBLIC_ORIGIN, and CERTBOT_EMAIL
 docker compose -f docker-compose.yml up -d --build
 ```
 
-After startup, open `http://localhost:1241`. If MatrixSpooll is deployed on another host, replace `localhost` with that host's address.
+Point `PUBLIC_HOST` at the server and allow TCP `80` and `443` through the firewall. After Certbot issues the certificate, open `https://<PUBLIC_HOST>`. Production Compose publishes only Nginx ports `80/443`; application port `1241` and PostgreSQL port `5432` remain internal.
 
 Native Windows can run basic workflows such as project creation, but the Agent sandbox degrades. WSL2 or Docker Desktop is still recommended for production deployment. Running locally on Linux or macOS requires a working system sandbox tool; see the [additional deployment notes](../ops/deployment.md).
 
@@ -47,8 +47,8 @@ docker compose logs postgres
 Check the following in order:
 
 1. Confirm that Docker is running normally and that the MatrixSpooll container passes its health check.
-2. Confirm that port `1241` is not already in use by another program.
-3. Confirm that `.env` exists and is readable by the container. Production deployments must also set `POSTGRES_PASSWORD`.
+2. Confirm that ports `80/443` are not already in use and that public port `80` is reachable for ACME validation.
+3. Confirm that `.env` exists and is readable by the container. Production deployments must set `AUTH_PASSWORD`, `AUTH_TOKEN_SECRET`, `POSTGRES_PASSWORD`, `PUBLIC_HOST`, `PUBLIC_ORIGIN`, and `CERTBOT_EMAIL`.
 4. Check whether the logs contain `SANDBOX_UNAVAILABLE`, `SANDBOX_BWRAP_BROKEN`, or more specific remediation guidance.
 5. Check whether provider API keys were mistakenly placed in `.env`. Provider credentials must be saved in the Web Settings page, or the service will refuse to start.
 
@@ -56,7 +56,7 @@ Do not switch the container to privileged mode just to bypass a sandbox error. F
 
 ### What are the default login credentials? What should I do if I forget the password? {#default-login}
 
-The default username is `admin`; you can change it in `.env` with `AUTH_USERNAME`. If `AUTH_PASSWORD` is empty, MatrixSpooll generates a password on first startup and writes it back to `.env` in the current deployment directory. The plaintext password is not printed to the logs.
+The default username is `admin`; you can change it in `.env` with `AUTH_USERNAME`. Production Compose requires a non-empty `AUTH_PASSWORD` and a fixed `AUTH_TOKEN_SECRET` before startup; it does not generate or write back a production password.
 
 If you forget the password, update `.env` by setting `AUTH_PASSWORD`. Docker deployments must recreate the container to reload environment variables:
 
@@ -77,7 +77,7 @@ docker compose up -d
 
 MatrixSpooll automatically runs database and project-structure migrations at startup. A normal update does not intentionally delete mounted data directories, but you should still back up the project directory, database, and credential files before updating. Do not substitute cleanup commands that delete data volumes for a normal update.
 
-The About section of the Settings page can check for a new version and open its release page, but it does not upgrade the server from the Web UI.
+The About section displays the required legal origin attribution. Server upgrades are still performed by an operator using the matching source revision or image tag.
 
 ### Where are projects and configuration stored? How do I back them up or migrate them? {#where-is-data}
 
@@ -119,7 +119,7 @@ These messages mean that the Agent process did not start normally or could not i
 1. Confirm that the Agent credential is active and that the model ID exactly matches an ID actually exposed by the service.
 2. Confirm that the Docker container or server can reach the Agent API and that its proxy, DNS, and TLS configuration works.
 3. Confirm that the Agent sandbox passes its startup checks in Docker, WSL, or the local environment.
-4. Download diagnostic logs from the About section of Settings and inspect the specific upstream status code near the time of the error.
+4. Inspect the specific upstream status code near the failure time in the administrator System Logs view or container logs.
 
 A successful connection test proves only that a minimal request succeeded. Long sessions may still be affected by quotas, context limits, rate limits, or proxy timeouts.
 
@@ -298,7 +298,7 @@ Linux, macOS, WSL2, or Docker is recommended for the server. Native Windows guar
 
 ### Can I use MatrixSpooll commercially or build derivative software? {#commercial-use}
 
-MatrixSpooll is released under [AGPL-3.0](https://github.com/MockMine/MatrixSpooll/blob/main/LICENSE) with the attribution and modification-notice requirements in [NOTICE](https://github.com/MockMine/MatrixSpooll/blob/main/NOTICE). AGPL-3.0 permits commercial use and derivative development, but modified distributions and network services must still comply with the license and corresponding-source requirements.
+MatrixSpooll is released under the `LICENSE` (AGPL-3.0) included in the delivery package, with the attribution and modification-notice requirements in `NOTICE`. AGPL-3.0 permits commercial use and derivative development, but modified distributions and network services must still comply with the license and corresponding-source requirements.
 
 MatrixSpooll may be customized, deployed privately, and supported under AGPL-3.0; those fees are for development, deployment, and services and do not change the software license.
 
@@ -312,11 +312,11 @@ A generic frontend error cannot identify the root cause. First expand the task e
 docker compose logs matrixspooll
 ```
 
-You can also download diagnostic logs from the About section of Settings. The diagnostic bundle attempts to mask known credentials in the system summary, but it does not rescan and redact the full contents of existing logs at download time. Before sharing it, manually inspect the entire bundle and remove API keys, Tokens, passwords, the complete `.env`, private endpoint addresses, and project content.
+Administrators can also use the System Logs view to locate operation and login events around the relevant time. Before sharing logs, manually remove API keys, tokens, passwords, the complete `.env`, private endpoint addresses, and project content.
 
 ### How do I submit an actionable issue? {#how-to-report-issue}
 
-When filing a [GitHub Issue](https://github.com/MockMine/MatrixSpooll/issues) or asking the community for help, include:
+When contacting delivery support or the customer internal operations team, include:
 
 - The MatrixSpooll version
 - The operating system and whether you deployed with Docker, WSL, or from source
@@ -325,7 +325,7 @@ When filing a [GitHub Issue](https://github.com/MockMine/MatrixSpooll/issues) or
 - The error time, a short error keyword, upstream status code, and task ID
 - Relevant logs that you have manually redacted
 
-Do not disclose API keys, Tokens, passwords, the complete `.env`, or an unreviewed diagnostic bundle. A screenshot and “How do I fix this?” are usually not enough to diagnose the issue.
+Do not disclose API keys, tokens, passwords, the complete `.env`, or logs that have not been manually redacted. A screenshot and “How do I fix this?” are usually not enough to diagnose the issue.
 
 ## Best practices for quality and cost {#quality-and-cost-best-practices}
 

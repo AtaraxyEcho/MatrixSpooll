@@ -174,7 +174,8 @@
 
 /* 主按钮：继续 / 完成 —— 与 .msp-btn-primary 一致 */
 .driver-popover.msp-tour .driver-popover-next-btn,
-.driver-popover.msp-tour .driver-popover-done-btn {
+.driver-popover.msp-tour .driver-popover-done-btn,
+.driver-popover.msp-tour .msp-tour-action-btn {
     color: oklch(0.14 0 0);
     border: none;
     font-weight: 600;
@@ -188,9 +189,15 @@
 
 @media (prefers-reduced-motion: no-preference) {
     .driver-popover.msp-tour .driver-popover-next-btn:hover,
-    .driver-popover.msp-tour .driver-popover-done-btn:hover {
+    .driver-popover.msp-tour .driver-popover-done-btn:hover,
+    .driver-popover.msp-tour .msp-tour-action-btn:hover {
         transform: translateY(-1px);
     }
+}
+
+/* 收尾行动按钮（「立即创建项目」）：主行动样式，与导航按钮拉开一档间距 */
+.driver-popover.msp-tour .msp-tour-action-btn {
+    margin-right: 10px;
 }
 
 .driver-popover.msp-tour .driver-popover-btn-disabled {

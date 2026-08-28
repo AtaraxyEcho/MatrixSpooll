@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   AudioLines,
   ArrowUpRight,
+  Captions,
   Clapperboard,
   Download,
   Eye,
@@ -98,6 +99,8 @@ interface FreeCreationInfiniteCanvasProps {
   onContinue?: (creationId: string) => void;
   onPreview?: (target: FreeCreationPreviewTarget) => void;
   onEditSubtitle?: (creationId: string) => void;
+  onRenderSubtitle?: (subtitleId: string) => void;
+  onDeleteSubtitle?: (subtitleId: string) => void;
   onDeleteItems?: (selection: {
     creationIds: readonly string[];
     referenceIds: readonly string[];
@@ -128,7 +131,7 @@ type PointerOperation =
 
 interface ContextMenuState {
   nodeId: string;
-  kind: "creation" | "upload";
+  kind: "creation" | "upload" | "subtitle";
   x: number;
   y: number;
 }
@@ -158,6 +161,8 @@ const RELATION_ROLE_KEYS: Record<CanvasRelationRole, string> = {
   reference_audio: "free_creation_relation_role_reference_audio",
   prompt_context: "free_creation_relation_role_prompt_context",
   edit_source: "free_creation_relation_role_edit_source",
+  subtitle_source: "free_creation_relation_role_subtitle_source",
+  subtitle_render: "free_creation_relation_role_subtitle_render",
   reference: "free_creation_relation_role_reference",
 };
 
@@ -270,6 +275,27 @@ function subtitlePosition(parent: Point, index: number): Point {
   };
 }
 
+function derivedCreationPosition(
+  creation: FreeCreation | undefined,
+  positions: Readonly<Record<string, Point>>,
+): Point | undefined {
+  if (!creation) return undefined;
+  if (creation.effective_mode === "subtitle_burn" && creation.subtitle_id) {
+    const subtitle = positions[creation.subtitle_id];
+    if (subtitle) return { x: subtitle.x + NODE_WIDTH + NODE_GAP_X, y: subtitle.y };
+  }
+  if (creation.effective_mode !== "audio_composite") return undefined;
+  const sources = (creation.reference_claims ?? [])
+    .flatMap((claim) => claim.type === "creation" && positions[claim.creation_id]
+      ? [positions[claim.creation_id]]
+      : []);
+  if (!sources.length) return undefined;
+  return {
+    x: Math.max(...sources.map((point) => point.x)) + NODE_WIDTH + NODE_GAP_X,
+    y: Math.round(sources.reduce((sum, point) => sum + point.y, 0) / sources.length),
+  };
+}
+
 function nodeBox(
   nodeId: string,
   positions: Record<string, Point>,
@@ -286,8 +312,14 @@ function nodeBox(
   };
 }
 
-export function buildCanvasDependencyEdges(creations: FreeCreation[]): CanvasDependencyEdge[] {
-  return createCanvasRelationGraph(creations).relations.map(({ sourceId, targetId }) => ({ sourceId, targetId }));
+export function buildCanvasDependencyEdges(
+  creations: FreeCreation[],
+  subtitleTracks: FreeSubtitleTrack[] = [],
+): CanvasDependencyEdge[] {
+  return createCanvasRelationGraph(creations, subtitleTracks).relations.map(({ sourceId, targetId }) => ({
+    sourceId,
+    targetId,
+  }));
 }
 
 export function createCanvasGroupId(): string {
@@ -320,11 +352,13 @@ export function arrangeCanvasNodes(
   creations: FreeCreation[],
   uploads: FreeCreationUpload[],
   nodeHeights: Readonly<Record<string, number>> = {},
+  subtitleTracks: FreeSubtitleTrack[] = [],
 ): Record<string, Point> {
   const ids = [...new Set(nodeIds)];
   if (!ids.length) return { ...currentPositions };
   const idSet = new Set(ids);
-  const edges = buildCanvasDependencyEdges(creations).filter((edge) => idSet.has(edge.sourceId) && idSet.has(edge.targetId));
+  const edges = buildCanvasDependencyEdges(creations, subtitleTracks)
+    .filter((edge) => idSet.has(edge.sourceId) && idSet.has(edge.targetId));
   const uploadsById = new Map(uploads.map((upload) => [upload.reference_id, upload]));
   const minX = Math.min(...ids.map((id) => currentPositions[id]?.x ?? 96));
   const minY = Math.min(...ids.map((id) => currentPositions[id]?.y ?? 88));
@@ -550,6 +584,8 @@ export function FreeCreationInfiniteCanvas({
   onContinue,
   onPreview,
   onEditSubtitle,
+  onRenderSubtitle,
+  onDeleteSubtitle,
   onDeleteItems,
   onDeleteCreations,
   onRestoreCreations,
@@ -747,7 +783,14 @@ export function FreeCreationInfiniteCanvas({
     () => new Map(creations.map((creation) => [creation.creation_id, creation])),
     [creations],
   );
-  const relationGraph = useMemo(() => createCanvasRelationGraph(creations), [creations]);
+  const subtitleIds = useMemo(
+    () => new Set(subtitleTracks.map((track) => track.subtitle_id)),
+    [subtitleTracks],
+  );
+  const relationGraph = useMemo(
+    () => createCanvasRelationGraph(creations, subtitleTracks),
+    [creations, subtitleTracks],
+  );
   const uploadsById = useMemo(
     () => new Map(uploads.map((upload) => [upload.reference_id, upload])),
     [uploads],
@@ -778,14 +821,23 @@ export function FreeCreationInfiniteCanvas({
         ? canvasNodeHeightForAspectRatio(aspectRatio, NODE_HEIGHT)
         : NODE_HEIGHT;
     }
+    for (const track of subtitleTracks) heights[track.subtitle_id] = SUBTITLE_NODE_HEIGHT;
     return heights;
-  }, [creations, mediaAspectRatios, uploads]);
+  }, [creations, mediaAspectRatios, subtitleTracks, uploads]);
   const allNodes = useMemo(
     () => [
       ...uploads.map((upload) => ({ id: upload.reference_id, kind: "upload" as const })),
-      ...orderedCreations.map((creation) => ({ id: creation.creation_id, kind: "creation" as const })),
+      ...orderedCreations
+        .filter((creation) => creation.effective_mode !== "subtitle_burn")
+        .map((creation) => ({ id: creation.creation_id, kind: "creation" as const })),
+      ...subtitleTracks
+        .filter((track) => creationsById.has(track.creation_id))
+        .map((track) => ({ id: track.subtitle_id, kind: "subtitle" as const })),
+      ...orderedCreations
+        .filter((creation) => creation.effective_mode === "subtitle_burn")
+        .map((creation) => ({ id: creation.creation_id, kind: "creation" as const })),
     ],
-    [orderedCreations, uploads],
+    [creationsById, orderedCreations, subtitleTracks, uploads],
   );
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const activeRelationIds = useMemo<ReadonlySet<string>>(() => {
@@ -855,14 +907,12 @@ export function FreeCreationInfiniteCanvas({
           : undefined,
       }];
     }),
-    ...subtitleTracks.flatMap((track, index) => {
-      if (hiddenSet.has(track.creation_id)) return [];
-      const parent = positions[track.creation_id];
-      if (!parent) return [];
-      const siblingIndex = subtitleTracks.slice(0, index).filter((item) => item.creation_id === track.creation_id).length;
-      const position = subtitlePosition(parent, siblingIndex);
+    ...subtitleTracks.flatMap((track) => {
+      if (!showHidden && hiddenSet.has(track.subtitle_id)) return [];
+      const position = positions[track.subtitle_id];
+      if (!position) return [];
       return [{
-        id: `subtitle:${track.subtitle_id}`,
+        id: track.subtitle_id,
         kind: "subtitle" as const,
         minX: position.x,
         minY: position.y,
@@ -873,7 +923,7 @@ export function FreeCreationInfiniteCanvas({
         status: "succeeded",
       }];
     }),
-  ], [hiddenSet, nodeHeights, positions, projectName, subtitleTracks, visibleCreations, visibleUploads]);
+  ], [hiddenSet, nodeHeights, positions, projectName, showHidden, subtitleTracks, visibleCreations, visibleUploads]);
   const canvasNodesById = useMemo(() => new Map(canvasNodes.map((node) => [node.id, node])), [canvasNodes]);
   const spatialIndex = useMemo(() => new CanvasSpatialIndex(canvasNodes), [canvasNodes]);
   const contentBounds = useMemo(() => computeContentBounds(canvasNodes), [canvasNodes]);
@@ -999,8 +1049,10 @@ export function FreeCreationInfiniteCanvas({
   const relationNodeLabel = useCallback((nodeId: string): string | null => {
     const creation = creationsById.get(nodeId);
     if (creation) return creationLabel(creation, t(`free_creation_${creation.output_type}`));
+    const subtitle = subtitleTracks.find((track) => track.subtitle_id === nodeId);
+    if (subtitle) return subtitle.cues[0]?.text || t("free_creation_subtitle_title");
     return uploadsById.get(nodeId)?.original_filename ?? null;
-  }, [creationsById, t, uploadsById]);
+  }, [creationsById, subtitleTracks, t, uploadsById]);
 
   const relationPanelData = useMemo(() => {
     if (!relationPanelNodeId) return null;
@@ -1203,6 +1255,9 @@ export function FreeCreationInfiniteCanvas({
     if (readOnly) return;
     const visibleIds = [
       ...visibleUploads.map((upload) => upload.reference_id),
+      ...subtitleTracks
+        .filter((track) => showHidden || !hiddenSet.has(track.subtitle_id))
+        .map((track) => track.subtitle_id),
       ...visibleCreations.map((creation) => creation.creation_id),
     ];
     const visibleSet = new Set(visibleIds);
@@ -1210,7 +1265,14 @@ export function FreeCreationInfiniteCanvas({
       ? selectedIds.filter((id) => visibleSet.has(id))
       : visibleIds;
     if (targetIds.length < (scope === "selected" ? 2 : 1)) return;
-    const next = arrangeCanvasNodes(targetIds, positionsRef.current, creations, uploads, nodeHeights);
+    const next = arrangeCanvasNodes(
+      targetIds,
+      positionsRef.current,
+      creations,
+      uploads,
+      nodeHeights,
+      subtitleTracks,
+    );
     const changed = targetIds.some((id) => {
       const current = positionsRef.current[id];
       const arranged = next[id];
@@ -1220,7 +1282,7 @@ export function FreeCreationInfiniteCanvas({
     const before = captureHistoryState();
     commitHistoryState(before, { ...before, positions: { ...before.positions, ...next } });
     setContextMenu(null);
-  }, [captureHistoryState, commitHistoryState, creations, nodeHeights, readOnly, selectedIds, uploads, visibleCreations, visibleUploads]);
+  }, [captureHistoryState, commitHistoryState, creations, hiddenSet, nodeHeights, readOnly, selectedIds, showHidden, subtitleTracks, uploads, visibleCreations, visibleUploads]);
 
   const fitView = useCallback((scope: "all" | "selected") => {
     const bounds = scope === "selected" ? selectedBounds : contentBounds;
@@ -1280,7 +1342,25 @@ export function FreeCreationInfiniteCanvas({
       let slot = 0;
       for (const node of missing) {
         const nodeHeight = nodeHeights[node.id] ?? (node.kind === "upload" ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT);
-        let candidate = initialPosition(slot);
+        const subtitleTrack = node.kind === "subtitle"
+          ? subtitleTracks.find((track) => track.subtitle_id === node.id)
+          : undefined;
+        const subtitleParent = subtitleTrack ? next[subtitleTrack.creation_id] : undefined;
+        const siblingIndex = subtitleTrack
+          ? subtitleTracks
+            .filter((track) => track.creation_id === subtitleTrack.creation_id)
+            .findIndex((track) => track.subtitle_id === subtitleTrack.subtitle_id)
+          : 0;
+        const preferred = subtitleParent
+          ? subtitlePosition(subtitleParent, Math.max(0, siblingIndex))
+          : derivedCreationPosition(node.kind === "creation" ? creationsById.get(node.id) : undefined, next);
+        let candidate = preferred ?? initialPosition(slot);
+        if (preferred && placementIndex.search({
+          minX: candidate.x,
+          minY: candidate.y,
+          maxX: candidate.x + NODE_WIDTH,
+          maxY: candidate.y + nodeHeight,
+        }).length) candidate = initialPosition(slot);
         while (placementIndex.search({
           minX: candidate.x,
           minY: candidate.y,
@@ -1306,9 +1386,21 @@ export function FreeCreationInfiniteCanvas({
         const occupiedEntries = Object.entries(next);
         const occupied = occupiedEntries.map(([, position]) => position);
         const nodeHeight = nodeHeights[node.id] ?? (node.kind === "upload" ? UPLOAD_NODE_HEIGHT : NODE_HEIGHT);
+        const subtitleTrack = node.kind === "subtitle"
+          ? subtitleTracks.find((track) => track.subtitle_id === node.id)
+          : undefined;
+        const subtitleParent = subtitleTrack ? next[subtitleTrack.creation_id] : undefined;
+        const siblingIndex = subtitleTrack
+          ? subtitleTracks
+            .filter((track) => track.creation_id === subtitleTrack.creation_id)
+            .findIndex((track) => track.subtitle_id === subtitleTrack.subtitle_id)
+          : 0;
+        const preferred = subtitleParent
+          ? subtitlePosition(subtitleParent, Math.max(0, siblingIndex))
+          : derivedCreationPosition(node.kind === "creation" ? creationsById.get(node.id) : undefined, next);
         const result = occupied.length === 0 && index === 0
           ? { position: initialPosition(0), visible: true }
-          : findOpenCanvasPosition(occupied, bounds, undefined, {
+          : findOpenCanvasPosition(occupied, bounds, preferred, {
             candidateHeight: nodeHeight,
             occupiedHeights: occupiedEntries.map(([id]) => nodeHeights[id] ?? NODE_HEIGHT),
           });
@@ -1320,7 +1412,7 @@ export function FreeCreationInfiniteCanvas({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPositions(next);
     if (focusTarget) focusCanvasPosition(focusTarget.position, focusTarget.height);
-  }, [allNodes, canvasReady, focusCanvasPosition, nodeHeights, positions, visiblePlacementBounds]);
+  }, [allNodes, canvasReady, creationsById, focusCanvasPosition, nodeHeights, positions, subtitleTracks, visiblePlacementBounds]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
@@ -1443,6 +1535,9 @@ export function FreeCreationInfiniteCanvas({
         event.preventDefault();
         publishSelection([
           ...visibleUploads.map((item) => item.reference_id),
+          ...subtitleTracks
+            .filter((track) => !hiddenSet.has(track.creation_id))
+            .map((track) => track.subtitle_id),
           ...visibleCreations.map((item) => item.creation_id),
         ]);
       }
@@ -1478,7 +1573,7 @@ export function FreeCreationInfiniteCanvas({
       window.removeEventListener("blur", clearSpace);
       document.removeEventListener("visibilitychange", clearSpace);
     };
-  }, [publishSelection, readOnly, redoCanvasChange, undoCanvasChange, visibleCreations, visibleUploads]);
+  }, [hiddenSet, publishSelection, readOnly, redoCanvasChange, subtitleTracks, undoCanvasChange, visibleCreations, visibleUploads]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -1776,7 +1871,10 @@ export function FreeCreationInfiniteCanvas({
     const nodeSet = new Set(nodeIds);
     commitHistoryState(before, {
       ...before,
-      hiddenCreationIds: [...new Set([...before.hiddenCreationIds, ...nodeIds.filter((id) => creationsById.has(id))])],
+      hiddenCreationIds: [...new Set([
+        ...before.hiddenCreationIds,
+        ...nodeIds.filter((id) => creationsById.has(id) || subtitleIds.has(id)),
+      ])],
       hiddenUploadIds: [...new Set([...before.hiddenUploadIds, ...nodeIds.filter((id) => uploadsById.has(id))])],
     });
     publishSelection(selectedIds.filter((id) => !nodeSet.has(id)));
@@ -1840,6 +1938,9 @@ export function FreeCreationInfiniteCanvas({
     : null;
   const activeContextUpload = contextMenu?.kind === "upload"
     ? uploads.find((upload) => upload.reference_id === contextMenu.nodeId) ?? null
+    : null;
+  const activeContextSubtitle = contextMenu?.kind === "subtitle"
+    ? subtitleTracks.find((track) => track.subtitle_id === contextMenu.nodeId) ?? null
     : null;
   const contextSelectionIds = contextMenu && selectedSet.has(contextMenu.nodeId) ? selectedIds : contextMenu ? [contextMenu.nodeId] : [];
   const contextSelectionIsHidden = contextSelectionIds.length > 0 && contextSelectionIds.every(
@@ -2053,7 +2154,7 @@ export function FreeCreationInfiniteCanvas({
           return;
         }
         const hit = hitTestCanvas(event.clientX, event.clientY);
-        if (!hit || hit.kind === "subtitle") {
+        if (!hit) {
           setContextMenu(null);
           return;
         }
@@ -2071,7 +2172,7 @@ export function FreeCreationInfiniteCanvas({
         const hit = hitTestCanvas(event.clientX, event.clientY);
         if (!hit) return;
         if (hit.kind === "subtitle") {
-          const track = subtitleTracks.find((item) => `subtitle:${item.subtitle_id}` === hit.id);
+          const track = subtitleTracks.find((item) => item.subtitle_id === hit.id);
           if (track) onEditSubtitle?.(track.creation_id);
           return;
         }
@@ -2382,36 +2483,78 @@ export function FreeCreationInfiniteCanvas({
           );
         })}
 
-        {subtitleTracks.map((track, index) => {
-          if (!domNodeIds.has(`subtitle:${track.subtitle_id}`)) return null;
-          const parent = positions[track.creation_id];
-          if (!parent || hiddenSet.has(track.creation_id)) return null;
-          const siblingIndex = subtitleTracks.slice(0, index).filter((item) => item.creation_id === track.creation_id).length;
-          const position = subtitlePosition(parent, siblingIndex);
+        {subtitleTracks.map((track) => {
+          if (!domNodeIds.has(track.subtitle_id)) return null;
+          const position = positions[track.subtitle_id];
+          if (!position || (!showHidden && hiddenSet.has(track.subtitle_id))) return null;
           const cuePreview = track.cues.slice(0, 3);
           const subtitleLabel = t("free_creation_subtitle_badge", { count: track.cues.length });
+          const selected = selectedSet.has(track.subtitle_id);
+          const dragging = draggingSet.has(track.subtitle_id);
+          const upstreamCount = relationGraph.upstream(track.subtitle_id).length;
+          const downstreamCount = relationGraph.downstream(track.subtitle_id).length;
           return (
             <div
               key={`subtitle-node-${track.subtitle_id}`}
               data-canvas-node="true"
-              data-canvas-id={`subtitle:${track.subtitle_id}`}
-              className="canvas-node-shell group/node absolute overflow-visible rounded-lg"
+              data-canvas-id={track.subtitle_id}
+              data-selected={selected}
+              data-dragging={dragging}
+              role="button"
+              tabIndex={0}
+              aria-pressed={selected}
+              aria-label={subtitleLabel}
+              className="canvas-node-shell group/node absolute overflow-visible rounded-lg outline-none"
               style={{ left: position.x, top: position.y, width: SUBTITLE_NODE_WIDTH, minHeight: SUBTITLE_NODE_HEIGHT }}
+              onPointerDown={(event) => {
+                if (event.button === 0 && spacePressed) {
+                  beginCanvasPan(event);
+                  return;
+                }
+                if (event.button === 0 && !isNodeControlTarget(event.target)) {
+                  beginNodeDrag(event, track.subtitle_id);
+                }
+              }}
+              onKeyDown={(event) => handleNodeKeyboard(event, track.subtitle_id, selected)}
+              onPointerEnter={() => setHoveredNodeId(track.subtitle_id)}
+              onPointerLeave={() => setHoveredNodeId((current) => current === track.subtitle_id ? null : current)}
+              onDoubleClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onEditSubtitle?.(track.creation_id);
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (readOnly) return;
+                if (!selectedSet.has(track.subtitle_id)) publishSelection([track.subtitle_id]);
+                const rect = surfaceRef.current?.getBoundingClientRect();
+                setContextMenu({
+                  kind: "subtitle",
+                  nodeId: track.subtitle_id,
+                  x: Math.min(Math.max(4, event.clientX - (rect?.left ?? 0)), (rect?.width ?? 260) - 196),
+                  y: Math.min(Math.max(4, event.clientY - (rect?.top ?? 0)), (rect?.height ?? 200) - 156),
+                });
+              }}
             >
-              {lod === "detail" ? <CanvasNodeLabel label={subtitleLabel} mediaType="subtitle" scale={scale} title={t("free_creation_subtitle_title")} onSelect={() => onEditSubtitle?.(track.creation_id)} /> : null}
-              <button
-                type="button"
-                className="canvas-node-card h-full min-h-[166px] w-full overflow-hidden rounded-lg bg-[var(--color-surface-2)] px-4 py-3 text-left"
-                onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
-                onClick={() => onEditSubtitle?.(track.creation_id)}
-                aria-label={t("free_creation_subtitle_title")}
-              >
-                <div className="space-y-2">
+              {lod === "detail" ? <CanvasNodeLabel label={subtitleLabel} mediaType="subtitle" scale={scale} selected={selected} title={t("free_creation_subtitle_title")} onSelect={(additive) => selectNodeLabel(track.subtitle_id, selected, additive)} /> : null}
+              <div className="canvas-node-card relative h-full min-h-[166px] w-full overflow-hidden rounded-lg bg-[var(--color-surface-2)]" data-canvas-drag-surface="true">
+                <div className="flex h-10 items-center gap-2 border-b border-[var(--color-hairline)] px-3">
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-white/[0.06] text-[var(--color-text-2)]"><Captions className="h-3.5 w-3.5" aria-hidden /></span>
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-[var(--color-text-2)]">{t("free_creation_subtitle_title")}</span>
+                  <span className="text-[10px] tabular-nums text-[var(--color-text-muted)]">{track.cues.length}</span>
+                </div>
+                <div className="space-y-2 px-3 py-3">
                   {cuePreview.length ? cuePreview.map((cue, cueIndex) => (
-                    <p key={`${track.subtitle_id}-${cueIndex}`} className="line-clamp-2 text-[11px] leading-[17px] text-[var(--color-text-2)]">{cue.text}</p>
+                    <div key={`${track.subtitle_id}-${cueIndex}`} className="grid grid-cols-[38px_minmax(0,1fr)] gap-2">
+                      <span className="pt-px text-[9px] tabular-nums text-[var(--color-text-muted)]">{cue.start_seconds.toFixed(1)}s</span>
+                      <p className="line-clamp-1 text-[11px] leading-4 text-[var(--color-text-2)]">{cue.text}</p>
+                    </div>
                   )) : <p className="text-[11px] text-[var(--color-text-muted)]">{t("free_creation_subtitle_action")}</p>}
                 </div>
-              </button>
+                {selected && upstreamCount + downstreamCount > 0 ? <button type="button" className="focus-ring absolute bottom-2 left-2 z-30 inline-flex h-7 max-w-[138px] items-center gap-1.5 rounded-md bg-black/60 px-2 text-[10px] text-white/90 backdrop-blur-sm hover:bg-black/75" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setRelationPanelNodeId(track.subtitle_id); }} aria-label={t("free_creation_relation_summary", { upstream: upstreamCount, downstream: downstreamCount })} title={t("free_creation_relation_summary", { upstream: upstreamCount, downstream: downstreamCount })}><Waypoints className="h-3 w-3 shrink-0" aria-hidden /><span className="truncate">{t("free_creation_relation_summary_short", { upstream: upstreamCount, downstream: downstreamCount })}</span></button> : null}
+                {!readOnly ? <div className="canvas-node-actions absolute bottom-2 right-2 z-30 rounded-md bg-black/55 p-0.5 backdrop-blur-sm" onPointerDown={(event) => event.stopPropagation()}><button type="button" className="focus-ring grid h-7 w-7 place-items-center rounded text-[var(--color-text-2)] hover:bg-white/10 hover:text-[var(--color-text)]" onClick={(event) => openNodeMenu(event, "subtitle", track.subtitle_id)} aria-label={t("free_creation_more_actions")} title={t("free_creation_more_actions")}><MoreHorizontal className="h-4 w-4" aria-hidden /></button></div> : null}
+              </div>
             </div>
           );
         })}
@@ -2419,7 +2562,7 @@ export function FreeCreationInfiniteCanvas({
 
       {marquee ? <div className="pointer-events-none fixed z-30 border border-[var(--color-accent)] bg-[var(--color-accent-dim)]" style={{ left: Math.min(marquee.start.x, marquee.current.x), top: Math.min(marquee.start.y, marquee.current.y), width: Math.abs(marquee.current.x - marquee.start.x), height: Math.abs(marquee.current.y - marquee.start.y) }} /> : null}
 
-      {(activeContextCreation || activeContextUpload) && contextMenu ? (
+      {(activeContextCreation || activeContextUpload || activeContextSubtitle) && contextMenu ? (
         <div ref={contextMenuRef} tabIndex={-1} className="absolute z-[200] max-h-[min(70vh,520px)] min-w-44 max-w-[min(320px,calc(100vw-24px))] overflow-y-auto rounded-md border border-[var(--color-hairline)] p-1 shadow-2xl" style={{ left: Math.max(4, contextMenu.x), top: Math.max(4, contextMenu.y), background: "var(--color-surface-2)", opacity: 1 }} role="menu" aria-label={t("free_creation_more_actions")}>
           {activeContextCreation ? <>
             {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => contextSelectionIsHidden ? restoreNodes(contextSelectionIds) : hideNodes(contextSelectionIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]">{contextSelectionIsHidden ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}{t(contextSelectionIsHidden ? "free_creation_restore" : "free_creation_hide")}</button> : null}
@@ -2449,6 +2592,16 @@ export function FreeCreationInfiniteCanvas({
             {contextSelectionIds.length < 2 && (hiddenUploadSet.has(activeContextUpload.reference_id) ? <button type="button" role="menuitem" onClick={() => restoreUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore")}</button> : <button type="button" role="menuitem" onClick={() => hideUpload(activeContextUpload.reference_id)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide")}</button>)}
             {showBatchDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes(deletableCreationIds, selectedUploadIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete_selected", { count: contextSelectionIds.length })}</button> : null}
             {showSingleUploadDelete ? <button type="button" role="menuitem" onClick={() => deleteNodes([], [activeContextUpload.reference_id])} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_delete")}</button> : null}
+          </> : null}
+          {activeContextSubtitle ? <>
+            {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => contextSelectionIsHidden ? restoreNodes(contextSelectionIds) : hideNodes(contextSelectionIds)} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]">{contextSelectionIsHidden ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}{t(contextSelectionIsHidden ? "free_creation_restore" : "free_creation_hide")}</button> : null}
+            {contextSelectionIds.length >= 2 ? <button type="button" role="menuitem" onClick={() => arrangeNodes("selected")} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><LayoutGrid className="h-3.5 w-3.5" aria-hidden />{t("free_creation_arrange_selected")}</button> : null}
+            {canGroupSelection ? <button type="button" role="menuitem" onClick={groupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Group className="h-3.5 w-3.5" aria-hidden />{t("free_creation_group_selected")}</button> : null}
+            {activeContextGroup ? <button type="button" role="menuitem" onClick={ungroupSelection} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Ungroup className="h-3.5 w-3.5" aria-hidden />{t("free_creation_ungroup")}</button> : null}
+            <button type="button" role="menuitem" onClick={() => { onEditSubtitle?.(activeContextSubtitle.creation_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Pencil className="h-3.5 w-3.5" aria-hidden />{t("free_creation_subtitle_edit")}</button>
+            {onRenderSubtitle ? <button type="button" role="menuitem" onClick={() => { onRenderSubtitle(activeContextSubtitle.subtitle_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Captions className="h-3.5 w-3.5" aria-hidden />{t("free_creation_subtitle_render")}</button> : null}
+            {contextSelectionIds.length < 2 ? (hiddenSet.has(activeContextSubtitle.subtitle_id) ? <button type="button" role="menuitem" onClick={() => restoreNodes([activeContextSubtitle.subtitle_id])} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><Eye className="h-3.5 w-3.5" aria-hidden />{t("free_creation_restore")}</button> : <button type="button" role="menuitem" onClick={() => hideNodes([activeContextSubtitle.subtitle_id])} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-text-2)] hover:bg-[oklch(1_0_0_/_0.05)]"><EyeOff className="h-3.5 w-3.5" aria-hidden />{t("free_creation_hide")}</button>) : null}
+            {onDeleteSubtitle ? <button type="button" role="menuitem" onClick={() => { onDeleteSubtitle(activeContextSubtitle.subtitle_id); setContextMenu(null); }} className="focus-ring flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[var(--color-danger)] hover:bg-[oklch(1_0_0_/_0.05)]"><Trash2 className="h-3.5 w-3.5" aria-hidden />{t("free_creation_subtitle_delete")}</button> : null}
           </> : null}
         </div>
       ) : null}

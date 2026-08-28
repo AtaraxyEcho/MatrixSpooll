@@ -411,6 +411,7 @@ describe("AddCredentialModal", () => {
       overall: "ok" as const,
       messages_probe: { success: true, status_code: 200, latency_ms: 123, error: null },
       discovery_probe: null,
+      openai_probe: null,
       diagnosis: null,
       suggestion: null,
       derived_messages_root: "https://api.deepseek.com/anthropic",
@@ -460,6 +461,46 @@ describe("AddCredentialModal", () => {
       });
       // TestResultPanel headline 渲染（test_ok 文案三语 OR-match）
       await screen.findByText(/test[_ ]ok|连通正常|Kết nối/i);
+    });
+
+    it("blocks submit after an explicit OpenAI-only compatibility failure", async () => {
+      vi.spyOn(API, "testAgentConnectionDraft").mockResolvedValue({
+        overall: "fail",
+        messages_probe: {
+          success: false,
+          status_code: 400,
+          latency_ms: 80,
+          error: "model is not available on messages",
+        },
+        discovery_probe: { success: true, status_code: 200, latency_ms: 20, error: null },
+        openai_probe: { success: true, status_code: 200, latency_ms: 60, error: null },
+        diagnosis: "openai_compat_only",
+        suggestion: null,
+        derived_messages_root: "https://www.anyfast.ai",
+        derived_discovery_root: "https://www.anyfast.ai",
+      });
+
+      render(
+        <AddCredentialModal
+          open
+          presets={presets}
+          customSentinelId="__custom__"
+          onSubmit={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /DeepSeek/i }));
+      fireEvent.change(
+        screen.getByLabelText(/anthropic[_ ]?api[_ ]?key|Anthropic API 密钥/i),
+        { target: { value: "sk-test" } },
+      );
+      fireEvent.change(screen.getByLabelText(/base[_ ]url|代理地址/i), {
+        target: { value: "https://www.anyfast.ai" },
+      });
+      fireEvent.click(screen.getByTestId("test-connection"));
+
+      await screen.findByText(/OpenAI Chat Completions/i);
+      expect(screen.getByRole("button", { name: /add|添加|confirm/i })).toBeDisabled();
     });
   });
 

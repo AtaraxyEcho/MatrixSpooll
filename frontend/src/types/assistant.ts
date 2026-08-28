@@ -81,6 +81,8 @@ export interface FailureObservation {
     type: unknown;
     status?: unknown;
     message: string | null;
+    /** Backend-owned diagnosis code; raw SDK evidence remains available in `raw`. */
+    diagnosis?: string;
   };
   raw: Record<string, unknown>;
 }

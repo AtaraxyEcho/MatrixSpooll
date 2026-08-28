@@ -26,11 +26,6 @@ export interface TourStep {
    */
   route?: string;
   /**
-   * 该步所需的查询参数。与 `route` 一样原样透传、这里不解释语义——供调用方在同一
-   * pathname 下按查询参数切换页面内分区（如设置页的 `section`）时比对与导航。
-   */
-  query?: Record<string, string>;
-  /**
    * 该步是否允许点击高亮元素本身。默认继承全局 `disableActiveInteraction: true`
    * （防止讲到哪点到哪，意外触发生成动作）。仅当该步的落点动作就是导航（如点进演示
    * 工作台）而非写操作时才置 true——否则高亮元素在整个引导期间都点不到。
@@ -42,7 +37,16 @@ export interface TourStep {
    * 前者把引导顺势推进到下一步，后者仍按强制导航拽回。只在 `interactive` 为真时有意义。
    */
   interactiveTarget?: string;
+  /**
+   * 收尾步的行动按钮：在气泡底部渲染一个主行动按钮（如「立即创建项目」），点击 =
+   * 先走正常退出（记 seen、收起引导），再把行动交给 `onAction`。整场引导只在声明了
+   * `action` 的步上渲染。
+   */
+  action?: TourStepAction;
 }
+
+/** 收尾行动的语义化标识，调用方在 `onAction` 里解释。 */
+export type TourStepAction = "create-project";
 
 export interface TourLabels {
   next: string;
@@ -50,6 +54,8 @@ export interface TourLabels {
   done: string;
   skip: string;
   close: string;
+  /** 收尾行动按钮文案，按 `TourStepAction` 标识取（未声明 action 的步骤用不到） */
+  actions: Record<TourStepAction, string>;
   /** 进度的无障碍文本，如「第 1 步，共 2 步」 */
   progress: (current: number, total: number) => string;
 }
@@ -57,6 +63,12 @@ export interface TourLabels {
 export interface TourHandle {
   /** 当前停在第几步（0 基）。用于重建时接着讲，而不是退回开头。 */
   currentIndex: () => number;
+  /**
+   * 直接跳到第 `index` 步（0 基），不走「下一步」回调。供调用方在当前步被判定
+   * 不可达（目标路由被守卫拦回等）时越过它——只推进 React 侧步号的话，driver
+   * 还停在被跳过的那步上，高亮与气泡会和步号错位。
+   */
+  moveTo: (index: number) => void;
   /** 主动收起（组件卸载等）。不触发 onExit。 */
   dispose: () => void;
 }
@@ -218,12 +230,15 @@ function renderProgress(progress: HTMLElement, current: number, total: number, l
  * 启动引导。
  *
  * @param onExit 任一退出路径（跳过 / 关闭 / 走完）都会调用一次；`dispose()` 不调用。
+ *   `completed` 区分「讲到最后一步正常走完」（true）与「中途跳过 / 关闭 / Esc」（false），
+ *   供调用方决定是否提示「可随时重看」——走完的用户不需要。
  * @param startIndex 从第几步开始（0 基）。默认 0；重建时传入上一次的 `currentIndex()`。
  * @param anchorWaitMs 锚点缺席时的等待上限，默认 `ANCHOR_WAIT_MS`。
  * @param onStepChange 「下一步/上一步」被触发时（按钮点击与方向键都走同一条内部回调，
  *   见 `onNextClick`/`onPrevClick`）、在 driver 实际切换高亮之前，同步上报即将停靠的
  *   步号。调用方可以据此在 driver 尝试高亮新步骤的锚点之前先行导航——两者天然存在的
  *   时间差由 driver 自己的 `waitForElement` 轮询吸收，不需要额外的等待逻辑。
+ * @param onAction 收尾行动按钮被点击时回调（先于退出收起执行行动，退出紧随其后）。
  */
 export function startTour(
   steps: TourStep[],
@@ -233,11 +248,13 @@ export function startTour(
     startIndex = 0,
     anchorWaitMs = ANCHOR_WAIT_MS,
     onStepChange,
+    onAction,
   }: {
-    onExit: () => void;
+    onExit: (completed: boolean) => void;
     startIndex?: number;
     anchorWaitMs?: number;
     onStepChange?: (index: number) => void;
+    onAction?: (action: TourStepAction) => void;
   },
 ): TourHandle {
   const total = steps.length;
@@ -246,7 +263,7 @@ export function startTour(
 
   const driveSteps: DriveStep[] = steps.map((step) => ({
     ...(step.anchor === null ? {} : { element: anchorSelector(step.anchor) }),
-    data: { anchor: step.anchor, interactive: Boolean(step.interactive) },
+    data: { anchor: step.anchor, interactive: Boolean(step.interactive), action: step.action },
     ...(step.interactive ? { disableActiveInteraction: false } : {}),
     popover: { title: step.title, description: step.body },
   }));
@@ -281,6 +298,12 @@ export function startTour(
       popover.closeButton.setAttribute("aria-label", labels.close);
       renderProgress(popover.progress, current, total, labels.progress(current + 1, total));
       decorateSkip(popover, instance.isLastStep(), labels.skip);
+      const action = steps[current]?.action;
+      decorateAction(popover, action, labels, () => {
+        if (!action) return;
+        onAction?.(action);
+        finish(true);
+      });
     },
     // 高亮到的元素是 driver 的占位元素时，回调收到的 element 是 undefined。步骤本来就
     // 声明了锚点却落到这里，说明锚点在页面上找不到 —— 降级已经发生，这里只负责留线索。
@@ -304,15 +327,15 @@ export function startTour(
     // 入口，退出必然被记一次。
     onNextClick: () => handleNext(),
     onPrevClick: () => handlePrev(),
-    onCloseClick: () => finish(),
+    onCloseClick: () => finish(false),
     // Esc 与点击遮罩走 driver 内部的收起流程，在真正拆掉之前回调这里。
-    onDestroyStarted: () => finish(),
+    onDestroyStarted: () => finish(false),
   });
 
   /** 下一步：按钮点击与 `ArrowRight` 键共用，保证跨页上报一致。 */
   function handleNext(): void {
     if (instance.isLastStep()) {
-      finish();
+      finish(true);
       return;
     }
     onStepChange?.((instance.getActiveIndex() ?? 0) + 1);
@@ -330,11 +353,11 @@ export function startTour(
     instance.movePrevious();
   }
 
-  /** 记一次退出并收起。重复调用只记一次。 */
-  function finish(): void {
+  /** 记一次退出并收起。重复调用只记一次。`completed` 见 options.onExit 的注释。 */
+  function finish(completed: boolean): void {
     if (!exited && !disposing) {
       exited = true;
-      onExit();
+      onExit(completed);
     }
     window.removeEventListener("keyup", onKeyUp);
     closeInteractiveHole();
@@ -347,7 +370,7 @@ export function startTour(
   // 方向键复用 handleNext/handlePrev，与按钮点击走同一条上报路径。
   function onKeyUp(e: KeyboardEvent): void {
     if (e.key === "Escape") {
-      finish();
+      finish(false);
     } else if (e.key === "ArrowRight") {
       handleNext();
     } else if (e.key === "ArrowLeft") {
@@ -361,6 +384,7 @@ export function startTour(
 
   return {
     currentIndex: () => instance.getActiveIndex() ?? 0,
+    moveTo: (index: number) => instance.moveTo(Math.min(Math.max(index, 0), total - 1)),
     dispose: () => {
       disposing = true;
       window.removeEventListener("keyup", onKeyUp);
@@ -382,4 +406,26 @@ function decorateSkip(popover: PopoverDOM, isLastStep: boolean, label: string): 
   skip.textContent = label;
   skip.addEventListener("click", () => popover.closeButton.click());
   popover.footer.insertBefore(skip, popover.footerButtons);
+}
+
+/**
+ * 收尾行动按钮 —— 只在声明了 `action` 的步（当前只有收尾步）上渲染，摆在「跳过」的
+ * 位置之后、导航按钮之前。点击 = 先执行行动（由调用方解释），再按正常走完收起引导。
+ * 每次气泡重渲染都先移除旧按钮——行动步切走后按钮必须跟着消失。
+ */
+function decorateAction(
+  popover: PopoverDOM,
+  action: TourStepAction | undefined,
+  labels: TourLabels,
+  onClick: () => void,
+): void {
+  popover.footer.querySelector(".msp-tour-action-btn")?.remove();
+  if (!action) return;
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "driver-popover-footer-btn msp-tour-action-btn";
+  btn.textContent = labels.actions[action];
+  btn.addEventListener("click", onClick);
+  popover.footer.insertBefore(btn, popover.footerButtons);
 }

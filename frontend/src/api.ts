@@ -197,6 +197,22 @@ export interface LegalAttributionResponse {
   repository_url: string;
 }
 
+export interface LegalDisclosureResponse extends LegalAttributionResponse {
+  license_name: string;
+  license_download_url: string;
+  modified_product: string;
+  modified_by: string;
+  modification_date: string;
+  source_release: {
+    available: boolean;
+    version?: string | null;
+    archive_name?: string | null;
+    sha256?: string | null;
+    created_at?: string | null;
+    download_url?: string | null;
+  };
+}
+
 /** Standard error response body from backend (mirrors FastAPI HTTPException detail). */
 export interface ErrorResponse {
   detail:
@@ -897,6 +913,10 @@ class API {
 
   static async getLegalAttribution(): Promise<LegalAttributionResponse> {
     return this.request("/system/legal-attribution");
+  }
+
+  static async getLegalDisclosure(): Promise<LegalDisclosureResponse> {
+    return this.request("/system/legal-disclosure");
   }
 
   // ==================== 首次使用引导 ====================

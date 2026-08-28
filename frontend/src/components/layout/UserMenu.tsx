@@ -1,17 +1,18 @@
 import { useRef, useState } from "react";
 import { useLocation } from "wouter";
-import { ChevronDown, KeyRound, LogOut, ShieldCheck } from "lucide-react";
+import { BookOpen, ChevronDown, CircleHelp, Info, KeyRound, LogOut, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth-store";
+import { useOnboardingStore } from "@/stores/onboarding-store";
 import { GlassPopover } from "@/components/ui/GlassPopover";
 import { GlassModal } from "@/components/ui/GlassModal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { AccountSecuritySection } from "@/components/pages/AccountSecuritySection";
-import { ROUTE_ADMIN_MANAGER } from "@/app-routes";
+import { ROUTE_ADMIN_MANAGER, ROUTE_APP_ABOUT } from "@/app-routes";
 import { API } from "@/api";
 
 /**
- * 顶栏右侧的用户菜单：avatar 触发器 + 下拉（管理员门户 / 账号安全 / 退出登录）。
+ * 顶栏右侧的用户菜单：avatar 触发器 + 下拉（管理员门户 / 账号安全 / 查看引导 / 退出登录）。
  *
  * 会话级操作统一收拢于此，工作台（GlobalHeader）与大厅（ProjectsPage::TopBar）
  * 两处持久顶栏共用。无真实会话（AUTH_ENABLED=false、无 token）时不渲染。
@@ -19,7 +20,7 @@ import { API } from "@/api";
  * Popover/ModalShell 内建处理。
  */
 export function UserMenu() {
-  const { t } = useTranslation(["common", "dashboard", "admin"]);
+  const { t } = useTranslation(["common", "dashboard", "admin", "onboarding"]);
   const [, setLocation] = useLocation();
   const username = useAuthStore((s) => s.username);
   const nickname = useAuthStore((s) => s.nickname);
@@ -182,6 +183,63 @@ export function UserMenu() {
             >
               <KeyRound className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--color-text-4)" }} />
               <span>{t("dashboard:account_security")}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                window.open("/docs/", "_blank", "noopener,noreferrer");
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors focus-ring"
+              style={{ color: "var(--color-text-3)" }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "oklch(0.26 0.012 265 / 0.55)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <BookOpen className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--color-text-4)" }} />
+              <span>{t("dashboard:documentation_site")}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                useOnboardingStore.getState().start();
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors focus-ring"
+              style={{ color: "var(--color-text-3)" }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "oklch(0.26 0.012 265 / 0.55)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <CircleHelp className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--color-text-4)" }} />
+              <span>{t("onboarding:replay_action")}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setLocation(`~${ROUTE_APP_ABOUT}`);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors focus-ring"
+              style={{ color: "var(--color-text-3)" }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "oklch(0.26 0.012 265 / 0.55)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <Info className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--color-text-4)" }} />
+              <span>{t("dashboard:about")}</span>
             </button>
 
             <div className="mx-1.5 my-1 h-px" style={{ background: "var(--color-hairline-soft)" }} />

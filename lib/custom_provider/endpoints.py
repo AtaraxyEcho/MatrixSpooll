@@ -218,9 +218,25 @@ def _build_minimax_image(provider, model_id: str) -> CustomImageBackend:
     return CustomImageBackend(provider_id=provider.provider_id, delegate=delegate, model=model_id)
 
 
+def _minimax_video_base_for_provider(base_url: str | None, model_id: str) -> str | None:
+    """Resolve provider-specific MiniMax video mount points.
+
+    AnyFast exposes MiniMax-H3 under ``/minimax/v2`` rather than the native
+    MiniMax ``/v2`` root.  Other MiniMax models and other providers keep their
+    configured base unchanged.
+    """
+    if "minimax-h3" not in model_id.lower() or not _is_anyfast_base_url(base_url):
+        return base_url
+    raw = (base_url or "").strip()
+    normalized = raw if "://" in raw else f"https://{raw}"
+    parsed = urlsplit(normalized)
+    return f"{parsed.scheme}://{parsed.netloc}/minimax"
+
+
 def _build_minimax_video(provider, model_id: str) -> CustomVideoBackend:
     # 两步取 URL（submit→轮询 file_id→retrieve download_url）由 MiniMaxVideoBackend 内部处理
-    delegate = MiniMaxVideoBackend(api_key=provider.api_key, base_url=provider.base_url, model=model_id)
+    base_url = _minimax_video_base_for_provider(provider.base_url, model_id)
+    delegate = MiniMaxVideoBackend(api_key=provider.api_key, base_url=base_url, model=model_id)
     return CustomVideoBackend(provider_id=provider.provider_id, delegate=delegate, model=model_id)
 
 

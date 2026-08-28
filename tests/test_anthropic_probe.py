@@ -14,6 +14,7 @@ from lib.config.anthropic_probe import (
     classify_probe_failure,
     probe_discovery,
     probe_messages,
+    probe_openai_chat,
     run_test,
 )
 
@@ -109,6 +110,26 @@ async def test_probe_messages_network_error() -> None:
     assert "connection refused" in (result.error or "").lower()
 
 
+@pytest.mark.asyncio
+async def test_probe_openai_chat_success_uses_bearer_auth() -> None:
+    fake = httpx.Response(
+        200,
+        json={"id": "chatcmpl-1", "object": "chat.completion", "choices": []},
+    )
+    with patch("lib.config.anthropic_probe._post", AsyncMock(return_value=fake)) as mocked:
+        result = await probe_openai_chat(
+            openai_root="https://api.example.com",
+            api_key="sk-test",
+            model="deepseek-v4-flash",
+        )
+
+    assert result.success is True
+    called = mocked.await_args.kwargs
+    assert called["url"] == "https://api.example.com/v1/chat/completions"
+    assert called["headers"]["authorization"] == "Bearer sk-test"
+    assert called["payload"]["model"] == "deepseek-v4-flash"
+
+
 def test_classify_probe_failure_auth() -> None:
     p = ProbeResult(success=False, status_code=401, latency_ms=10, error="…")
     assert classify_probe_failure(p) == DiagnosisCode.AUTH_FAILED
@@ -165,8 +186,11 @@ async def test_probe_discovery_success() -> None:
     assert result is not None
     assert result.success is True
     assert result.status_code == 200
-    called_url = mocked.await_args.kwargs["url"]
+    called = mocked.await_args.kwargs
+    called_url = called["url"]
     assert called_url == "https://api.example.com/v1/models"
+    assert called["headers"]["x-api-key"] == "sk"
+    assert called["headers"]["authorization"] == "Bearer sk"
 
 
 @pytest.mark.asyncio
@@ -238,7 +262,10 @@ async def test_run_test_custom_mode_self_heals_with_anthropic_suffix() -> None:
 @pytest.mark.asyncio
 async def test_run_test_preset_skips_self_heal() -> None:
     """preset_id != __custom__ 时不做自愈尝试。"""
-    seq = [httpx.Response(404, text="not found")]
+    seq = [
+        httpx.Response(404, text="not found"),
+        httpx.Response(404, text="openai route not found"),
+    ]
 
     async def fake_post(*, url, **_kw):
         return seq.pop(0)
@@ -266,6 +293,7 @@ async def test_run_test_self_heal_retry_also_fails_keeps_original_failure() -> N
     post_seq = [
         httpx.Response(404, text="not found"),
         httpx.Response(404, text="still not found"),
+        httpx.Response(404, text="openai route not found"),
     ]
 
     async def fake_post(*, url, **_kw):
@@ -320,6 +348,70 @@ async def test_run_test_self_heal_retry_promotes_specific_diagnosis() -> None:
     assert resp.derived_messages_root.endswith("/anthropic")
     # retry 401 ≠ 缺后缀的诊断，不发 suggestion
     assert resp.suggestion is None
+
+
+@pytest.mark.asyncio
+async def test_run_test_identifies_model_available_only_on_openai_compat() -> None:
+    """同一模型的 Anthropic 路由失败、OpenAI 路由成功时给出协议兼容诊断。"""
+    post_seq = [
+        httpx.Response(400, json={"error": {"message": "model is not available on messages"}}),
+        httpx.Response(
+            200,
+            json={"id": "chatcmpl-1", "object": "chat.completion", "choices": []},
+        ),
+    ]
+    posted: list[str] = []
+
+    async def fake_post(*, url, **_kw):
+        posted.append(url)
+        return post_seq.pop(0)
+
+    async def fake_get(**_kw):
+        return httpx.Response(200, json={"data": [{"id": "deepseek-v4-flash"}]})
+
+    with (
+        patch("lib.config.anthropic_probe._post", AsyncMock(side_effect=fake_post)),
+        patch("lib.config.anthropic_probe._get", AsyncMock(side_effect=fake_get)),
+    ):
+        resp = await run_test(
+            preset_id=CUSTOM_SENTINEL_ID,
+            base_url="https://www.anyfast.ai",
+            api_key="sk",
+            model="deepseek-v4-flash",
+        )
+
+    assert resp.overall == "fail"
+    assert resp.diagnosis == DiagnosisCode.OPENAI_COMPAT_ONLY
+    assert resp.openai_probe is not None
+    assert resp.openai_probe.success is True
+    assert posted == [
+        "https://www.anyfast.ai/v1/messages",
+        "https://www.anyfast.ai/v1/chat/completions",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_test_does_not_probe_openai_after_auth_failure() -> None:
+    with (
+        patch(
+            "lib.config.anthropic_probe._post",
+            AsyncMock(return_value=httpx.Response(401, text="invalid key")),
+        ) as mocked,
+        patch(
+            "lib.config.anthropic_probe._get",
+            AsyncMock(return_value=httpx.Response(401, text="invalid key")),
+        ),
+    ):
+        resp = await run_test(
+            preset_id=CUSTOM_SENTINEL_ID,
+            base_url="https://api.example.com",
+            api_key="bad",
+            model="model-1",
+        )
+
+    assert resp.diagnosis == DiagnosisCode.AUTH_FAILED
+    assert resp.openai_probe is None
+    assert mocked.await_count == 1
 
 
 @pytest.mark.asyncio

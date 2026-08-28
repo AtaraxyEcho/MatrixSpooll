@@ -3,6 +3,11 @@ upstream matrixspooll_backend {
     keepalive 32;
 }
 
+upstream matrixspooll_docs {
+    server docs:8080;
+    keepalive 8;
+}
+
 server {
     listen 8080 default_server;
     server_name ${PUBLIC_HOST};
@@ -87,6 +92,30 @@ server {
         proxy_pass http://matrixspooll_backend;
         proxy_buffering off;
         proxy_request_buffering off;
+    }
+
+    location = /_matrixspooll_docs_auth {
+        internal;
+        proxy_pass http://matrixspooll_backend/api/v1/auth/me;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Cookie $http_cookie;
+    }
+
+    location = /docs {
+        return 308 /docs/;
+    }
+
+    location ^~ /docs/ {
+        auth_request /_matrixspooll_docs_auth;
+        error_page 401 = @docs_login;
+        proxy_pass http://matrixspooll_docs;
+        proxy_buffering on;
+        proxy_read_timeout 60s;
+    }
+
+    location @docs_login {
+        return 302 /login?from=$request_uri;
     }
 
     location / {

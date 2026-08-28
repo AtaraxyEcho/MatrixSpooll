@@ -18,6 +18,11 @@ from lib.video_backends.base import VideoCapabilityError
 from server.auth import CurrentUserInfo
 from server.routers import free_creations as free_creation_router_module
 from server.routers.free_creations import (
+    CanvasGroup,
+    CanvasPatchUpdate,
+    CanvasPoint,
+    CanvasStateUpdate,
+    CanvasViewport,
     FreeCreationRequest,
     _free_creation_request_summary,
     _free_request_payload,
@@ -85,6 +90,35 @@ from server.services.free_creation_workspace import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_canvas_models_accept_persistent_subtitle_positions() -> None:
+    subtitle_id = "sub_0123456789abcdef0123"
+
+    state = CanvasStateUpdate(
+        viewport=CanvasViewport(x=0, y=0, scale=1),
+        positions={subtitle_id: CanvasPoint(x=420, y=120)},
+        hidden_creation_ids=[subtitle_id],
+        groups=[
+            CanvasGroup(
+                group_id="g_0123456789abcdef0123",
+                member_ids=["c_0123456789abcdef0123", subtitle_id],
+            )
+        ],
+    )
+    patch = CanvasPatchUpdate(
+        patch_id="11111111-1111-4111-8111-111111111111",
+        base_revision=0,
+        target_revisions={subtitle_id: 0},
+        position_updates={subtitle_id: CanvasPoint(x=460, y=160)},
+        hidden_creation_updates={subtitle_id: True},
+    )
+
+    assert state.positions[subtitle_id].x == 420
+    assert state.hidden_creation_ids == [subtitle_id]
+    assert state.groups[0].member_ids[-1] == subtitle_id
+    assert patch.position_updates[subtitle_id].y == 160
+    assert patch.hidden_creation_updates[subtitle_id] is True
 
 
 async def test_free_creation_cover_uses_the_stored_thumbnail_path(tmp_path: Path, monkeypatch) -> None:

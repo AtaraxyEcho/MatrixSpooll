@@ -42,6 +42,7 @@ export function TestResultPanel({ originalBaseUrl, result, onApplyFix, attached 
     overall,
     messages_probe,
     discovery_probe,
+    openai_probe,
     diagnosis,
     suggestion,
     derived_messages_root,
@@ -105,7 +106,11 @@ export function TestResultPanel({ originalBaseUrl, result, onApplyFix, attached 
       )}
 
       {/* Probe 结果 — 调用 / 发现端点 */}
-      <div className="mt-2 grid grid-cols-2 gap-2 font-mono text-[10.5px] text-text-4 tabular-nums">
+      <div
+        className={`mt-2 grid grid-cols-1 gap-2 font-mono text-[10.5px] text-text-4 tabular-nums ${
+          openai_probe ? "sm:grid-cols-3" : "sm:grid-cols-2"
+        }`}
+      >
         <div>
           <div className="uppercase tracking-[0.12em]">{t("derived_messages_root")}</div>
           <div className="truncate text-text-3">{derived_messages_root}</div>
@@ -123,6 +128,15 @@ export function TestResultPanel({ originalBaseUrl, result, onApplyFix, attached 
               : "—"}
           </div>
         </div>
+        {openai_probe && (
+          <div>
+            <div className="uppercase tracking-[0.12em]">{t("openai_compat_probe")}</div>
+            <div className="truncate text-text-3">{derived_discovery_root || derived_messages_root}</div>
+            <div className="text-text-4">
+              POST · {openai_probe.status_code ?? "—"} · {openai_probe.latency_ms ?? "—"}&nbsp;ms
+            </div>
+          </div>
+        )}
       </div>
 
       {messages_probe.error && (
@@ -130,6 +144,14 @@ export function TestResultPanel({ originalBaseUrl, result, onApplyFix, attached 
           <summary className="cursor-pointer">{t("raw_error")}</summary>
           <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all">
             {messages_probe.error}
+          </pre>
+        </details>
+      )}
+      {openai_probe?.error && (
+        <details className="mt-2 text-[11px] text-text-4">
+          <summary className="cursor-pointer">{t("raw_openai_error")}</summary>
+          <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all">
+            {openai_probe.error}
           </pre>
         </details>
       )}

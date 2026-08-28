@@ -24,8 +24,10 @@ import { useConfigStatusStore } from "@/stores/config-status-store";
 import { errMsg } from "@/utils/async";
 import { sessionFetch } from "@/utils/auth";
 import { lookupProjectVideoResolution } from "@/utils/provider-models";
+import { canAccessSystemSettings } from "@/utils/access";
 import {
   ROUTE_APP,
+  ROUTE_APP_ABOUT,
   ROUTE_APP_ASSETS,
   ROUTE_ADMIN_LOGIN,
   ROUTE_ADMIN_LOGS,
@@ -65,6 +67,9 @@ const AssetLibraryPage = lazy(() =>
   import("@/components/pages/AssetLibraryPage").then((module) => ({
     default: module.AssetLibraryPage,
   })),
+);
+const LegalPage = lazy(() =>
+  import("@/components/pages/LegalPage").then((module) => ({ default: module.LegalPage })),
 );
 const AdminManagerPage = lazy(() =>
   import("@/pages/AdminManagerPage").then((module) => ({ default: module.AdminManagerPage })),
@@ -253,7 +258,9 @@ function GuestGuard({ children }: { children: React.ReactNode }) {
 
 function SystemSettingsGuard({ children }: { children: React.ReactNode }) {
   const role = useAuthStore((state) => state.role);
-  if (role === "member") return <Redirect to={`~${ROUTE_APP}`} />;
+  // 判定与引导的设置段裁剪共享同一份谓词（utils/access.ts）——守卫拦下的页面，
+  // 引导大纲里就不会出现指向它的步骤。
+  if (!canAccessSystemSettings(role)) return <Redirect to={`~${ROUTE_APP}`} />;
   return <>{children}</>;
 }
 
@@ -569,6 +576,13 @@ export function AppRoutes() {
         <Route path={ROUTE_APP_ASSETS}>
           <AuthGuard>
             <AssetLibraryPage />
+          </AuthGuard>
+        </Route>
+
+        {/* Legal notices and corresponding source are available to every signed-in user. */}
+        <Route path={ROUTE_APP_ABOUT}>
+          <AuthGuard>
+            <LegalPage />
           </AuthGuard>
         </Route>
 

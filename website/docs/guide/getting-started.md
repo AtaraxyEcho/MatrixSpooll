@@ -86,22 +86,22 @@ MatrixSpooll 当前支持的预置供应商包括：
 
 详细选择建议见 [供应商与模型配置](./providers.md)。
 
-> API Key 属于敏感信息。不要把真实密钥提交到 Git、Issue、日志截图或公开聊天记录中。
+> API Key 属于敏感信息。不要把真实密钥写入源码、日志截图或公开聊天记录中。
 
 ## 2. 部署 MatrixSpooll {#deploy-matrixspooll}
 
-### 2.1 克隆项目 {#clone-repository}
+### 2.1 准备交付源码 {#prepare-delivered-source}
 
 ```bash
-git clone https://github.com/MockMine/MatrixSpooll.git
-cd MatrixSpooll
+# 将交付的完整源码包解压到客户服务器
+cd /srv/matrixspooll
 ```
 
 ### 2.2 使用 PostgreSQL 部署 {#deploy-with-postgresql}
 
-MatrixSpooll 的本地构建和镜像部署统一使用 PostgreSQL。PostgreSQL 改善并发、备份与运维能力，但不提供跨租户隔离；请勿让互不信任的组织共享同一 MatrixSpooll 实例。
+MatrixSpooll 的运行环境统一使用 PostgreSQL。PostgreSQL 改善并发、备份与运维能力，但不提供跨租户隔离；请勿让互不信任的组织共享同一 MatrixSpooll 实例。
 
-以下命令从 MatrixSpooll 仓库根目录执行：
+以下命令从交付源码根目录执行：
 
 ```bash
 cd deploy/production
@@ -115,26 +115,26 @@ AUTH_USERNAME=admin
 AUTH_PASSWORD=请设置一个强密码
 AUTH_TOKEN_SECRET=请设置一个长期固定的随机密钥
 POSTGRES_PASSWORD=仅使用字母数字的数据库密码
+PUBLIC_HOST=video.example.com
+PUBLIC_ORIGIN=https://video.example.com
+CERTBOT_EMAIL=admin@example.com
 ```
 
-源码构建版启动（使用仓库中的 Dockerfile）：
+使用交付包中的 Dockerfile 本地构建并启动：
 
 ```bash
 docker compose -f docker-compose.yml up -d --build
 ```
 
-镜像版启动（拉取已构建镜像）：
+将 `PUBLIC_HOST` 的域名或公网 IPv4 指向服务器，并在防火墙中放行 TCP `80`、`443`。生产 Compose 不向宿主机发布应用 `1241` 或 PostgreSQL `5432`。
+
+Certbot 完成证书签发后，在浏览器打开 `https://<PUBLIC_HOST>`，并使用以下命令检查公网入口：
 
 ```bash
-docker compose -f docker-compose-img.yml pull
-docker compose -f docker-compose-img.yml up -d
-docker compose ps
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
-两种方式选择其一，不要同时启动，以免占用同一个端口。
-
-健康检查成功后，在浏览器打开 `http://localhost:1241`。开发者如需在宿主机运行后端并保留热重载，请使用
+开发者如需在宿主机运行后端并保留热重载，请使用
 `deploy/development/docker-compose.yml` 只启动 PostgreSQL，具体步骤见[贡献指南](../dev/contributing.md)。
 
 完整的生产部署、升级、备份和反向代理说明见 [部署与运维](../ops/deployment.md)。
@@ -177,6 +177,16 @@ curl -f http://localhost:1241/health/ready
 - 音频并发。
 
 设置过高可能导致供应商限流，设置过低则会延长批量任务时间。初次使用建议保守设置，确认稳定后逐步提高。
+
+### 3.4 创建账号和配置项目协作 {#configure-collaboration}
+
+超级管理员可以从管理端创建、停用和重置账号，并查看当前在线会话、系统日志与全局任务。项目创建者默认成为项目所有者，可以在项目卡片或项目设置中打开成员管理：
+
+- **所有者**：管理项目内容、设置和成员，并可转移所有权；
+- **编辑者**：编辑内容、创建生成任务和管理非成员类项目设置；
+- **查看者**：只读查看项目与生成结果，不能进入项目设置或提交生成任务。
+
+系统配置和模型供应商为实例级共享配置。普通用户没有相应权限时不会看到系统设置入口。
 
 ## 4. 创建第一个项目 {#create-first-project}
 
@@ -225,7 +235,7 @@ MatrixSpooll 会按照作者提供的内容建立角色和镜头，不应把成�
 
 固定工作流打开项目工作台右侧的 AI 助手面板。
 
-自由创作项目不需要按下述固定工作流推进。打开项目根路径的自由画布，输入提示词并选择图片、视频或编辑即可；原文直连请求不会强制调用文本模型或中间图片模型。
+自由创作项目不需要按下述固定工作流推进。打开项目根路径的自由画布后，可以直接生成图片或视频，也可以使用 Agent 模式：自动模式由 Agent 判断媒体类型、模型、分辨率和画幅，自定义模式允许手动覆盖。画布支持首尾帧与多类型参考素材、内容来源和派生关系、基于已有结果继续创作、导航图、适配所选/全部、智能参考线以及撤销/重做。直接图片或视频请求不会强制调用文本模型，也不会为文生视频先生成中间图片。
 
 推荐按阶段推进，而不是一次要求“直接生成全部成片”。
 
@@ -344,7 +354,7 @@ MatrixSpooll 会按照作者提供的内容建立角色和镜头，不应把成�
 
 ### 7.1 剧集动画合成最终视频 {#compose-final-video}
 
-分镜路线的剧集动画（drama）项目确认所有视频片段后，可以使用 MatrixSpooll 合成成片。分镜路线的说书和广告/短片项目请导出剪映草稿；参考生视频项目请下载生成片段继续后期。自由创作项目当前下载生成结果后继续后期。
+分镜路线的剧集动画（drama）项目确认所有视频片段后，可以使用 MatrixSpooll 合成成片。分镜路线的说书和广告/短片项目请导出剪映草稿；参考生视频项目可以下载生成片段继续后期。自由创作画布还可以为视频添加配音或字幕、合并所选视频，并按所选作品、当前创作请求或全部已完成作品批量导出。
 
 建议在合成前检查：
 
@@ -360,6 +370,12 @@ MatrixSpooll 会按照作者提供的内容建立角色和镜头，不应把成�
 分镜路线的说书和广告/短片项目通过剪映草稿完成成片；剧集动画需要继续处理字幕、音轨、转场和节奏时也可以使用。参考生视频项目可以下载已生成的视频片段，进入剪映或其他后期工具继续制作。
 
 详细步骤见 [剪映草稿导出指南](./jianying-export.md)。
+
+### 7.3 导出和恢复项目 ZIP {#project-zip-backup}
+
+项目导出菜单中的 **导出项目备份** 会生成可恢复的 MatrixSpooll 项目 ZIP。需要恢复时，在项目列表选择 **导入项目 ZIP** 并上传该文件。导入器只接受 MatrixSpooll 项目备份；作品导出 ZIP、任意压缩包和结构不完整的归档会被拒绝并返回原因。
+
+项目 ZIP 适合单项目迁移，不包含实例级账号、供应商凭据、全局任务与用量记录，因此不能替代 PostgreSQL、`projects/` 和凭据密钥的整站备份。
 
 ## 8. 第一次项目的完成标准 {#first-project-checklist}
 

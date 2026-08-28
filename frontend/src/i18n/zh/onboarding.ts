@@ -3,19 +3,15 @@ import type enOnboarding from '@/i18n/en/onboarding';
 export default {
   // 引导步骤
   'welcome_title': '欢迎使用 [[brand]]',
-  'welcome_body': '[[brand]] 将小说或剧本制作成短视频：智能体负责分析原文、编写分集脚本、生成分镜和视频，过程中的每一步都可以人工调整。本引导介绍主要界面和基本流程。',
+  'welcome_body': '[[brand]] 将小说或剧本制作成短视频：智能体负责分析原文、编写分集脚本、生成分镜和视频，过程中的每一步都可以人工调整。本引导带你走一遍大厅、一个演示项目和工作台，全程约两分钟。',
   'lobby_create_title': '新建项目',
-  'lobby_create_body': '在这里新建项目，设置项目的基本信息、使用的模型和画面风格。',
+  'lobby_create_body': '在这里新建项目，设置基本信息、内容模式、使用的模型和画面风格。',
   'lobby_settings_title': '设置',
-  'lobby_settings_body': '开始制作前需要完成两项配置。按钮上的红点表示还有必填项未配置。',
-  'settings_providers_title': '配置供应商',
-  'settings_providers_body': '图像和视频由这里配置的供应商生成。至少配置一个供应商：填入 API Key，通过「测试连接」确认可用。',
-  'settings_agent_title': '配置智能体',
-  'settings_agent_body': '智能体负责分析原文、编写脚本和执行制作，在这里配置它使用的模型服务。',
+  'lobby_settings_body': '制作前需要先配置好生成供应商和智能体的模型服务。配置齐全之前按钮上会显示红点提醒——具体配置可以照大厅的上手清单逐步完成。',
   'lobby_demo_title': '演示项目',
-  'lobby_demo_body': '点击卡片打开演示工作台，查看项目的制作界面。',
+  'lobby_demo_body': '这张卡片是一个演示项目，仅在引导期间展示。点击卡片打开只读的演示工作台，或点「下一步」继续。',
   'workbench_overview_title': '项目概览',
-  'workbench_overview_body': '工作台首页是项目概览，包含智能体生成的项目概述和分集列表，每一集的制作状态和进度都在这里查看。',
+  'workbench_overview_body': '工作台首页是项目概览，包含智能体生成的项目概述和分集列表，每一集的制作状态和进度都在这里查看。演示以剧集模式为例——说书、广告与自由创作模式的画布布局略有不同。',
   'workbench_agent_title': '智能体',
   'workbench_agent_body': '右侧是智能体，制作由它执行并汇报进度。新项目进入工作台后先导入小说或剧本，分析完成后发送「开始制作」，它会依次生成项目概述、角色形象图和每一集的分镜与视频。',
   'workbench_lorebook_title': '角色、场景与道具',
@@ -25,7 +21,18 @@ export default {
   'workbench_export_title': '导出',
   'workbench_export_body': '制作完成后，从顶栏导出剪映草稿继续剪辑，或打包下载整个项目。演示项目没有成片，导出按钮不可用。',
   'finish_title': '开始你的第一个项目',
-  'finish_body': '新建项目并导入小说或剧本，或直接开始自由创作。本引导可随时从设置页顶栏的「重看引导」按钮重新查看。',
+  'finish_body': '新建项目并导入小说或剧本，或直接开始自由创作。本引导可随时从顶部栏用户菜单的「查看引导」入口重新查看。',
+  'finish_action': '立即创建项目',
+  'closed_hint': '引导已关闭，可随时从右上角用户菜单的「查看引导」重新打开。',
+
+  // 大厅的上手清单
+  'checklist_eyebrow': '开始使用',
+  'checklist_task_config': '配置供应商与智能体',
+  'checklist_action_config': '去配置',
+  'checklist_task_project': '创建你的第一个项目',
+  'checklist_action_project': '新建项目',
+  'checklist_task_tour': '认识界面（查看引导）',
+  'checklist_action_tour': '查看引导',
 
   // 引导控件
   'next': '下一步',
@@ -140,5 +147,5 @@ export default {
   // 设置页顶栏入口
   'replay_title': '使用引导',
   'replay_desc': '重看首次使用引导，了解主要界面和基本流程。',
-  'replay_action': '重看引导',
+  'replay_action': '查看引导',
 } satisfies Record<keyof typeof enOnboarding, string>;

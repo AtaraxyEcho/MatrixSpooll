@@ -49,7 +49,6 @@ flowchart TB
 
     PROJECTS --> FILES["Project Files & Generated Assets"]
     SERVICES --> ORM["SQLAlchemy 2.0"]
-    ORM --> SQLITE["SQLite"]
     ORM --> PG["PostgreSQL"]
 ```
 
@@ -266,32 +265,11 @@ The application data root is resolved in this order:
 2. compatibility variable `AI_ANIME_PROJECTS`
 3. default `projects/`
 
-The default SQLite database also resides in the application data directory.
+The runtime database is PostgreSQL through `DATABASE_URL`. Project media, structured project files, and credential keys remain in the application data directory.
 
 ## 10. Database {#database}
 
-MatrixSpooll uses the SQLAlchemy 2.0 asynchronous ORM.
-
-### SQLite {#database-sqlite}
-
-Suitable for:
-
-- personal evaluation;
-- local development;
-- lightweight single-instance deployments.
-
-WAL, a busy timeout, and foreign key constraints are enabled by default.
-
-### PostgreSQL {#database-postgresql}
-
-Suitable for:
-
-- production environments;
-- higher concurrency;
-- long-running deployments;
-- more mature backup and recovery.
-
-At application startup, Alembic migrations upgrade the database to the current version.
+MatrixSpooll uses the SQLAlchemy 2.0 asynchronous ORM. Development and production runtime environments both connect to PostgreSQL. Alembic migrations upgrade the database to the current version at application startup. SQLite is used only by isolated tests with `TESTING=true`; it is not a development or production deployment option.
 
 ## 11. Version History {#version-history}
 
@@ -364,11 +342,13 @@ A manually uploaded video without generation provenance uses an explicit raw-onl
 MatrixSpooll provides:
 
 - username and password login;
-- JWT;
+- a JWT session carried by an HttpOnly cookie;
 - API Keys with an `msp-` prefix;
 - a synchronous conversation endpoint for external Agents.
 
 API Keys should be stored as hashes and should not continue to be returned in plaintext after creation.
+
+Instance roles are super administrator, administrator, and member. Project permissions are independent: owner, editor, and viewer. Project routes resolve stable project IDs and validate membership on the backend; hiding a frontend button is not an authorization boundary. Administrators manage accounts, current online sessions, system logs, and global tasks. Only project owners manage members or transfer ownership.
 
 External Agent integrations should:
 
@@ -456,4 +436,4 @@ The following constraints should be maintained over the long term:
 - [Provider and Model Configuration](../guide/providers.md)
 - [Deployment and Operations](../ops/deployment.md)
 - [Contributing Guide](./contributing.md)
-- [ADR Directory](https://github.com/MockMine/MatrixSpooll/tree/main/docs/adr)
+- The `docs/adr/` directory in the delivered source package

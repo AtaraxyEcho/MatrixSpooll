@@ -287,6 +287,7 @@ export function AddCredentialModal({
 
   const submitDisabled =
     submitting ||
+    testResult?.overall === "fail" ||
     (mode === "create" && !form.apiKey.trim() && form.sourceCustomProviderId == null) ||
     !form.baseUrl.trim() ||
     (mode === "edit" && !form.isDirty(initial));

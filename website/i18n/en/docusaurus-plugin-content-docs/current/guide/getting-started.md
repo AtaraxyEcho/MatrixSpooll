@@ -85,24 +85,24 @@ Providers support different media types. The required capabilities depend on the
 
 For detailed recommendations, see [Provider and Model Configuration](./providers.md).
 
-> API keys are sensitive. Do not commit real keys to Git or expose them in issues, log screenshots, or public chat records.
+> API keys are sensitive. Do not write real keys into source files, log screenshots, or public chat records.
 
 ## 2. Deploy MatrixSpooll {#deploy-matrixspooll}
 
-### 2.1 Clone the Repository {#clone-repository}
+### 2.1 Prepare the Delivered Source {#prepare-delivered-source}
 
 ```bash
-git clone https://github.com/MockMine/MatrixSpooll.git
-cd MatrixSpooll
+# Extract the complete delivered source package on the customer server.
+cd /srv/matrixspooll
 ```
 
 ### 2.2 Deploy with PostgreSQL {#deploy-with-postgresql}
 
-MatrixSpooll uses PostgreSQL for both local image builds and image-based deployments. PostgreSQL improves concurrency,
+MatrixSpooll uses PostgreSQL for its runtime environment. PostgreSQL improves concurrency,
 backups, and operations, but does not provide cross-tenant isolation. Do not let mutually untrusted organizations share
 the same MatrixSpooll instance.
 
-Run these commands from the root of the MatrixSpooll repository:
+Run these commands from the root of the delivered source package:
 
 ```bash
 cd deploy/production
@@ -116,26 +116,26 @@ AUTH_USERNAME=admin
 AUTH_PASSWORD=set a strong password
 AUTH_TOKEN_SECRET=set a long-lived random secret
 POSTGRES_PASSWORD=alphanumeric-only database password
+PUBLIC_HOST=video.example.com
+PUBLIC_ORIGIN=https://video.example.com
+CERTBOT_EMAIL=admin@example.com
 ```
 
-Start the source-build deployment (using the repository Dockerfile):
+Build and start locally with the Dockerfile included in the delivery package:
 
 ```bash
 docker compose -f docker-compose.yml up -d --build
 ```
 
-Start the image deployment (pulling a pre-built image):
+Point the domain or public IPv4 in `PUBLIC_HOST` at the server and allow TCP `80` and `443` through the firewall. Production Compose does not publish application port `1241` or PostgreSQL port `5432` to the host.
+
+After Certbot issues the certificate, open `https://<PUBLIC_HOST>` and check the public entry point:
 
 ```bash
-docker compose -f docker-compose-img.yml pull
-docker compose -f docker-compose-img.yml up -d
-docker compose ps
-curl -f http://localhost:1241/health/ready
+curl -fsS https://<PUBLIC_HOST>/health/live
 ```
 
-Choose one deployment method; do not run both on the same port.
-
-After the readiness check succeeds, open `http://localhost:1241`. Developers who run the backend on the host for hot
+Developers who run the backend on the host for hot
 reload should use `deploy/development/docker-compose.yml` to start PostgreSQL only; see the
 [Contributing Guide](../dev/contributing.md).
 
@@ -179,6 +179,16 @@ Adjust these settings based on your provider quotas:
 - Audio concurrency.
 
 Settings that are too high may trigger provider rate limits, while settings that are too low will extend batch processing time. Start conservatively and increase them gradually after confirming that the workflow is stable.
+
+### 3.4 Create Accounts and Configure Collaboration {#configure-collaboration}
+
+Super administrators can create, disable, and reset accounts in the administrator console, then review current online sessions, system logs, and global tasks. A project creator becomes its owner and can open member management from the project card or project settings:
+
+- **Owner**: manages project content, settings, and members, and can transfer ownership;
+- **Editor**: edits content, creates generation tasks, and manages non-member project settings;
+- **Viewer**: reads project content and generated results, but cannot open project settings or submit generation tasks.
+
+System configuration and model providers are shared instance-wide. Users without the required permission do not see the system settings entry.
 
 ## 4. Create Your First Project {#create-first-project}
 
@@ -227,7 +237,7 @@ For a detailed comparison, see [Workflows and Modes](./workflows.md).
 
 For fixed workflows, open the AI assistant panel on the right side of the project workbench.
 
-Free creation projects do not need the fixed workflow below. Open the project-root free canvas, enter a prompt, and choose image, video, or edit; direct original-prompt requests do not force an extra text-model call or an intermediate image model.
+Free creation projects do not need the fixed workflow below. In the project-root free canvas, generate images or video directly, or use Agent mode. In auto mode, the Agent chooses media type, model, resolution, and aspect ratio; custom mode allows manual overrides. The canvas supports first/last frames and multiple reference types, source and derivation relations, continuing from an existing result, a minimap, fit-to-selection/all, smart guides, undo, and redo. Direct image or video requests do not force a text-model call or an intermediate image for text-to-video.
 
 Work through the process in stages instead of asking it to "generate the entire final video" at once.
 
@@ -346,7 +356,7 @@ On the Usage page, review:
 
 ### 7.1 Compose the Final Video for a Drama Episode {#compose-final-video}
 
-For Drama Mode projects using the storyboard route, you can use MatrixSpooll to compose the final video after confirming every video clip. For Narration Mode and Ad / Short Video Mode projects using the storyboard route, export a Jianying draft. For reference-to-video projects, download the generated clips and continue in post-production. For free creation projects, download the generated result and continue in post-production.
+For Drama Mode projects using the storyboard route, you can use MatrixSpooll to compose the final video after confirming every video clip. For Narration Mode and Ad / Short Video Mode projects using the storyboard route, export a Jianying draft. For reference-to-video projects, download the generated clips and continue in post-production. The free-creation canvas can add voice-over or subtitles to video, merge selected videos, and batch export selected works, the current request, or all completed works.
 
 Before composing, check:
 
@@ -362,6 +372,12 @@ Before composing, check:
 Narration Mode and Ad / Short Video Mode projects using the storyboard route complete the final video through a Jianying draft. Drama Mode projects can also use this option when subtitles, audio tracks, transitions, or pacing need more work. Reference-to-video projects can download the generated video clips and continue editing them in Jianying or another post-production tool.
 
 For detailed instructions, see [Jianying Draft Export Guide](./jianying-export.md).
+
+### 7.3 Export and Restore a Project ZIP {#project-zip-backup}
+
+The project export menu creates a recoverable MatrixSpooll project ZIP. To restore it, select **Import Project ZIP** from the project list and upload that file. The importer accepts only MatrixSpooll project backups; exported work ZIPs, arbitrary archives, and structurally incomplete archives are rejected with an explanation.
+
+A project ZIP is for one-project migration. It does not contain instance accounts, provider credentials, global tasks, or usage records, so it does not replace a PostgreSQL, `projects/`, and credential-key backup.
 
 ## 8. First Project Completion Checklist {#first-project-checklist}
 
