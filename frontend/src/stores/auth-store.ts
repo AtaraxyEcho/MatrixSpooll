@@ -2,19 +2,23 @@ import { create } from "zustand";
 import { consumeLegacyToken, sessionFetch } from "@/utils/auth";
 
 interface SessionProfile {
+  id?: unknown;
   username?: unknown;
   nickname?: unknown;
   avatar_path?: unknown;
   role?: unknown;
+  is_superadmin?: unknown;
 }
 
 export type SessionEndReason = "replaced" | "revoked" | "expired" | "invalid";
 
 interface AuthState {
+  id: string | null;
   username: string | null;
   nickname: string | null;
   avatarPath: string | null;
   role: "admin" | "member" | null;
+  isSuperadmin: boolean;
   isAuthenticated: boolean;
   isLoading: boolean;
   sessionEndReason: SessionEndReason | null;
@@ -24,6 +28,8 @@ interface AuthState {
     role?: "admin" | "member" | null,
     nickname?: string | null,
     avatarPath?: string | null,
+    id?: string | null,
+    isSuperadmin?: boolean,
   ) => void;
   logout: () => void;
   endSession: (reason: SessionEndReason) => void;
@@ -31,10 +37,12 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
+  id: null,
   username: null,
   nickname: null,
   avatarPath: null,
   role: null,
+  isSuperadmin: false,
   isAuthenticated: false,
   isLoading: true,
   sessionEndReason: null,
@@ -65,10 +73,12 @@ export const useAuthStore = create<AuthState>((set) => ({
 
         if (profile) {
           set({
+            id: typeof profile.id === "string" ? profile.id : null,
             username: typeof profile.username === "string" ? profile.username : null,
             nickname: typeof profile.nickname === "string" && profile.nickname ? profile.nickname : null,
             avatarPath: typeof profile.avatar_path === "string" && profile.avatar_path ? profile.avatar_path : null,
             role: profile.role === "admin" || profile.role === "member" ? profile.role : null,
+            isSuperadmin: profile.is_superadmin === true,
             isAuthenticated: true,
             sessionEndReason: null,
           });
@@ -87,12 +97,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     })();
   },
 
-  login: (username, role = null, nickname = null, avatarPath = null) => {
+  login: (username, role = null, nickname = null, avatarPath = null, id = null, isSuperadmin = false) => {
     set({
+      id,
       username,
       nickname,
       avatarPath,
       role,
+      isSuperadmin,
       isAuthenticated: true,
       isLoading: false,
       sessionEndReason: null,
@@ -113,10 +125,12 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   endSession: (sessionEndReason) => {
     set({
+      id: null,
       username: null,
       nickname: null,
       avatarPath: null,
       role: null,
+      isSuperadmin: false,
       isAuthenticated: false,
       isLoading: false,
       sessionEndReason,

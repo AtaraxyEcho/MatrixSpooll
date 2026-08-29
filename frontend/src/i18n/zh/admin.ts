@@ -44,6 +44,7 @@ export default {
   role_member: "普通成员",
   super_admin: "超级管理员",
   protected: "受保护",
+  hierarchy_forbidden: "无权限操作同级或更高级别账号",
   status: "状态",
   active: "启用",
   disabled: "已禁用",

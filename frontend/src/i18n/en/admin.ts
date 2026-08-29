@@ -42,6 +42,7 @@ export default {
   role_member: "Member",
   super_admin: "Super administrator",
   protected: "Protected",
+  hierarchy_forbidden: "You cannot manage accounts at the same or a higher role level",
   status: "Status",
   active: "Active",
   disabled: "Disabled",

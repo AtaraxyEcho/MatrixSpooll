@@ -75,6 +75,8 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
         role,
         data.nickname ?? null,
         data.avatar_path ?? null,
+        data.id ?? null,
+        data.is_superadmin === true,
       );
       const returnTo = safeReturnPath(new URLSearchParams(search).get("from"));
       if (returnTo && isDocsReturnPath(returnTo)) {

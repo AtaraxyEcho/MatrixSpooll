@@ -83,6 +83,7 @@ class CurrentUserResponse(BaseModel):
     id: str
     username: str
     role: str
+    is_superadmin: bool = False
     nickname: str | None = None
     avatar_path: str | None = None
     email: str | None = None
@@ -105,8 +106,10 @@ class AuthStatusResponse(BaseModel):
 
 
 class BrowserSessionResponse(BaseModel):
+    id: str | None = None
     username: str
     role: str
+    is_superadmin: bool = False
     nickname: str | None = None
     avatar_path: str | None = None
     email: str | None = None
@@ -117,6 +120,8 @@ class _LoginResult:
     token: str
     username: str
     role: str
+    id: str | None = None
+    is_superadmin: bool = False
     nickname: str | None = None
     avatar_path: str | None = None
     email: str | None = None
@@ -234,6 +239,8 @@ async def _authenticate_login(
                 token=create_token(user.username, user_id=user.id, session_id=session.id, role=user.role),
                 username=user.username,
                 role=user.role,
+                id=user.id,
+                is_superadmin=bool(user.is_superadmin),
                 nickname=user.nickname,
                 avatar_path=user.avatar_path,
                 email=user.email,
@@ -265,6 +272,7 @@ async def _authenticate_login(
         token=create_token(username),
         username=username,
         role="admin",
+        is_superadmin=True,
     )
 
 
@@ -354,8 +362,10 @@ async def login_for_browser_session(
     result = await _authenticate_login(form_data, request, device_id, _t)
     _set_browser_session_cookies(response, request, result.token)
     return BrowserSessionResponse(
+        id=result.id,
         username=result.username,
         role=result.role,
+        is_superadmin=result.is_superadmin,
         nickname=result.nickname,
         avatar_path=result.avatar_path,
         email=result.email,
@@ -379,8 +389,10 @@ async def exchange_legacy_browser_session(
         raise HTTPException(status_code=401, detail=_t("auth_token_required"))
     _set_browser_session_cookies(response, request, token)
     return BrowserSessionResponse(
+        id=current_user.id,
         username=current_user.sub,
         role=current_user.role,
+        is_superadmin=current_user.is_superadmin,
     )
 
 
@@ -430,6 +442,7 @@ async def current_user(current_user: CurrentUser, request: Request, response: Re
         id=current_user.id,
         username=current_user.sub,
         role=current_user.role,
+        is_superadmin=current_user.is_superadmin,
         nickname=nickname,
         avatar_path=avatar_path,
         email=email,
@@ -495,6 +508,7 @@ async def update_profile(
         id=current_user.id,
         username=current_user.sub,
         role=current_user.role,
+        is_superadmin=current_user.is_superadmin,
         nickname=nickname,
         avatar_path=avatar_path,
         email=email,
@@ -538,6 +552,7 @@ async def update_avatar(
         id=current_user.id,
         username=current_user.sub,
         role=current_user.role,
+        is_superadmin=current_user.is_superadmin,
         nickname=nickname,
         avatar_path=rel,
         email=email,
@@ -569,6 +584,7 @@ async def remove_avatar(
         id=current_user.id,
         username=current_user.sub,
         role=current_user.role,
+        is_superadmin=current_user.is_superadmin,
         nickname=nickname,
         avatar_path=None,
         email=email,

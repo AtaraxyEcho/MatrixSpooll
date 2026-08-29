@@ -185,8 +185,10 @@ export interface AssetRenameResult {
 
 /** Browser session response from POST /auth/session. */
 export interface LoginResponse {
+  id?: string | null;
   username: string;
   role: "admin" | "member";
+  is_superadmin?: boolean;
   nickname?: string | null;
   avatar_path?: string | null;
   email?: string | null;
