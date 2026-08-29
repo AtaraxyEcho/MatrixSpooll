@@ -63,3 +63,64 @@
     transform: none;
   }
 }
+
+/* 底部栏：默认 docusaurus footer 上下内边距约 4rem、标题为大字号、列纵向堆叠，
+   体量过大。这里收敛为一条全宽单行底栏：链接居左、版权居右两端对齐，窄屏自动
+   换行。版权行承载 NOTICE 上游归属（AGPL 合规要求），不删除，仅压缩体量。 */
+.footer {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+/* 突破默认居中限宽，内容铺满全宽并两端对齐，适配 4K / 超宽屏 */
+.footer .container {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  column-gap: 1.5rem;
+  row-gap: 0.25rem;
+  width: 100%;
+  max-width: 100%;
+  padding-inline: clamp(1rem, 3vw, 3rem);
+}
+
+.footer .footer__links {
+  margin-bottom: 0;
+}
+
+.footer .footer__col {
+  margin-bottom: 0;
+}
+
+/* 内容仅两条链接，列标题冗余，隐藏以精简 */
+.footer .footer__title {
+  display: none;
+}
+
+.footer .footer__items {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 1.25rem;
+  row-gap: 0.125rem;
+}
+
+.footer .footer__item {
+  margin-bottom: 0;
+}
+
+.footer .footer__link-item {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  padding: 0;
+}
+
+.footer .footer__bottom {
+  margin-top: 0;
+  text-align: left;
+}
+
+.footer .footer__copyright {
+  font-size: 0.7rem;
+  line-height: 1.5;
+}

@@ -27,7 +27,8 @@ export default {
 
   // 大厅的上手清单
   'checklist_eyebrow': '开始使用',
-  'checklist_task_config': '配置供应商与智能体',
+  'checklist_skip': '跳过',
+  'checklist_task_config': '配置生成供应商',
   'checklist_action_config': '去配置',
   'checklist_task_project': '创建你的第一个项目',
   'checklist_action_project': '新建项目',

@@ -15,14 +15,6 @@ if (!legalAttribution) {
   throw new Error("NOTICE does not contain a valid UI attribution");
 }
 
-const legalAttributionUrl = legalAttribution.match(/https:\/\/github\.com\/[^\s"]+$/)?.[0];
-const legalAttributionHtml = legalAttributionUrl
-  ? legalAttribution.replace(
-      legalAttributionUrl,
-      `<a href="${legalAttributionUrl}" rel="noreferrer">${legalAttributionUrl}</a>`,
-    )
-  : legalAttribution;
-
 const config: Config = {
   title: "MatrixSpooll 文档中心",
   tagline: "开源、自托管的 AI 视频创作平台",
@@ -113,7 +105,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `${legalAttributionHtml} · MatrixSpooll Copyright © 2026 AtaraxyEcho · AGPL-3.0.`,
+      copyright: `${legalAttribution} · MatrixSpooll Copyright © 2026 AtaraxyEcho · AGPL-3.0.`,
     },
   } satisfies Preset.ThemeConfig,
 };
