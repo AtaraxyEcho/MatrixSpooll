@@ -14,6 +14,7 @@ MESSAGES = {
     "admin_nickname_exists": "Tên hiển thị đã tồn tại",
     "admin_last_admin": "Không thể vô hiệu hóa hoặc hạ quyền quản trị viên cuối cùng",
     "admin_cannot_delete_self": "Không thể xóa tài khoản quản trị đang đăng nhập",
+    "admin_hierarchy_forbidden": "Không có quyền thao tác tài khoản cùng cấp hoặc cấp cao hơn",
     "admin_project_owner_delete_forbidden": 'Người dùng vẫn sở hữu dự án "{project}". Vui lòng chuyển quyền sở hữu trước khi xóa',
     "admin_project_owner_deactivate_forbidden": "Hãy chuyển quyền sở hữu dự án '{project}' trước khi vô hiệu hóa người dùng này",
     "admin_required": "Yêu cầu quyền quản trị viên",

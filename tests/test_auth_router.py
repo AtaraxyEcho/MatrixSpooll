@@ -212,6 +212,7 @@ class TestLoginRoute:
                 id="00000000-0000-4000-8000-000000000001",
                 username="testuser",
                 role="member",
+                is_superadmin=False,
                 nickname=None,
                 avatar_path=None,
                 email=None,

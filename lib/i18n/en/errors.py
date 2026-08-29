@@ -12,6 +12,7 @@ MESSAGES = {
     "admin_nickname_exists": "Nickname already exists",
     "admin_last_admin": "The last active administrator cannot be disabled or demoted",
     "admin_cannot_delete_self": "You cannot delete your own administrator account",
+    "admin_hierarchy_forbidden": "You do not have permission to manage accounts at the same or a higher role level",
     "admin_project_owner_delete_forbidden": 'User still owns project "{project}". Transfer ownership before deleting',
     "admin_project_owner_deactivate_forbidden": "Transfer ownership of project '{project}' before disabling this user",
     "admin_required": "Administrator permission is required",

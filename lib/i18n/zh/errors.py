@@ -12,6 +12,7 @@ MESSAGES = {
     "admin_nickname_exists": "昵称已存在，请更换",
     "admin_last_admin": "不能禁用或降级最后一个有效管理员",
     "admin_cannot_delete_self": "不能删除当前登录的管理员账号",
+    "admin_hierarchy_forbidden": "无权限操作同级或更高级别账号",
     "admin_project_owner_delete_forbidden": "用户仍拥有项目「{project}」，请先转移项目所有权再删除",
     "admin_project_owner_deactivate_forbidden": "请先转移项目「{project}」的所有权，再停用该用户",
     "admin_required": "需要管理员权限",

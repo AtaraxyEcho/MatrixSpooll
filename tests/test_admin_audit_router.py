@@ -20,7 +20,12 @@ from server.routers import admin
 pytestmark = pytest.mark.integration
 
 
-def _client(db_factory, *, role: Literal["admin", "member"] = "admin") -> AsyncClient:
+def _client(
+    db_factory,
+    *,
+    role: Literal["admin", "member"] = "admin",
+    is_superadmin: bool = False,
+) -> AsyncClient:
     app = FastAPI()
     app.include_router(admin.router, prefix="/api/v1")
 
@@ -33,6 +38,7 @@ def _client(db_factory, *, role: Literal["admin", "member"] = "admin") -> AsyncC
         id="admin-user",
         sub="admin",
         role=role,
+        is_superadmin=is_superadmin,
     )
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
@@ -303,3 +309,227 @@ async def test_admin_can_search_users_by_email_and_view_login_metadata(db_factor
     assert payload["users"][0]["email"] == "alice@example.com"
     assert payload["users"][0]["last_login_ip"] == "2001:db8::10"
     assert payload["users"][0]["last_login_at"].startswith("2026-08-23T09:30:00")
+
+
+# ==================== 管理员权限层级校验 ====================
+
+
+async def test_admin_cannot_create_admin_account(db_factory) -> None:
+    async with _client(db_factory) as client:
+        response = await client.post(
+            "/api/v1/admin/users",
+            json={"username": "alice", "password": "valid-password-123", "role": "admin"},
+        )
+
+    assert response.status_code == 403
+
+
+async def test_superadmin_can_create_admin_account(db_factory) -> None:
+    async with _client(db_factory, is_superadmin=True) as client:
+        response = await client.post(
+            "/api/v1/admin/users",
+            json={"username": "alice", "password": "valid-password-123", "role": "admin"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["user"]["role"] == "admin"
+
+
+async def test_admin_cannot_delete_peer_admin(db_factory) -> None:
+    async with db_factory() as session:
+        session.add_all(
+            [
+                User(
+                    id="admin-user",
+                    username="admin",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+                User(
+                    id="peer-admin",
+                    username="peer",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with _client(db_factory) as client:
+        response = await client.delete("/api/v1/admin/users/peer-admin")
+
+    assert response.status_code == 403
+
+
+async def test_admin_cannot_delete_self(db_factory) -> None:
+    async with db_factory() as session:
+        session.add(
+            User(
+                id="admin-user",
+                username="admin",
+                password_hash="hash",
+                role="admin",
+                is_active=True,
+                is_superadmin=False,
+            )
+        )
+        await session.commit()
+
+    async with _client(db_factory) as client:
+        response = await client.delete("/api/v1/admin/users/admin-user")
+
+    assert response.status_code == 400
+
+
+async def test_superadmin_can_delete_admin(db_factory) -> None:
+    async with db_factory() as session:
+        session.add_all(
+            [
+                User(
+                    id="admin-user",
+                    username="admin",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=True,
+                ),
+                User(
+                    id="peer-admin",
+                    username="peer",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with _client(db_factory, is_superadmin=True) as client:
+        response = await client.delete("/api/v1/admin/users/peer-admin")
+
+    assert response.status_code == 204
+
+
+async def test_admin_cannot_update_peer_admin(db_factory) -> None:
+    async with db_factory() as session:
+        session.add_all(
+            [
+                User(
+                    id="admin-user",
+                    username="admin",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+                User(
+                    id="peer-admin",
+                    username="peer",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with _client(db_factory) as client:
+        response = await client.patch("/api/v1/admin/users/peer-admin", json={"nickname": "Alice"})
+
+    assert response.status_code == 403
+
+
+async def test_admin_cannot_promote_member_to_admin(db_factory) -> None:
+    async with db_factory() as session:
+        session.add_all(
+            [
+                User(
+                    id="admin-user",
+                    username="admin",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+                User(
+                    id="member-1",
+                    username="member",
+                    password_hash="hash",
+                    role="member",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with _client(db_factory) as client:
+        response = await client.patch("/api/v1/admin/users/member-1", json={"role": "admin"})
+
+    assert response.status_code == 403
+
+
+async def test_admin_cannot_reset_peer_admin_password(db_factory) -> None:
+    async with db_factory() as session:
+        session.add_all(
+            [
+                User(
+                    id="admin-user",
+                    username="admin",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+                User(
+                    id="peer-admin",
+                    username="peer",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with _client(db_factory) as client:
+        response = await client.post("/api/v1/admin/users/peer-admin/reset-password", json={})
+
+    assert response.status_code == 403
+
+
+async def test_admin_cannot_revoke_peer_admin_sessions(db_factory) -> None:
+    async with db_factory() as session:
+        session.add_all(
+            [
+                User(
+                    id="admin-user",
+                    username="admin",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+                User(
+                    id="peer-admin",
+                    username="peer",
+                    password_hash="hash",
+                    role="admin",
+                    is_active=True,
+                    is_superadmin=False,
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with _client(db_factory) as client:
+        response = await client.post("/api/v1/admin/users/peer-admin/revoke-sessions")
+
+    assert response.status_code == 403

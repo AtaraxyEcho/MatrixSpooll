@@ -44,6 +44,7 @@ export default {
   role_member: "Thành viên",
   super_admin: "Quản trị viên siêu cấp",
   protected: "Đã bảo vệ",
+  hierarchy_forbidden: "Không thể thao tác tài khoản cùng cấp hoặc cấp cao hơn",
   status: "Trạng thái",
   active: "Đang hoạt động",
   disabled: "Đã vô hiệu hóa",

@@ -11,6 +11,8 @@ eggs/
 *.egg
 .installed.cfg
 
+docs/
+
 # Virtual environments
 venv/
 env/

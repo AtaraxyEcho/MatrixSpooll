@@ -239,6 +239,24 @@ def _reject_superadmin_mutation(user: User, translate: Callable[..., str]) -> No
         raise HTTPException(status_code=403, detail=translate("admin_superadmin_protected"))
 
 
+def _role_rank(is_superadmin: bool, role: str) -> int:
+    """账号权限级别：superadmin=2，admin=1，member=0。"""
+    if is_superadmin:
+        return 2
+    return 1 if role == "admin" else 0
+
+
+def _reject_higher_or_equal_role(actor: AdminUser, target: User, translate: Callable[..., str]) -> None:
+    """操作者只能作用于权限级别严格低于自己的账号。
+
+    superadmin 可管理 admin 与 member；普通 admin 只能管理 member；
+    不能操作同级或更高级别账号（含自身）。
+    """
+    if _role_rank(actor.is_superadmin, actor.role) > _role_rank(target.is_superadmin, target.role):
+        return
+    raise HTTPException(status_code=403, detail=translate("admin_hierarchy_forbidden"))
+
+
 @router.get("/users", response_model=AdminUsersResponse)
 async def list_users(
     _admin: AdminUser,
@@ -565,6 +583,8 @@ async def create_user(
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
 ) -> CreateUserResponse:
+    if _role_rank(admin.is_superadmin, admin.role) <= _role_rank(False, body.role):
+        raise HTTPException(status_code=403, detail=_t("admin_hierarchy_forbidden"))
     username = _validate_username(body.username, _t)
     existing = await session.execute(select(User).where(func.lower(User.username) == username.lower()))
     if existing.scalar_one_or_none() is not None:
@@ -612,7 +632,10 @@ async def update_user(
 ) -> AdminUserSummary:
     user = await _get_user(session, user_id, _t)
     _reject_superadmin_mutation(user, _t)
+    _reject_higher_or_equal_role(admin, user, _t)
     next_role = body.role or user.role
+    if body.role is not None and _role_rank(admin.is_superadmin, admin.role) <= _role_rank(False, body.role):
+        raise HTTPException(status_code=403, detail=_t("admin_hierarchy_forbidden"))
     next_active = user.is_active if body.is_active is None else body.is_active
     is_last_admin = user.role == "admin" and user.is_active and (next_role != "admin" or not next_active)
     if user.id == admin.id and is_last_admin:
@@ -680,6 +703,7 @@ async def delete_user(
     _reject_superadmin_mutation(user, _t)
     if user.id == admin.id:
         raise HTTPException(status_code=400, detail=_t("admin_cannot_delete_self"))
+    _reject_higher_or_equal_role(admin, user, _t)
     if user.role == "admin" and user.is_active and await _active_admin_count(session) <= 1:
         raise HTTPException(status_code=400, detail=_t("admin_last_admin"))
     owned_project = await session.scalar(
@@ -712,6 +736,7 @@ async def reset_password(
 ) -> PasswordResponse:
     user = await _get_user(session, user_id, _t)
     _reject_superadmin_mutation(user, _t)
+    _reject_higher_or_equal_role(admin, user, _t)
     temporary_password = body.password or generate_password()
     user.password_hash = hash_password(temporary_password)
     await revoke_all_user_sessions(user.id, session=session)
@@ -735,6 +760,7 @@ async def revoke_sessions(
 ) -> None:
     user = await _get_user(session, user_id, _t)
     _reject_superadmin_mutation(user, _t)
+    _reject_higher_or_equal_role(admin, user, _t)
     await revoke_all_user_sessions(user.id, session=session)
     record_audit_event(
         session,
