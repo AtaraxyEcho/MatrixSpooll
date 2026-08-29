@@ -26,7 +26,8 @@ export default {
 
   // Get-started checklist on the lobby
   'checklist_eyebrow': 'Get started',
-  'checklist_task_config': 'Configure providers and the agent',
+  'checklist_skip': 'Skip',
+  'checklist_task_config': 'Configure generation providers',
   'checklist_action_config': 'Open settings',
   'checklist_task_project': 'Create your first project',
   'checklist_action_project': 'New project',

@@ -27,7 +27,8 @@ export default {
 
   // Danh sách khởi đầu ở sảnh
   'checklist_eyebrow': 'Bắt đầu sử dụng',
-  'checklist_task_config': 'Cấu hình nhà cung cấp và Agent',
+  'checklist_skip': 'Bỏ qua',
+  'checklist_task_config': 'Cấu hình nhà cung cấp tạo sinh',
   'checklist_action_config': 'Đi cấu hình',
   'checklist_task_project': 'Tạo dự án đầu tiên của bạn',
   'checklist_action_project': 'Dự án mới',

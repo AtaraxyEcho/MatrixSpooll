@@ -27,6 +27,9 @@ const ONE_PROJECT: ProjectSummary = {
   status: {},
 };
 
+/** 供应商缺失的 issue——清单只认 tab === "providers" 的 issue，智能体（agent）不影响。 */
+const PROVIDER_ISSUE = { key: "no-video-provider", tab: "providers" as const, label: "video_provider_not_configured" };
+
 function mountChecklist() {
   const { hook, navigate } = memoryLocation({ path: "/app" });
   render(
@@ -48,30 +51,30 @@ describe("GetStartedChecklist", () => {
   });
 
   it("lists the three tasks for a fresh admin session", () => {
-    useConfigStatusStore.setState({ isComplete: false });
+    useConfigStatusStore.setState({ issues: [PROVIDER_ISSUE] });
     useOnboardingStore.setState({ seen: false });
     useProjectsStore.setState({ projects: [] });
 
     mountChecklist();
 
-    expect(screen.getByText("配置供应商与智能体")).toBeInTheDocument();
+    expect(screen.getByText("配置生成供应商")).toBeInTheDocument();
     expect(screen.getByText("创建你的第一个项目")).toBeInTheDocument();
     expect(screen.getByText("认识界面（查看引导）")).toBeInTheDocument();
   });
 
   it("marks each task done as its condition flips", () => {
-    useConfigStatusStore.setState({ isComplete: true });
+    useConfigStatusStore.setState({ issues: [] });
     useProjectsStore.setState({ projects: [ONE_PROJECT] });
     useOnboardingStore.setState({ seen: true });
 
     mountChecklist();
 
     // 三项全勾——整卡消失，不给老用户常驻占位。
-    expect(screen.queryByText("配置供应商与智能体")).toBeNull();
+    expect(screen.queryByText("配置生成供应商")).toBeNull();
   });
 
   it("hides while the tour is running and reappears after it exits", async () => {
-    useConfigStatusStore.setState({ isComplete: false });
+    useConfigStatusStore.setState({ issues: [PROVIDER_ISSUE] });
     useOnboardingStore.setState({ seen: false });
     useProjectsStore.setState({ projects: [] });
 
@@ -86,27 +89,27 @@ describe("GetStartedChecklist", () => {
     await act(async () => {
       useOnboardingStore.setState({ active: false });
     });
-    expect(duringTour.container.textContent).toContain("配置供应商与智能体");
+    expect(duringTour.container.textContent).toContain("配置生成供应商");
     duringTour.unmount();
   });
 
   it("omits the config task for member-role users", () => {
     useAuthStore.setState({ role: "member" });
-    useConfigStatusStore.setState({ isComplete: false });
+    useConfigStatusStore.setState({ issues: [PROVIDER_ISSUE] });
     useOnboardingStore.setState({ seen: false });
     useProjectsStore.setState({ projects: [] });
 
     mountChecklist();
 
     // member 进不去系统设置，配置任务从清单整体消失，不打勾也不留「去配置」按钮。
-    expect(screen.queryByText("配置供应商与智能体")).toBeNull();
+    expect(screen.queryByText("配置生成供应商")).toBeNull();
     expect(screen.queryByRole("button", { name: "去配置" })).toBeNull();
     expect(screen.getByText("创建你的第一个项目")).toBeInTheDocument();
   });
 
   it("requests the create-project modal when its action button is clicked", () => {
     useAuthStore.setState({ role: "member" });
-    useConfigStatusStore.setState({ isComplete: true });
+    useConfigStatusStore.setState({ issues: [] });
     useOnboardingStore.setState({ seen: true });
     useProjectsStore.setState({ projects: [] });
 

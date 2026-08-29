@@ -11,9 +11,10 @@
  * 此刻通常刚走完导览，「认识界面」一项正好可以打勾。
  */
 
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "wouter";
-import { ArrowRight, CheckCircle2, Circle } from "lucide-react";
+import { ArrowRight, CheckCircle2, Circle, X } from "lucide-react";
 import { ROUTE_APP_SETTINGS } from "@/app-routes";
 import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
@@ -22,30 +23,52 @@ import { useOnboardingStore } from "@/stores/onboarding-store";
 import { useProjectsStore } from "@/stores/projects-store";
 import { canAccessSystemSettings } from "@/utils/access";
 
+/** 用户主动「跳过」清单后落盘的标志，永久不再渲染（区别于任务全部完成自动消失）。 */
+const DISMISS_STORAGE_KEY = "matrixspooll.get_started_dismissed";
+
 export function GetStartedChecklist() {
   const { t } = useTranslation("onboarding");
   const [, setLocation] = useLocation();
   const tourActive = useOnboardingStore((s) => s.active);
   const tourSeen = useOnboardingStore((s) => s.seen);
   const role = useAuthStore((s) => s.role);
-  const configComplete = useConfigStatusStore((s) => s.isComplete);
+  const configIssues = useConfigStatusStore((s) => s.issues);
   const projectCount = useProjectsStore((s) => s.projects.length);
   const requestCreateProject = useAppStore((s) => s.requestCreateProject);
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return window.localStorage.getItem(DISMISS_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
 
-  if (tourActive) return null;
+  if (tourActive || dismissed) return null;
 
   // 配置项只给得到达设置页的会话；member 没有系统设置权限，这项从清单里整体消失——
   // 标成「已完成」反而是误导（他们没有可完成的事）。
   const canConfigure = canAccessSystemSettings(role);
+  // 「开始使用」只要求供应商就绪，不把智能体（anthropic key）列为强制——智能体是
+  // 可选增强，缺失时设置页自有红点提示，不该卡住新用户的第一条生成。
+  const providersComplete = !configIssues.some((issue) => issue.tab === "providers");
   const projectDone = projectCount > 0;
   const tourDone = tourSeen === true;
+
+  const dismiss = () => {
+    try {
+      window.localStorage.setItem(DISMISS_STORAGE_KEY, "1");
+    } catch {
+      // localStorage 不可用（隐私模式 / quota）时静默失败，本次会话内仍生效
+    }
+    setDismissed(true);
+  };
 
   const tasks = [
     ...(canConfigure
       ? [
           {
             id: "config",
-            done: configComplete,
+            done: providersComplete,
             label: t("checklist_task_config"),
             actionLabel: t("checklist_action_config"),
             onAction: () => setLocation(`~${ROUTE_APP_SETTINGS}`),
@@ -82,9 +105,20 @@ export function GetStartedChecklist() {
           <h2 id="get-started-heading" className="m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">
             {t("checklist_eyebrow")}
           </h2>
-          <span className="font-mono text-[11px] tabular-nums text-text-3" aria-label={`${doneCount} / ${tasks.length}`}>
-            {doneCount}<span className="text-text-4"> / {tasks.length}</span>
-          </span>
+          <div className="flex shrink-0 items-center gap-2.5">
+            <span className="font-mono text-[11px] tabular-nums text-text-3" aria-label={`${doneCount} / ${tasks.length}`}>
+              {doneCount}<span className="text-text-4"> / {tasks.length}</span>
+            </span>
+            <button
+              type="button"
+              onClick={dismiss}
+              aria-label={t("checklist_skip")}
+              title={t("checklist_skip")}
+              className="icon-button"
+            >
+              <X className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
         </header>
 
         <ul className="m-0 list-none p-0">

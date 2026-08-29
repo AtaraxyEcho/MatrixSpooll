@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, BookOpen, Download, ExternalLink, FileText, Loader2 } from "lucide-react";
+import { BookOpen, ChevronLeft, Download, ExternalLink, FileText, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useLocation } from "wouter";
+import { Link } from "wouter";
 import { API, type LegalDisclosureResponse } from "@/api";
 import { ROUTE_APP } from "@/app-routes";
 
@@ -9,8 +9,7 @@ const LINK_CLASS =
   "focus-ring inline-flex items-center gap-1.5 break-all text-accent-2 transition-colors hover:text-accent";
 
 export function LegalPage() {
-  const { t } = useTranslation("dashboard");
-  const [, navigate] = useLocation();
+  const { t } = useTranslation(["dashboard", "common"]);
   const [legal, setLegal] = useState<LegalDisclosureResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -34,29 +33,27 @@ export function LegalPage() {
 
   return (
     <div className="min-h-screen bg-bg text-text">
-      <header className="sticky top-0 z-20 border-b border-hairline bg-bg/95 backdrop-blur">
-        <div className="mx-auto flex h-14 w-full max-w-5xl items-center gap-3 px-5 lg:px-8">
-          <button
-            type="button"
-            onClick={() => navigate(`~${ROUTE_APP}`)}
-            className="focus-ring grid h-8 w-8 place-items-center rounded-md text-text-3 transition-colors hover:bg-surface-2 hover:text-text"
-            aria-label={t("about_back_home")}
-            title={t("about_back_home")}
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-          </button>
-          <div className="h-5 w-px bg-hairline" aria-hidden />
-          <span className="text-[13px] font-semibold">MatrixSpooll</span>
-          <span className="text-[12px] text-text-4">/ {t("about")}</span>
+      <header className="app-topbar-surface">
+        <div className="app-topbar-content app-topbar-content--wide app-topbar-inner flex items-center">
+          <div className="flex min-w-0 items-center gap-3">
+            <Link
+              href={ROUTE_APP}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-hairline-soft bg-bg-grad-a/45 px-2.5 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              aria-label={t("common:back")}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+              <span className="hidden sm:inline">{t("common:back")}</span>
+            </Link>
+            <span aria-hidden className="h-7 w-px shrink-0 bg-hairline-soft" />
+            <h1 className="font-editorial truncate text-[21px] font-normal leading-none tracking-[-0.012em] text-text sm:text-[24px]">
+              {t("about_title")}
+            </h1>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl px-5 py-10 lg:px-8 lg:py-14">
-        <div className="max-w-2xl">
-          <p className="num text-[10px] font-semibold uppercase text-text-4">{t("about_kicker")}</p>
-          <h1 className="mt-2 text-2xl font-semibold">{t("about_title")}</h1>
-          <p className="mt-3 text-[13px] leading-6 text-text-3">{t("about_intro")}</p>
-        </div>
+      <main className="mx-auto w-full max-w-5xl px-5 py-8 lg:px-8 lg:py-12">
+        <p className="max-w-2xl text-[13px] leading-6 text-text-3">{t("about_intro")}</p>
 
         {failed ? (
           <p role="alert" className="mt-10 text-[13px] text-danger">
