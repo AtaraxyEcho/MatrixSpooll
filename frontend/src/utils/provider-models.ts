@@ -189,7 +189,9 @@ export function constrainDurations(
 // ---------------------------------------------------------------------------
 
 export const IMAGE_STANDARD_RESOLUTIONS = ["512px", "1K", "2K", "4K"];
-export const VIDEO_STANDARD_RESOLUTIONS = ["480p", "720p", "1080p", "4K"];
+// 2K 仅供自定义供应商的中转模型声明（内置视频模型未登记该档位），短边口径与后端
+// VIDEO_TIER_SHORT_EDGE 一致（1440）。
+export const VIDEO_STANDARD_RESOLUTIONS = ["480p", "720p", "1080p", "2K", "4K"];
 
 /** 项目里存了分辨率的两种形状：`model_settings` 以 `provider/model` 复合键，legacy 以裸 model_id。 */
 export interface ProjectResolutionSettings {

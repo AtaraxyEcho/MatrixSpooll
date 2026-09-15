@@ -161,7 +161,7 @@ export function mergeDiscoveredModels<T extends MergeRow>(
 }
 
 // ---------------------------------------------------------------------------
-// 能力覆盖（模型级，首批仅 last_frame）
+// 能力覆盖（模型级，稀疏字典）
 // ---------------------------------------------------------------------------
 
 /** 覆盖、系统判定与全局桶引用的行内快照：加载时拍一次，之后不变。 */
@@ -174,17 +174,21 @@ export interface CapabilitySnapshotRow {
 }
 
 /** 稀疏覆盖字典的唯一写入点：next === undefined 表示回到「跟随判定」，此时把该键从字典移除
- *  而不是写 false——键缺席与显式 false 在后端是两种语义（跟随判定 vs 强制关）。移除后字典为空
- *  则整体收敛回 null，避免把 {} 存进去让「有无覆盖」多出一种等价表示。 */
-export function withLastFrameOverride(
+ *  而不是写 false/空数组——键缺席与显式取值在后端是两种语义（跟随判定 vs 强制覆盖）。
+ *  序列维度（supported_resolutions / supported_aspect_ratios）的多选控件把「一个都没选」
+ *  折算成 undefined，与三态控件的「跟随判定」共用同一收敛：移除后字典为空则整体收敛回
+ *  null，避免把 {} 存进去让「有无覆盖」多出一种等价表示。 */
+export function withCapabilityOverride<K extends keyof CapabilityOverrides>(
   prev: CapabilityOverrides | null,
-  next: boolean | undefined,
+  key: K,
+  next: CapabilityOverrides[K] | undefined,
 ): CapabilityOverrides | null {
   const merged: CapabilityOverrides = { ...(prev ?? {}) };
-  if (next === undefined) {
-    delete merged.last_frame;
+  const isEmptySelection = Array.isArray(next) && next.length === 0;
+  if (next === undefined || isEmptySelection) {
+    delete merged[key];
   } else {
-    merged.last_frame = next;
+    merged[key] = next;
   }
   return Object.keys(merged).length > 0 ? merged : null;
 }
@@ -212,4 +216,14 @@ export function capabilityFieldsFor(
  *  留着旧提示会让新 model_id 顶着上一个模型的影响面；改回快照值原样取回。 */
 export function globalBucketRefsFor(row: CapabilitySnapshotRow, nextModelId: string): string[] {
   return nextModelId === row.original_model_id ? row.original_global_bucket_refs : [];
+}
+
+/** 档位/比例 chips 的选项合并：端点声明值在前——它们是 backend 请求构造实际接受的参数形态
+ *  （与「之前的」内置供应商同源声明），勾选即可、无需手填；通用标准档位补其后兜底（多数
+ *  endpoint 不声明档位维度）。按 casefold 去重，端点声明 "4k" 与通用 "4K" 只留声明值——
+ *  执行期如 anyfast 按精确匹配校验，大小写不一致会被拒。已存覆盖值不在合并结果里时仍会以
+ *  自定义 chip 渲染（renderOptions 的 customSelected 分支），不受去重影响。 */
+export function mergeDeclaredOptions(declared: readonly string[], standards: readonly string[]): string[] {
+  const seen = new Set(declared.map((value) => value.toLowerCase()));
+  return [...declared, ...standards.filter((value) => !seen.has(value.toLowerCase()))];
 }

@@ -28,8 +28,9 @@ DEFAULT_SHORT_EDGE = 720
 # 跨后端统一的档位 → 短边像素。各后端按自身约束（max_long_edge / max_total_pixels）夹取。
 # 图片：512px / 1K / 2K / 4K；DashScope wan 的 1K/2K/4K 复用本表。
 IMAGE_TIER_SHORT_EDGE: dict[str, int] = {"512px": 512, "1K": 1024, "2K": 1440, "4K": 2160}
-# 视频：480p / 720p / 1080p / 4K。
-VIDEO_TIER_SHORT_EDGE: dict[str, int] = {"480p": 480, "720p": 720, "1080p": 1080, "4K": 2160}
+# 视频：480p / 720p / 1080p / 2K / 4K。2K 主要供自定义供应商的中转模型声明（内置注册表的
+# 视频模型暂未登记该档位），短边口径与图片 2K 一致（1440）。
+VIDEO_TIER_SHORT_EDGE: dict[str, int] = {"480p": 480, "720p": 720, "1080p": 1080, "2K": 1440, "4K": 2160}
 
 # Image backends accept these product-level presets unless a backend performs a
 # stricter request-time validation. Expose them from the API so clients do not

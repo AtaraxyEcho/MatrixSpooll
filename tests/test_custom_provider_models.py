@@ -116,6 +116,8 @@ class TestCustomProviderModelTable:
             "currency",
             "supported_durations",
             "resolution",
+            "vendor_capabilities",
+            "vendor_capabilities_synced_at",
             "capability_overrides",
             "created_at",
             "updated_at",

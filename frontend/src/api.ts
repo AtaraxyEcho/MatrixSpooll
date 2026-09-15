@@ -3328,6 +3328,12 @@ class API {
     return this.request(`/custom-providers/${id}/test`, { method: "POST" });
   }
 
+  static async syncCustomProviderCapabilities(
+    id: number,
+  ): Promise<{ results: Array<{ model_id: string; status: string }> }> {
+    return this.request(`/custom-providers/${id}/sync-capabilities`, { method: "POST" });
+  }
+
   static async discoverAnthropicModels(
     data: AnthropicDiscoverRequest,
     options: { signal?: AbortSignal } = {},

@@ -421,6 +421,50 @@ class TestSaveValidatesOpenOverrides:
         assert resp.status_code == 422
 
     @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("key", "values"),
+        [
+            ("supported_resolutions", ["480p", "720p", "1080p"]),
+            ("supported_aspect_ratios", ["16:9", "9:16", "1:1"]),
+        ],
+    )
+    def test_sequence_override_round_trips_through_create(self, client: TestClient, key: str, values: list[str]):
+        """序列维度（分辨率档位 / 宽高比）经 create 写入并原样回显。"""
+        pid = _create_provider(client, [_video_model(capability_overrides={key: values})])
+
+        models = client.get(f"/api/v1/custom-providers/{pid}").json()["models"]
+        assert models[0]["capability_overrides"] == {key: values}
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("key", ["supported_resolutions", "supported_aspect_ratios"])
+    @pytest.mark.parametrize("bad_value", [[], ["480p", "  "], "480p", [1, 2], {"0": "480p"}])
+    def test_sequence_override_invalid_value_rejected(self, client: TestClient, key: str, bad_value):
+        """空列表 / 空白项 / 非列表 / 非 str 项都在写入侧拒绝：放行会让能力查询回空档位，
+        生成页把「模型缺档位声明」报成能力未配置。"""
+        resp = _post_provider(client, [_video_model(capability_overrides={key: bad_value})])
+        assert resp.status_code == 422
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("bad_ratio", ["16/9", "wide", "16", ":9", "16:", "16:9:9"])
+    def test_malformed_aspect_ratio_rejected(self, client: TestClient, bad_ratio: str):
+        """比例会随生成请求原样下发，自由文本只会在执行期被静默丢弃，写入侧按 宽:高 形态拒绝。"""
+        resp = _post_provider(
+            client,
+            [_video_model(capability_overrides={"supported_aspect_ratios": ["16:9", bad_ratio]})],
+        )
+        assert resp.status_code == 422
+        assert bad_ratio in resp.json()["detail"]
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("ratio", ["9:21", "4:5", "21:9", "1234:4321"])
+    def test_well_formed_custom_ratio_accepted(self, client: TestClient, ratio: str):
+        """手动输入的合法自定义比例照常落库回显（前端自定义输入的服务端兜底口径）。"""
+        pid = _create_provider(client, [_video_model(capability_overrides={"supported_aspect_ratios": [ratio]})])
+
+        models = client.get(f"/api/v1/custom-providers/{pid}").json()["models"]
+        assert models[0]["capability_overrides"] == {"supported_aspect_ratios": [ratio]}
+
+    @pytest.mark.integration
     def test_last_frame_rejected_on_endpoint_without_end_image_support(self, client: TestClient):
         """openai-video 的 delegate 不下传 end_image：开启覆盖只会让 UI 宣称支持、执行层仍静默丢帧。"""
         resp = _post_provider(client, [_video_model(capability_overrides={"last_frame": True})])
@@ -782,6 +826,24 @@ class TestResolverReturnsEffectiveCapabilities:
         caps = await self._resolve(session, pid, model_id=LAST_FRAME_MODEL)
         assert system_video_capabilities(endpoint=LAST_FRAME_ENDPOINT, model_id=LAST_FRAME_MODEL).last_frame is False
         assert caps["last_frame"] is True
+
+    @pytest.mark.integration
+    async def test_sequence_overrides_flow_through_resolver(self, session: AsyncSession):
+        """分辨率档位 / 宽高比覆盖经合成进入 resolver 输出：自定义模型生成页两个下拉的选项来源。
+
+        openai-video 端点未声明这两个维度（supported_* 为 None），不覆盖即回空——正是
+        「生成页分辨率/比例下拉无选项」的成因；覆盖后生成页即有档位可选。
+        """
+        pid = await self._seed(
+            session,
+            overrides={"supported_resolutions": ["480p", "720p"], "supported_aspect_ratios": ["16:9"]},
+        )
+
+        caps = await self._resolve(session, pid)
+        system = system_video_capabilities(endpoint=VIDEO_ENDPOINT, model_id=VIDEO_MODEL)
+        assert system.supported_resolutions in (None, ())
+        assert caps["supported_resolutions"] == ["480p", "720p"]
+        assert caps["supported_aspect_ratios"] == ["16:9"]
 
     @pytest.mark.integration
     async def test_override_ignored_when_endpoint_lacks_end_image_support(self, session: AsyncSession):

@@ -12,7 +12,7 @@ import logging
 from dataclasses import fields, replace
 from enum import Enum
 from types import UnionType
-from typing import get_args, get_type_hints
+from typing import get_args, get_origin, get_type_hints
 
 from lib.custom_provider.endpoints import get_endpoint_spec
 from lib.video_backends.base import ReferenceAudioMode, VideoCapabilities
@@ -217,7 +217,8 @@ def merge_overrides(caps: VideoCapabilities, applied: dict[str, object]) -> Vide
     枚举类型的字段实际持有 ``str``。当前枚举都是 ``StrEnum``，``==`` 侥幸仍成立，但
     ``is`` 比较与 ``.value`` 取值会分别静默判否和抛 ``AttributeError``——差别只在调用方
     碰巧用了哪种写法。还原是纯机械的：值已由 :func:`capability_value_matches` 按精确字面量
-    校验过，这里不做任何二次判定。
+    校验过，这里不做任何二次判定。序列维度同理：JSON 列读出是 list，还原成 dataclass 声明的
+    tuple，让内存中的能力对象与直接构造 ``VideoCapabilities`` 的形态一致。
     """
     if not applied:
         return caps
@@ -228,6 +229,8 @@ def merge_overrides(caps: VideoCapabilities, applied: dict[str, object]) -> Vide
             coerced[key] = inner(value)
         elif inner is float and isinstance(value, int) and not isinstance(value, bool):
             coerced[key] = float(value)
+        elif get_origin(inner) is tuple and isinstance(value, list):
+            coerced[key] = tuple(value)
         else:
             coerced[key] = value
     return replace(caps, **coerced)
@@ -311,6 +314,18 @@ def enforce_audio_capability_invariant(caps: VideoCapabilities, *, endpoint: str
     return replace(caps, reference_audio_mode=ReferenceAudioMode.NONE)
 
 
+def is_str_tuple_hint(expected: object) -> bool:
+    """该注解是否是 ``tuple[str, ...]`` / ``tuple[str, ...] | None`` 一类的字符串序列维度。
+
+    供序列维度的语义校验（写入侧判空列表/空串项）复用同一判定，不各自再摸类型注解。
+    """
+    inner, _optional = _unwrap_optional(expected)
+    if get_origin(inner) is not tuple:
+        return False
+    args = get_args(inner)
+    return args in {(str, ...), (str,)}
+
+
 def capability_value_matches(value: object, expected: object) -> bool:
     """覆盖值是否可直接落入该能力维度。
 
@@ -320,6 +335,11 @@ def capability_value_matches(value: object, expected: object) -> bool:
     可选维度（``T | None``）额外接受 ``None``，语义是「该后端不声明这项约束」，与字段默认值
     同义；其余取值按内层类型判定。浮点维度接受整数字面量——JSON 的 ``15`` 与 ``15.0`` 是同一
     个数，拒收前者只会让配置踩坑，与 bool/int 那种语义不同的类型混淆不是一回事。
+
+    序列维度（``tuple[str, ...] | None``，如 supported_resolutions / supported_aspect_ratios）
+    接受 list 或 tuple，元素须为 str——覆盖字典从 JSON 列读出、API 写入侧也是数组，tuple 形态
+    仅在直接调用合成函数时出现，两种形态都放行。这里只做类型判定；「列表非空 / 元素非空」的
+    语义校验在写入侧（``server/routers/custom_providers.py``）。
 
     枚举维度只认该枚举的合法取值字面量（覆盖字典从 JSON 列读出，成员本身不会跨序列化存活），
     不做大小写归一或近义词映射：词表外的值一律判否、回退系统判定，而不是猜一个最像的成员。
@@ -336,6 +356,8 @@ def capability_value_matches(value: object, expected: object) -> bool:
         return isinstance(value, int) and not isinstance(value, bool) and value >= 0
     if inner is float:
         return isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+    if is_str_tuple_hint(expected):
+        return isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value)
     if isinstance(inner, type) and issubclass(inner, Enum):
         return any(value == member.value for member in inner)
     return isinstance(value, inner) if isinstance(inner, type) else False

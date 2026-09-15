@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -88,7 +91,39 @@ class CustomProviderModel(TimestampMixin, Base):
     resolution: Mapped[str | None] = mapped_column(
         String(64), nullable=True
     )  # standard token ("1080p"/"2K") or native "WxH"
+    # 供应商文档拉取的能力声明。JSON 形态：{"capabilities": {稀疏能力字段}, "source_urls":
+    # [...], "parser_version": int, "etag": str}。与 capability_overrides 分列：本列只由同步
+    # 管线写入（用户不可改），合并时位于用户覆盖之下、端点判定之上；NULL = 从未拉取或不适用。
+    vendor_capabilities: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    vendor_capabilities_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # 模型级能力覆盖，稀疏字典，键名对齐 VideoCapabilities 字段名。NULL 或字典缺该键 =
     # 跟随系统判定；写死的能力维度列表不进 schema，向新维度开放无需迁移。合成语义由
     # lib.custom_provider.capabilities 唯一承载。
     capability_overrides: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+
+    @property
+    def vendor_declared_capabilities(self) -> dict[str, object] | None:
+        """文档声明的稀疏能力（剥掉 source_urls/parser_version/etag 元数据包装）。
+
+        手工改库可能写入任意 JSON 形态，非字典包装或空声明一律按「无声明」处理，不让脏数据
+        炸掉合成链。
+        """
+        raw = self.vendor_capabilities
+        if not isinstance(raw, dict):
+            return None
+        capabilities = raw.get("capabilities")
+        if not isinstance(capabilities, dict) or not capabilities:
+            return None
+        return capabilities
+
+    @property
+    def merged_capability_overrides(self) -> dict[str, object] | None:
+        """合成/执行层消费的稀疏覆盖：文档声明在下、用户覆盖在上（同键时用户胜）。
+
+        两层合成一个稀疏字典后，下游（synthesize / filter_valid_overrides / tier 合并）按既有
+        单字典语义工作，无需感知来源分层；来源分层只体现在 DB 两列与展示层。
+        """
+        vendor = self.vendor_declared_capabilities or {}
+        user = self.capability_overrides if isinstance(self.capability_overrides, dict) else None
+        merged = {**vendor, **(user or {})}
+        return merged or None

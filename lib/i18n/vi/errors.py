@@ -283,6 +283,16 @@ MESSAGES = {
     "capability_override_invalid_value": (
         "Năng lực {capability} của mô hình {model_id} có kiểu giá trị không hợp lệ; cần {expected}"
     ),
+    "capability_override_list_empty": (
+        "Năng lực {capability} của mô hình {model_id} không được là danh sách trống, và không mục nào được để trống"
+    ),
+    "capability_override_ratio_format": (
+        'Năng lực supported_aspect_ratios của mô hình {model_id} chứa tỉ lệ không hợp lệ "{item}"; '
+        "cần dạng rộng:cao (ví dụ 16:9)"
+    ),
+    "vendor_capability_no_source": (
+        "Địa chỉ nhà cung cấp {base_url} không nằm trong danh sách nguồn năng lực tích hợp; không thể đồng bộ tự động"
+    ),
     "capability_override_reference_audio_unsupported": (
         "Endpoint {endpoint} của mô hình {model_id} không gửi âm thanh tham chiếu; "
         "không thể ghi đè reference_audio_mode thành direct"

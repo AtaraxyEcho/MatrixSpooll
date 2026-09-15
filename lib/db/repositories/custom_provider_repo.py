@@ -107,11 +107,22 @@ class CustomProviderRepository(BaseRepository):
         return list(result.scalars())
 
     async def replace_models(self, provider_id: int, models: list[dict]) -> list[CustomProviderModel]:
-        """删除旧模型，插入新列表。返回新创建的模型。"""
+        """删除旧模型，插入新列表。返回新创建的模型。
+
+        供应商文档拉取的能力声明（vendor_capabilities 两列）是机器写入数据，不走表单回传，
+        整体替换语义下按 model_id 结转，否则用户每次编辑保存都会把声明抹掉；新列表里不存在的
+        model_id 自然丢弃。
+        """
+        previous = await self.list_models(provider_id)
+        carried = {m.model_id: (m.vendor_capabilities, m.vendor_capabilities_synced_at) for m in previous}
         await self.session.execute(delete(CustomProviderModel).where(CustomProviderModel.provider_id == provider_id))
         new_models = []
         for m in models:
             model = CustomProviderModel(provider_id=provider_id, **m)
+            if model.vendor_capabilities is None and model.model_id in carried:
+                vendor_caps, synced_at = carried[model.model_id]
+                model.vendor_capabilities = vendor_caps
+                model.vendor_capabilities_synced_at = synced_at
             self.session.add(model)
             new_models.append(model)
         await self.session.flush()

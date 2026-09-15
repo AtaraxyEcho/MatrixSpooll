@@ -265,6 +265,11 @@ MESSAGES = {
     "unsupported_discovery_format": "供应商 {discovery_format} 暂不支持连接测试",
     "capability_overrides_video_only": "模型 {model_id} 的 endpoint {endpoint} 不是视频类，不支持能力覆盖",
     "capability_override_invalid_value": "模型 {model_id} 的能力项 {capability} 取值类型不正确，应为 {expected}",
+    "capability_override_list_empty": ("模型 {model_id} 的能力项 {capability} 不能是空列表，且每一项都不能为空"),
+    "capability_override_ratio_format": (
+        "模型 {model_id} 的能力项 supported_aspect_ratios 含非法比例「{item}」，应为 宽:高 格式（如 16:9）"
+    ),
+    "vendor_capability_no_source": ("供应商地址 {base_url} 不在内置能力源列表中，无法自动同步；可在文档登记后使用"),
     "capability_override_last_frame_unsupported": "模型 {model_id} 的 endpoint {endpoint} 不支持尾帧生成，无法覆盖 last_frame 为开启",
     "capability_override_reference_audio_unsupported": (
         "模型 {model_id} 的 endpoint {endpoint} 不会下发参考音频，无法把 reference_audio_mode 覆盖为 direct"

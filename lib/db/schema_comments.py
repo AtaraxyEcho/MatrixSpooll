@@ -351,6 +351,8 @@ SCHEMA_COMMENTS: dict[str, tuple[str, dict[str, str]]] = {
             "currency": "计价币种。",
             "supported_durations": "支持时长。",
             "resolution": "默认分辨率。",
+            "vendor_capabilities": "供应商文档拉取的能力声明（同步管线写入，用户不可改；合并序：端点判定 < 本列 < 用户覆盖）。",
+            "vendor_capabilities_synced_at": "供应商能力声明的最近同步时间。",
             "capability_overrides": "能力覆盖。",
             "created_at": "创建时间。",
             "updated_at": "更新时间。",

@@ -5,9 +5,10 @@ import {
   urlPreviewFor,
   toggleDefaultReducer,
   mergeDiscoveredModels,
-  withLastFrameOverride,
+  withCapabilityOverride,
   capabilityFieldsFor,
   globalBucketRefsFor,
+  mergeDeclaredOptions,
   type CapabilitySnapshotRow,
 } from "@/components/pages/settings/customProviderHelpers";
 
@@ -281,27 +282,48 @@ describe("mergeDiscoveredModels", () => {
   });
 });
 
-describe("withLastFrameOverride", () => {
+describe("withCapabilityOverride", () => {
   it("跟随（undefined）从字典移除该键，而不是写成 false", () => {
-    expect(withLastFrameOverride({ last_frame: true }, undefined)).toBeNull();
-    expect(withLastFrameOverride({ last_frame: false }, undefined)).toBeNull();
+    expect(withCapabilityOverride({ last_frame: true }, "last_frame", undefined)).toBeNull();
+    expect(withCapabilityOverride({ last_frame: false }, "last_frame", undefined)).toBeNull();
   });
 
   it("强制开/关写入显式布尔值", () => {
-    expect(withLastFrameOverride(null, true)).toEqual({ last_frame: true });
-    expect(withLastFrameOverride(null, false)).toEqual({ last_frame: false });
+    expect(withCapabilityOverride(null, "last_frame", true)).toEqual({ last_frame: true });
+    expect(withCapabilityOverride(null, "last_frame", false)).toEqual({ last_frame: false });
   });
 
   it("保留字典里其他维度的覆盖，移除 last_frame 后不清空整个字典", () => {
     const prev = { last_frame: true, first_frame: false } as CapabilityOverrides;
-    expect(withLastFrameOverride(prev, undefined)).toEqual({ first_frame: false });
-    expect(withLastFrameOverride(prev, false)).toEqual({ last_frame: false, first_frame: false });
+    expect(withCapabilityOverride(prev, "last_frame", undefined)).toEqual({ first_frame: false });
+    expect(withCapabilityOverride(prev, "last_frame", false)).toEqual({
+      last_frame: false,
+      first_frame: false,
+    });
   });
 
   it("不改动入参字典", () => {
     const prev: CapabilityOverrides = { last_frame: true };
-    withLastFrameOverride(prev, undefined);
+    withCapabilityOverride(prev, "last_frame", undefined);
     expect(prev).toEqual({ last_frame: true });
+  });
+
+  it("序列维度写入数组值", () => {
+    expect(withCapabilityOverride(null, "supported_resolutions", ["480p", "720p"])).toEqual({
+      supported_resolutions: ["480p", "720p"],
+    });
+    expect(
+      withCapabilityOverride(
+        { supported_resolutions: ["480p"] },
+        "supported_aspect_ratios",
+        ["16:9"],
+      ),
+    ).toEqual({ supported_resolutions: ["480p"], supported_aspect_ratios: ["16:9"] });
+  });
+
+  it("序列维度空数组收敛为键移除（= 跟随端点判定）", () => {
+    expect(withCapabilityOverride({ supported_resolutions: ["480p"] }, "supported_resolutions", [])).toBeNull();
+    expect(withCapabilityOverride({ supported_aspect_ratios: ["16:9"] }, "supported_aspect_ratios", [])).toBeNull();
   });
 });
 
@@ -368,5 +390,34 @@ describe("capabilityFieldsFor", () => {
       expect(globalBucketRefsFor(snapshot, "kling-v")).toEqual([]);
       expect(globalBucketRefsFor(snapshot, "kling-v2")).toEqual(["default_video_backend_i2v"]);
     });
+  });
+});
+
+describe("mergeDeclaredOptions", () => {
+  const STANDARDS = ["480p", "720p", "1080p", "2K", "4K"];
+
+  it("端点声明值在前，通用档位按 casefold 去重后补后", () => {
+    // kling 端点声明的是 "4k"（小写），通用列表的 "4K" 不应重复出现
+    expect(mergeDeclaredOptions(["720p", "1080p", "4k"], STANDARDS)).toEqual([
+      "720p",
+      "1080p",
+      "4k",
+      "480p",
+      "2K",
+    ]);
+  });
+
+  it("端点未声明时原样返回通用档位", () => {
+    expect(mergeDeclaredOptions([], STANDARDS)).toEqual(STANDARDS);
+    expect(mergeDeclaredOptions([], [])).toEqual([]);
+  });
+
+  it("返回新数组，不改动两个入参", () => {
+    const declared = ["1080p"];
+    const standards = ["1080p"];
+    const merged = mergeDeclaredOptions(declared, standards);
+    expect(merged).toEqual(["1080p"]);
+    expect(merged).not.toBe(standards);
+    expect(declared).toEqual(["1080p"]);
   });
 });

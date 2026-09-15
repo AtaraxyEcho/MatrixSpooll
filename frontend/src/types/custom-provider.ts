@@ -51,6 +51,10 @@ export interface CustomProviderModelInfo {
   system_capabilities: VideoCapabilityFlags | null;
   /** 用户覆盖（稀疏），与 system_capabilities 合并即为生效值；无覆盖为 null。 */
   capability_overrides: CapabilityOverrides | null;
+  /** 供应商文档拉取的能力声明（稀疏）；从未拉取或不适用为 null/缺席。合并层级位于用户覆盖之下。 */
+  vendor_capabilities?: CapabilityOverrides | null;
+  /** 上次拉取时间（ISO）；null/缺席 = 从未拉取。 */
+  vendor_capabilities_synced_at?: string | null;
   /** 正在引用该模型的全局 system_settings 键名（如 default_video_backend_i2v）；未被引用为 null。 */
   global_bucket_refs: string[] | null;
 }
@@ -68,10 +72,15 @@ export interface VideoCapabilityFlags {
   max_reference_images: number;
   reference_audio_mode: ReferenceAudioMode;
   max_reference_audio_count: number;
+  /** 系统判定的分辨率档位；null/缺席 = 该端点未声明（自定义模型生成页的档位选项即由此兜底）。 */
+  supported_resolutions?: string[] | null;
+  /** 系统判定的宽高比；null/缺席 = 该端点未声明。 */
+  supported_aspect_ratios?: string[] | null;
 }
 
 /** 稀疏覆盖字典：键缺席 = 跟随系统判定。
- *  当前后端开放 last_frame / reference_audio_mode / max_reference_audio_count。 */
+ *  当前后端开放 last_frame / reference_audio_mode / max_reference_audio_count /
+ *  supported_resolutions / supported_aspect_ratios。 */
 export type CapabilityOverrides = Partial<VideoCapabilityFlags>;
 
 export interface DiscoveredModel {

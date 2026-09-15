@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import asdict
 from typing import Annotated, Literal
@@ -27,9 +28,14 @@ from lib.custom_provider.capabilities import (
     capability_type_name,
     capability_value_matches,
     filter_valid_overrides,
+    is_str_tuple_hint,
     resolve_audio_pair,
     strip_incoherent_audio_overrides,
     system_video_capabilities,
+)
+from lib.custom_provider.capability_sync import (
+    schedule_provider_capability_sync,
+    sync_provider_capabilities,
 )
 from lib.custom_provider.endpoints import (
     ENDPOINT_REGISTRY,
@@ -38,7 +44,8 @@ from lib.custom_provider.endpoints import (
     endpoint_to_media_type,
     get_endpoint_spec,
 )
-from lib.db import get_async_session
+from lib.custom_provider.vendor_sources import match_vendor_source
+from lib.db import async_session_factory, get_async_session
 from lib.db.base import dt_to_iso
 from lib.db.repositories.custom_provider_repo import CustomProviderRepository
 from lib.i18n import Translator
@@ -64,7 +71,17 @@ MaxWorkers = Annotated[int | None, Field(default=None, ge=1)]
 
 # 开放给用户覆盖的能力维度。DB 列与合成函数对 VideoCapabilities 全字段通用，写入侧在此收窄：
 # 未列入的维度即便是合法字段名也不落库，扩容只需往这里加键名，无需 DB 迁移或改合成语义。
-CAPABILITY_OVERRIDE_ALLOWLIST = frozenset({"last_frame", "reference_audio_mode", "max_reference_audio_count"})
+# supported_resolutions / supported_aspect_ratios 是序列维度：UI 的多选档位/比例、生成页
+# 分辨率与比例下拉的选项来源（自定义模型无注册表档位可兜底）。
+CAPABILITY_OVERRIDE_ALLOWLIST = frozenset(
+    {
+        "last_frame",
+        "reference_audio_mode",
+        "max_reference_audio_count",
+        "supported_resolutions",
+        "supported_aspect_ratios",
+    }
+)
 
 # 白名单必须是 VideoCapabilities 字段名的子集：值类型校验直接按字段名取期望类型，键名写错
 # 要在导入期炸掉，而不是等到一次真实写入才 KeyError 成 500。
@@ -81,6 +98,9 @@ def _narrow_to_allowlist(overrides: dict[str, object]) -> dict[str, object]:
 
 
 logger = logging.getLogger(__name__)
+
+# 宽高比 token 形态（宽:高，各 1-4 位数字），与内置注册表与前端可选集的取值宽度一致。
+_ASPECT_RATIO_PATTERN = re.compile(r"\d{1,4}:\d{1,4}")
 
 router = APIRouter(prefix="/custom-providers", tags=["Custom Providers"])
 
@@ -243,6 +263,10 @@ class ModelResponse(BaseModel):
     system_capabilities: dict[str, object] | None = None
     # 用户覆盖（稀疏字典），与 system_capabilities 平凡合并即为生效值。
     capability_overrides: dict[str, object] | None = None
+    # 供应商文档拉取的能力声明（稀疏字典）；从未拉取或不适用为 None。合并层级位于用户覆盖
+    # 之下、端点判定之上（见 CustomProviderModel.merged_capability_overrides）。
+    vendor_capabilities: dict[str, object] | None = None
+    vendor_capabilities_synced_at: str | None = None
     # 正在引用该模型的全局 system_settings 键名（如 default_video_backend_i2v）；未被引用为
     # None。只查 DB 全局配置，不扫描项目文件（`docs/adr/0054`）；前端据此渲染非阻塞提示。
     global_bucket_refs: list[str] | None = None
@@ -306,6 +330,17 @@ class EndpointCatalogResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _maybe_schedule_capability_sync(provider_id: int, base_url: str | None) -> None:
+    """base_url 命中内置能力源时，保存后异步刷新该供应商的文档能力声明。
+
+    fire-and-forget：同步结果不回传本次响应（模型行的 synced_at 与徽章随下次读取呈现），
+    失败只落日志，绝不影响保存本身。
+    """
+    if match_vendor_source(base_url) is None:
+        return
+    schedule_provider_capability_sync(provider_id, async_session_factory)
+
+
 def _system_capabilities_for(endpoint: str, model_id: str) -> dict[str, object] | None:
     """读该 model 的系统判定能力（四字段全量）；非 video endpoint 返回 None。
 
@@ -366,6 +401,10 @@ def _model_to_response(m, global_bucket_refs: list[str] | None = None) -> ModelR
     return ModelResponse(
         system_capabilities=_system_capabilities_for(m.endpoint, m.model_id),
         capability_overrides=_effective_overrides_for_response(m.endpoint, m.model_id, m.capability_overrides),
+        vendor_capabilities=m.vendor_declared_capabilities,
+        vendor_capabilities_synced_at=(
+            dt_to_iso(m.vendor_capabilities_synced_at) if m.vendor_capabilities_synced_at else None
+        ),
         id=m.id,
         model_id=m.model_id,
         display_name=m.display_name,
@@ -465,6 +504,33 @@ def _check_capability_overrides(
                     expected=capability_type_name(expected),
                 ),
             )
+        # 序列维度的语义校验（类型判定在 capability_value_matches）：空列表 / 空字符串项会让
+        # 能力查询回空档位，生成页把「模型缺能力声明」报成能力未配置——宁可在写入侧拒绝，
+        # 也不让这种自断档位的配置落库。
+        if is_str_tuple_hint(expected) and isinstance(value, (list, tuple)):
+            if len(value) == 0 or any(not isinstance(item, str) or not item.strip() for item in value):
+                raise HTTPException(
+                    status_code=422,
+                    detail=_t(
+                        "capability_override_list_empty",
+                        model_id=model_id,
+                        capability=key,
+                    ),
+                )
+        # 宽高比维度额外约束 token 形态（宽:高，如 16:9）：比例会随生成请求原样下发给供应商，
+        # 自由文本只会生成期被静默丢弃或拒收，用户无从排障。「adaptive」是首帧自适应的执行期
+        # 改写字面量（first_frame_ratio_adaptive_only），不由用户声明，故一并排除。
+        if key == "supported_aspect_ratios" and isinstance(value, (list, tuple)):
+            malformed = next((item for item in value if not _ASPECT_RATIO_PATTERN.fullmatch(item)), None)
+            if malformed is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=_t(
+                        "capability_override_ratio_format",
+                        model_id=model_id,
+                        item=malformed,
+                    ),
+                )
         # last_frame 覆盖为 True 时，endpoint 的 delegate.generate() 必须真的会读取
         # end_image 下传尾帧约束——否则覆盖只是让合成层宣称支持，执行层仍静默生成无约束视频。
         if key == "last_frame" and value is True and not get_endpoint_spec(endpoint).end_image_capable:
@@ -630,6 +696,7 @@ async def create_provider(
     await _invalidate_caches(request)
     await session.refresh(provider)
     models = await repo.list_models(provider.id)
+    _maybe_schedule_capability_sync(provider.id, provider.base_url)
     return _provider_to_response(provider, models, await _global_bucket_refs_for_provider(session, provider.id))
 
 
@@ -696,6 +763,7 @@ async def update_provider(
     await _invalidate_caches(request)
     await session.refresh(provider)
     models = await repo.list_models(provider_id)
+    _maybe_schedule_capability_sync(provider_id, provider.base_url)
     return _provider_to_response(provider, models, await _global_bucket_refs_for_provider(session, provider_id))
 
 
@@ -731,6 +799,7 @@ async def full_update_provider(
     await _invalidate_caches(request)
     await session.refresh(provider)
     models = await repo.list_models(provider_id)
+    _maybe_schedule_capability_sync(provider_id, provider.base_url)
     return _provider_to_response(provider, models, await _global_bucket_refs_for_provider(session, provider_id))
 
 
@@ -806,8 +875,31 @@ async def replace_models(
 
     await session.commit()
     await _invalidate_caches(request)
+    _maybe_schedule_capability_sync(provider_id, provider.base_url)
     refs = await _global_bucket_refs_for_provider(session, provider_id)
     return [_model_to_response(m, refs.get(m.model_id)) for m in new_models]
+
+
+@router.post("/{provider_id}/sync-capabilities", dependencies=[Depends(require_admin)])
+async def sync_capabilities(
+    provider_id: int,
+    request: Request,
+    _t: Translator,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """手动触发能力文档同步（该供应商全部启用中的视频模型），逐模型返回结果状态。
+
+    使用独立的 session factory 完成写入：网络 I/O 期间不长期占用请求会话。
+    """
+    repo = CustomProviderRepository(session)
+    provider = await repo.get_provider(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail=_t("provider_not_found"))
+    if match_vendor_source(provider.base_url) is None:
+        raise HTTPException(status_code=400, detail=_t("vendor_capability_no_source", base_url=provider.base_url))
+    results = await sync_provider_capabilities(async_session_factory, provider_id)
+    await _invalidate_caches(request)
+    return {"results": results}
 
 
 # ---------------------------------------------------------------------------

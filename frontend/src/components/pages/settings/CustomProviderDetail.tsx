@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, type CSSProperties } from "react";
-import { Loader2, Pencil, Trash2, CheckCircle2, XCircle } from "lucide-react";
+import { Loader2, Pencil, Trash2, CheckCircle2, XCircle, FileText } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { API } from "@/api";
 import { useAppStore } from "@/stores/app-store";
@@ -52,6 +52,7 @@ export function CustomProviderDetail({ providerId, onDeleted, onSaved }: CustomP
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const showError = useCallback((msg: string) => useAppStore.getState().pushToast(msg, "error"), []);
 
   const fetchProvider = useCallback(async () => {
@@ -101,6 +102,29 @@ export function CustomProviderDetail({ providerId, onDeleted, onSaved }: CustomP
       setTesting(false);
     }
   }, [provider, t]);
+
+  const handleSyncCapabilities = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const res = await API.syncCustomProviderCapabilities(providerId);
+      // 声明随本次同步落库，但不落任何项目字段；能力查询靠 revision 感知重取。
+      useCapabilitiesStore.getState().invalidate();
+      void fetchProvider();
+      // no_data/not_found 多为非生成端点（任务查询、资产管理等）或未声明参数的模型，属正常
+      // 现象而非失败，与 fetch_failed 分开计数呈现。
+      const updated = res.results.filter((r) => r.status === "synced").length;
+      const unchanged = res.results.filter((r) => r.status === "unchanged").length;
+      const nodecl = res.results.filter((r) => r.status === "no_data" || r.status === "not_found").length;
+      const failed = res.results.filter((r) => r.status === "fetch_failed").length;
+      useAppStore
+        .getState()
+        .pushToast(t("sync_capabilities_done", { updated, unchanged, nodecl, failed }), "success");
+    } catch (e) {
+      showError(errMsg(e, t("sync_capabilities_failed")));
+    } finally {
+      setSyncing(false);
+    }
+  }, [providerId, fetchProvider, showError, t]);
 
   const handleFormSaved = useCallback(() => {
     setEditing(false);
@@ -242,6 +266,24 @@ export function CustomProviderDetail({ providerId, onDeleted, onSaved }: CustomP
                         {t("default_label")}
                       </span>
                     )}
+                    {m.vendor_capabilities && (
+                      <span
+                        className="rounded-full border border-hairline-soft bg-bg-grad-a/55 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-3"
+                        title={t("vendor_capability_badge_title", {
+                          time: m.vendor_capabilities_synced_at
+                            ? formatDate(m.vendor_capabilities_synced_at, i18n.language, {
+                                year: "numeric",
+                                month: "2-digit",
+                                day: "2-digit",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })
+                            : "—",
+                        })}
+                      >
+                        {t("vendor_capability_badge")}
+                      </span>
+                    )}
                     {m.supported_durations && m.supported_durations.length > 0 && (
                       <span className="font-mono text-[10.5px] text-text-4">
                         {t("supported_durations_summary", {
@@ -322,6 +364,25 @@ export function CustomProviderDetail({ providerId, onDeleted, onSaved }: CustomP
               </>
             ) : (
               t("test_connection")
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void handleSyncCapabilities()}
+            disabled={syncing}
+            className={GHOST_BTN_CLS}
+          >
+            {syncing ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" />
+                {t("sync_capabilities_running")}
+              </>
+            ) : (
+              <>
+                <FileText className="h-3.5 w-3.5" />
+                {t("sync_capabilities_button")}
+              </>
             )}
           </button>
 

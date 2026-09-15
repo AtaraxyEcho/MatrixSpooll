@@ -265,6 +265,16 @@ MESSAGES = {
     "capability_override_invalid_value": (
         "Capability {capability} of model {model_id} has an invalid value type; expected {expected}"
     ),
+    "capability_override_list_empty": (
+        "Capability {capability} of model {model_id} must not be an empty list, and none of its items may be empty"
+    ),
+    "capability_override_ratio_format": (
+        'Capability supported_aspect_ratios of model {model_id} contains an invalid ratio "{item}"; '
+        "expected width:height (e.g. 16:9)"
+    ),
+    "vendor_capability_no_source": (
+        "Provider address {base_url} is not in the built-in capability source list; automatic sync is unavailable"
+    ),
     "capability_override_last_frame_unsupported": (
         "Endpoint {endpoint} of model {model_id} does not support last-frame generation; "
         "last_frame cannot be overridden to true"
