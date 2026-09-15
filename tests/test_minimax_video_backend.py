@@ -337,6 +337,13 @@ class TestH3V2Capabilities:
         assert caps.max_reference_audio_total_seconds == 15.0
         assert caps.max_prompt_chars == 7000
         assert caps.first_frame_ratio_adaptive_only is True
+        # 输出档位与 _v2_output_specs 同读 registry canonical 条目（768P/2K），不另设常量副本
+        assert caps.supported_resolutions == ("768p", "2k")
+
+    def test_relay_variant_declares_canonical_output_specs(self):
+        """中转变体命名（-nsfw 后缀）经 _is_h3_model 判真后同样按 canonical 名取输出档位。"""
+        caps = MiniMaxVideoBackend.video_capabilities_for_model("MiniMax-H3-nsfw")
+        assert caps.supported_resolutions == ("768p", "2k")
 
     def test_first_frame_ratio_resolves_to_adaptive(self):
         """不只断言声明位为真：走共享施加逻辑核实首帧任务实际拿到 adaptive。"""

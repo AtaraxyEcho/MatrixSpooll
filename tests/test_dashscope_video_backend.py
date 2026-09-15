@@ -121,6 +121,48 @@ class TestCapabilities:
         assert r2v.max_reference_images == 9
 
     @pytest.mark.unit
+    def test_resolution_tiers_declared_per_profile(self):
+        """各 profile 声明官方文档核实的输出档位：请求构造 .upper() 下发，声明统一小写形态。
+
+        wan2.2/2.6 系此前未登记 profile、整体回落 _DEFAULT_PROFILE（无档位声明）；补登记只
+        加输出档位，输入维度保持默认值。wan2.2 各变体档位不同（plus 系无 720P 档）。
+        """
+        from lib.video_backends.dashscope import DashScopeVideoBackend
+
+        caps = DashScopeVideoBackend.video_capabilities_for_model
+        assert caps("happyhorse-1.0-t2v").supported_resolutions == ("480p", "720p", "1080p")
+        assert caps("happyhorse-1.1-r2v").supported_resolutions == ("480p", "720p", "1080p")
+        assert caps("wan2.7-t2v").supported_resolutions == ("720p", "1080p")
+        assert caps("wan2.7-r2v").supported_resolutions == ("720p", "1080p")
+        assert caps("wan3.0-video").supported_resolutions == ("480p", "720p", "1080p")
+        assert caps("wan2.6-i2v").supported_resolutions == ("720p", "1080p")
+        assert caps("wan2.6-t2v").supported_resolutions == ("720p", "1080p")
+        assert caps("wan2.2-t2v-plus").supported_resolutions == ("480p", "1080p")
+        assert caps("wan2.2-i2v-flash").supported_resolutions == ("480p", "720p", "1080p")
+        assert caps("wan2.2-i2v-plus").supported_resolutions == ("480p", "1080p")
+        assert caps("wan2.2-kf2v-flash").supported_resolutions == ("480p", "720p", "1080p")
+
+    @pytest.mark.unit
+    def test_relay_suffixed_variants_inherit_variant_profile(self):
+        """中转装饰后缀（-nsfw 等）经边界匹配归并到对应变体档，不落 _DEFAULT_PROFILE；
+        粘连后缀（无分隔符）仍不得命中——与参考图上限的防误判同一原则。"""
+        from lib.video_backends.dashscope import DashScopeVideoBackend
+
+        caps = DashScopeVideoBackend.video_capabilities_for_model
+        assert caps("wan2.7-i2v-nsfw").supported_resolutions == ("720p", "1080p")
+        assert caps("wan2.2-t2v-plus-nsfw").supported_resolutions == ("480p", "1080p")
+        assert caps("wan2.6-i2v-flash-nsfw").supported_resolutions == ("720p", "1080p")
+        assert caps("wan2.6-i2vnsfw").supported_resolutions is None
+
+    @pytest.mark.unit
+    def test_wan26_flash_key_precedes_generic_key(self):
+        """ "wan2.6-i2v" 是 "wan2.6-i2v-flash" 的子串：字典序必须让更具体的 flash 档先命中，
+        否则未来两档声明分化时 flash 变体会被静默错配到通用档。"""
+        from lib.video_backends.dashscope import _MODEL_PROFILES, _find_known_profile_key
+
+        assert _find_known_profile_key("wan2.6-i2v-flash", _MODEL_PROFILES) == "wan2.6-i2v-flash"
+
+    @pytest.mark.unit
     def test_default_model_is_happyhorse_11_i2v(self):
         from lib.video_backends.dashscope import DEFAULT_MODEL, DashScopeVideoBackend
 

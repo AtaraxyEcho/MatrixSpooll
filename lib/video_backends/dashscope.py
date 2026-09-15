@@ -331,45 +331,64 @@ def _normalize_wan27_alias(family_suffix: str) -> str:
 # wan2.7-r2v 额外支持首帧与参考音色。
 _HAPPYHORSE_ASPECT_RATIOS = ("16:9", "9:16", "1:1", "4:3", "3:4", "4:5", "5:4", "9:21", "21:9")
 _WAN_ASPECT_RATIOS = ("16:9", "9:16", "1:1", "4:3", "3:4")
+# 输出分辨率档位，取官方 API 文档对各型号的声明值（官方页索引见
+# docs/api-docs/endpoints/dashscope-async-video.md）。请求构造把档位 .upper() 后下发，
+# 声明统一用小写 p 形态，与 registry / 其余 backend 的档位书写一致。
+_HAPPYHORSE_RESOLUTIONS = ("480p", "720p", "1080p")
+_WAN27_RESOLUTIONS = ("720p", "1080p")
+_WAN26_RESOLUTIONS = ("720p", "1080p")
+_WAN3_RESOLUTIONS = ("480p", "720p", "1080p")
 _MODEL_PROFILES: dict[str, VideoCapabilities] = {
     "happyhorse-1.1-t2v": VideoCapabilities(
-        text_to_video=True, first_frame=False, supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS
+        text_to_video=True,
+        first_frame=False,
+        supported_resolutions=_HAPPYHORSE_RESOLUTIONS,
+        supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS,
     ),
     "happyhorse-1.1-i2v": VideoCapabilities(
         text_to_video=False,
         first_frame=True,
+        supported_resolutions=_HAPPYHORSE_RESOLUTIONS,
         supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS,
     ),
     "happyhorse-1.1-r2v": VideoCapabilities(
         text_to_video=False,
         first_frame=False,
         max_reference_images=9,
+        supported_resolutions=_HAPPYHORSE_RESOLUTIONS,
         supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS,
     ),
     "happyhorse-1.0-t2v": VideoCapabilities(
-        text_to_video=True, first_frame=False, supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS
+        text_to_video=True,
+        first_frame=False,
+        supported_resolutions=_HAPPYHORSE_RESOLUTIONS,
+        supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS,
     ),
     "happyhorse-1.0-i2v": VideoCapabilities(
         text_to_video=False,
         first_frame=True,
+        supported_resolutions=_HAPPYHORSE_RESOLUTIONS,
         supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS,
     ),
     "happyhorse-1.0-r2v": VideoCapabilities(
         text_to_video=False,
         first_frame=False,
         max_reference_images=9,
+        supported_resolutions=_HAPPYHORSE_RESOLUTIONS,
         supported_aspect_ratios=_HAPPYHORSE_ASPECT_RATIOS,
     ),
     "wan2.7-t2v": VideoCapabilities(
         text_to_video=True,
         first_frame=False,
         max_prompt_chars=_WAN27_MAX_PROMPT_CHARS,
+        supported_resolutions=_WAN27_RESOLUTIONS,
         supported_aspect_ratios=_WAN_ASPECT_RATIOS,
     ),
     "wan2.7-i2v": VideoCapabilities(
         text_to_video=False,
         first_frame=True,
         max_prompt_chars=_WAN27_MAX_PROMPT_CHARS,
+        supported_resolutions=_WAN27_RESOLUTIONS,
         supported_aspect_ratios=_WAN_ASPECT_RATIOS,
     ),
     # 带首帧的参考生视频是 wan2.7-r2v 的官方形态；参考视频须先上传到临时 OSS，
@@ -380,6 +399,7 @@ _MODEL_PROFILES: dict[str, VideoCapabilities] = {
         max_reference_images=_WAN27_R2V_MAX_REFERENCE,
         max_reference_videos=_WAN27_R2V_MAX_REFERENCE,
         max_reference_media_count=_WAN27_R2V_MAX_REFERENCE,
+        supported_resolutions=_WAN27_RESOLUTIONS,
         supported_aspect_ratios=("16:9", "9:16", "1:1", "4:3", "3:4"),
         supported_durations_with_reference_video=tuple(range(2, 11)),
         reference_audio_mode=ReferenceAudioMode.DIRECT,
@@ -389,6 +409,21 @@ _MODEL_PROFILES: dict[str, VideoCapabilities] = {
         reference_audio_per_image=True,
         max_prompt_chars=_WAN27_MAX_PROMPT_CHARS,
     ),
+    # wan2.6 / wan2.2 系列：命名已收敛出 t2v/i2v 档位（classify_wan_model 的 wan2x_dot family、
+    # has_known_modality=True），此前未登记 profile 一律回落 _DEFAULT_PROFILE。此处只声明官方
+    # 文档核实的输出档位（索引见 docs/api-docs/endpoints/dashscope-async-video.md），其余输入
+    # 维度保持默认值——与回落 _DEFAULT_PROFILE 的既有生效行为一致，不借机翻转未核实的能力位。
+    # wan2.2 各变体档位不同（t2v-plus / i2v-plus 官方无 720P 档），须逐变体登记；中转后缀
+    # （-nsfw 等）由 _find_known_profile_key 的边界匹配归并到对应变体。
+    "wan2.6-i2v-flash": VideoCapabilities(supported_resolutions=_WAN26_RESOLUTIONS),
+    # 注意 "wan2.6-i2v" 是 "wan2.6-i2v-flash" 的子串，本条必须排在其后，边界匹配才会先命中
+    # 更具体的 flash 档（当前两者档位相同，仅作次序约束防止未来分化时静默错档）。
+    "wan2.6-i2v": VideoCapabilities(supported_resolutions=_WAN26_RESOLUTIONS),
+    "wan2.6-t2v": VideoCapabilities(supported_resolutions=_WAN26_RESOLUTIONS),
+    "wan2.2-t2v-plus": VideoCapabilities(supported_resolutions=("480p", "1080p")),
+    "wan2.2-i2v-flash": VideoCapabilities(supported_resolutions=("480p", "720p", "1080p")),
+    "wan2.2-i2v-plus": VideoCapabilities(supported_resolutions=("480p", "1080p")),
+    "wan2.2-kf2v-flash": VideoCapabilities(supported_resolutions=("480p", "720p", "1080p")),
     # wan3.0 的参考音频是 media 数组里的独立条目（不像 2.7 挂在参考素材项上），故不声明
     # reference_audio_per_image，改由 max_reference_audio_total_seconds 约束总量。
     _WAN3_MODEL_KEY: VideoCapabilities(
@@ -400,6 +435,7 @@ _MODEL_PROFILES: dict[str, VideoCapabilities] = {
         max_reference_audio_count=_WAN3_MAX_REFERENCE_AUDIO,
         max_reference_audio_total_seconds=_WAN3_MAX_REFERENCE_AUDIO_TOTAL_SECONDS,
         max_prompt_chars=_WAN3_MAX_PROMPT_CHARS,
+        supported_resolutions=_WAN3_RESOLUTIONS,
         supported_aspect_ratios=_WAN_ASPECT_RATIOS,
     ),
 }
@@ -456,7 +492,9 @@ def _profile_for_model(model: str | None) -> VideoCapabilities:
     if classification.profile_key is not None:
         normalized = classification.profile_key
     # 各 profile key（happyhorse-{1.0,1.1}-{t2v,i2v,r2v} / wan2.7-{t2v,i2v,r2v} /
-    # wan3.0-video）互不为子串，无歧义，_find_known_profile_key 的边界匹配可安全逐一试探。
+    # wan2.6-{t2v,i2v,i2v-flash} / wan2.2-* / wan3.0-video）唯一的子串对是
+    # "wan2.6-i2v" ⊂ "wan2.6-i2v-flash"，已在字典里把更具体的 flash 档排在前面，边界匹配
+    # 先命中它；其余两两互不为子串，_find_known_profile_key 的边界匹配可安全逐一试探。
     known = _find_known_profile_key(normalized, _MODEL_PROFILES)
     if known is not None:
         return _MODEL_PROFILES[known]

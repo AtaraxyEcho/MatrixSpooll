@@ -109,6 +109,19 @@ class TestConstructionAndCapabilities:
         assert caps.supported_resolutions == ("720p", "1080p")
         assert caps.supported_durations == (5, 10)
 
+    @pytest.mark.unit
+    def test_relay_dotted_version_aliases_resolve_registered_caps(self):
+        """中转站把官方型号名的 "v" 前缀省略成点分版本号（kling-v3 → kling-3.0）：归一化后
+        精确命中已登记档，档位/比例/时长随之可见；未登记 id 仍保守回落、不声明参数。"""
+        turbo = KlingVideoBackend.video_capabilities_for_model("kling-2.5-turbo")
+        assert turbo.supported_resolutions == ("720p", "1080p")
+        v3 = KlingVideoBackend.video_capabilities_for_model("kling-3.0")
+        assert v3.supported_resolutions == ("720p", "1080p", "4k")
+        omni = KlingVideoBackend.video_capabilities_for_model("kling-3.0-omni")
+        assert omni.supported_resolutions == ("720p", "1080p", "4k")
+        for unregistered in ("kling-2.0-master", "kling-2.1", "kling-3.0-turbo", "kling-o1", "kling-v1"):
+            assert KlingVideoBackend.video_capabilities_for_model(unregistered).supported_resolutions is None
+
 
 class TestVideoCapabilitiesForTier:
     """有请求上下文（service_tier）时的 last_frame 收窄——供 media_generator 转发 end_image 前调用。"""

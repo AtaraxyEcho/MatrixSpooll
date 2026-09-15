@@ -158,9 +158,15 @@ def _normalize_model_id(model: str) -> str:
     """Normalize documented Kling aliases without guessing unknown model families."""
 
     key = model.replace(":", "/").rsplit("/", 1)[-1].strip().lower()
+    # 中转站普遍把官方 API 型号名的 "v" 前缀省略成点分版本号（kling-v2-6 → kling-2.6）。
+    # 仅折叠 _KLING_VIDEO_CAPS 已登记的型号：未登记的 id（kling-2.0-master / kling-v1 /
+    # kling-voices 等）原样保留走保守默认，与 _lookup_video_caps 的「绝不按子串猜」同一原则。
     return {
         "kling-2.6": "kling-v2-6",
         "kling-2-6": "kling-v2-6",
+        "kling-2.5-turbo": "kling-v2-5-turbo",
+        "kling-3.0": "kling-v3",
+        "kling-3.0-omni": "kling-v3-omni",
     }.get(key, key)
 
 

@@ -173,6 +173,19 @@ def _is_h3_model(model: str | None) -> bool:
     return "minimax-h3" in (model or "").lower()
 
 
+def _h3_declared_resolutions() -> tuple[str, ...] | None:
+    """H3 输出档位声明：与 ``_v2_output_specs`` 同读 registry 的 canonical 条目。
+
+    档位的唯一真相源是 registry（请求期 ``_v2_output_specs`` 据此 fail-loud 校验），声明侧
+    不另设常量副本——两处各写一份改档时必然漂移。registry 条目缺失（被误删/改名）时声明
+    侧宁缺（None = 界面不呈现档位清单），配置错误仍由请求期拦下。
+    """
+    info = model_info_for(PROVIDER_MINIMAX, _H3)
+    if info is None:
+        return None
+    return tuple(info.resolutions)
+
+
 def _safe_body_for_log(body: dict) -> dict:
     """安全日志视图：白名单标量 + prompt 截断；素材字段一律折叠，不展开 base64。
 
@@ -243,7 +256,9 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
 
         H3 的 content[] 数组按 role 同时承载首帧、尾帧、参考图与参考音频，各维度上限取官方
         《创建视频生成任务 (V2)》声明值。首帧任务只接受 ratio=adaptive（官方 ratio 枚举含
-        adaptive，图生视频示例即用它），故声明 first_frame_ratio_adaptive_only。
+        adaptive，图生视频示例即用它），故声明 first_frame_ratio_adaptive_only。输出档位与
+        _v2_output_specs 同读 registry 的 canonical 条目（单一真相源），自定义供应商的中转
+        变体命名（MiniMax-H3-nsfw 等）经 _is_h3_model 判定后同样按 canonical 名取值。
         """
         if model == _S2V:
             return VideoCapabilities(text_to_video=False, first_frame=False, max_reference_images=1)
@@ -260,6 +275,7 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
                 max_prompt_chars=_H3_MAX_PROMPT_CHARS,
                 first_frame_ratio_adaptive_only=True,
                 supported_aspect_ratios=_H3_SUPPORTED_ASPECT_RATIOS,
+                supported_resolutions=_h3_declared_resolutions(),
             )
         return VideoCapabilities(text_to_video=_supports_text_to_video(model), first_frame=True)
 
