@@ -5,8 +5,8 @@ SSE fanout，两处的语义差异全部经参数表达：
 
 - 溢出策略：会话流用 :class:`EvictNonCriticalAndSignal`（关键消息挤掉一条
   非关键消息；仍满则清空队列并结束该订阅者的流——流结束即重连信号），
-  项目事件流用 :class:`DropSubscriber`（队列满即移除订阅者，无溢出信号，
-  断线由消费方心跳自检发现）。
+  项目事件流用 :class:`DropSubscriber`（队列满即移除订阅者并结束该流，
+  前端以流结束触发重连）。
 - 首/末订阅者生命周期钩子可选（项目事件流用于启停后台扫描）。
 
 开场白（会话流的缓冲回放、项目事件流的初始快照）不进组件：订阅与开场白
@@ -103,10 +103,11 @@ class EvictNonCriticalAndSignal:
 
 
 class DropSubscriber:
-    """溢出策略：队列满即移除订阅者，不注入任何溢出信号。
+    """溢出策略：队列满即移除订阅者并结束其流。
 
-    被移除订阅者的流不会结束（继续产出空闲心跳），断线由消费方在心跳上
-    自检发现。``on_removed`` 在单次广播移除订阅者后收到移除数量（记日志用）。
+    ``finalize_removal`` 注入 ``_END_OF_STREAM``，:meth:`SseChannel.iterate`
+    遇之结束流——流结束才是前端 EventSource 的可靠重连信号；仅靠心跳自检会
+    留下 readyState 仍为 OPEN 的僵尸连接。
     """
 
     def __init__(self, *, on_removed: Callable[[int], None] | None = None) -> None:
@@ -120,7 +121,15 @@ class DropSubscriber:
             return False
 
     def finalize_removal(self, queue: asyncio.Queue) -> None:
-        pass
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        try:
+            queue.put_nowait(_END_OF_STREAM)
+        except asyncio.QueueFull:
+            pass
 
     def on_removed(self, count: int) -> None:
         if self._on_removed is not None:
