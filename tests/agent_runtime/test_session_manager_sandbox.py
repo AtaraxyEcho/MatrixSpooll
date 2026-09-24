@@ -30,7 +30,7 @@ def session_manager(tmp_path: Path) -> SessionManager:
 async def test_build_options_includes_sandbox_settings(
     session_manager: SessionManager, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    proj_dir = session_manager.project_root / "projects" / "test_proj"
+    proj_dir = session_manager.project_root / "projects" / "test-proj"
     proj_dir.mkdir(parents=True)
     (proj_dir / "project.json").write_text('{"title": "t"}', encoding="utf-8")
 
@@ -39,7 +39,7 @@ async def test_build_options_includes_sandbox_settings(
 
     monkeypatch.setattr("server.agent_runtime.options_assembler.load_provider_env_overrides", fake_env)
 
-    opts = await session_manager._build_options("test_proj")
+    opts = await session_manager._build_options("test-proj")
 
     assert opts.sandbox is not None
     assert opts.sandbox.get("enabled") is True
@@ -173,7 +173,7 @@ async def test_build_options_bash_in_allowed_tools_by_sandbox(
 ) -> None:
     """sandbox 关闭时剥离 Bash/BashOutput/KillBash，启用时保留。"""
     sm = _make_session_manager(tmp_path, sandbox_enabled=sandbox_enabled)
-    proj_dir = sm.project_root / "projects" / "test_proj"
+    proj_dir = sm.project_root / "projects" / "test-proj"
     proj_dir.mkdir(parents=True, exist_ok=True)
     (proj_dir / "project.json").write_text('{"title":"t"}', encoding="utf-8")
 
@@ -181,7 +181,7 @@ async def test_build_options_bash_in_allowed_tools_by_sandbox(
         return {"ANTHROPIC_API_KEY": "sk"}
 
     monkeypatch.setattr("server.agent_runtime.options_assembler.load_provider_env_overrides", fake_env)
-    opts = await sm._build_options("test_proj")
+    opts = await sm._build_options("test-proj")
 
     for tool in AgentAccessPolicy.BASH_TOOLS:
         assert (tool in opts.allowed_tools) is sandbox_enabled
@@ -199,10 +199,9 @@ async def test_build_options_bash_in_allowed_tools_by_sandbox(
             "python .claude/skills/compose-video/scripts/compose_video.py scripts/episode_1.json",
             "PermissionResultAllow",
         ),
-        ("ffmpeg -i in.mp4 out.mp4", "PermissionResultAllow"),
-        ("ffprobe in.mp4", "PermissionResultAllow"),
-        # `..` 在文件名内部（非路径段）不触发穿越拦截，合法命令照常放行
-        ("ffmpeg -i my..clip.mp4 out.mp4", "PermissionResultAllow"),
+        # ffmpeg/ffprobe removed from the Windows fallback whitelist (arbitrary FS R/W).
+        ("ffmpeg -i in.mp4 out.mp4", "PermissionResultDeny"),
+        ("ffprobe in.mp4", "PermissionResultDeny"),
         # 归一化容错：带引号的脚本路径、Windows 反斜杠分隔符的合法命令不误拒
         (
             'python ".claude/skills/compose-video/scripts/compose_video.py" scripts/ep.json',
@@ -236,26 +235,25 @@ async def test_windows_bash_whitelist_matches_main_behavior(tmp_path: Path, comm
         # 白名单前缀 + metachar 链：尾部命令在 Windows 上无 sandbox denyWrite
         # 兜底，可直写 protected JSON，必须整串拒
         'python .claude/skills/manage-project/scripts/peek_split_point.py; python -c "evil"',
-        "ffmpeg -i in.mp4 out.mp4 && python -c \"open('project.json','w')\"",
-        "ffprobe in.mp4 | tee scripts/episode_1.json",
-        "ffmpeg -i in.mp4 $(evil) out.mp4",
-        "ffmpeg -i in.mp4 `evil` out.mp4",
-        "ffmpeg -i in.mp4 -f json > scripts/episode_1.json",
-        "ffprobe < secret.txt",
-        "ffmpeg -i in.mp4 out.mp4\npython -c evil",
-        # 命令名前缀碰撞：ffmpegX 以 ffmpeg 开头但不是 ffmpeg
+        "python .claude/skills/compose-video/scripts/compose_video.py && python -c \"open('project.json','w')\"",
+        "python .claude/skills/compose-video/scripts/compose_video.py | tee scripts/episode_1.json",
+        "python .claude/skills/compose-video/scripts/compose_video.py $(evil)",
+        "python .claude/skills/compose-video/scripts/compose_video.py `evil`",
+        "python .claude/skills/compose-video/scripts/compose_video.py > scripts/episode_1.json",
+        "python .claude/skills/compose-video/scripts/compose_video.py\npython -c evil",
         "ffmpegX --evil",
         "ffprobe2 in.mp4",
+        "ffmpeg -i in.mp4 out.mp4",
         # 路径穿越：满足 python .claude/skills/ 前缀且不含 metachar，但 .. 逃出
         # skills 目录跑任意脚本——Windows 回退无 sandbox 兜底，必须拒
         "python .claude/skills/../../../tmp/evil.py",
         "python .claude/skills/../../matrixspooll_secrets_dumper.py",
-        "ffmpeg -i ../../other_project/secret.mp4 out.mp4",
+        "python .claude/skills/dir/../../other_project/evil.py",
         # 路径穿越混淆绕过：shell 会把 ".." / .\. 还原成 ..，归一化后必须拒
         'python .claude/skills/dir/".."/".."/evil.py',
         "python .claude/skills/dir/'..'/'..'/evil.py",
         "python .claude/skills/dir/.\\./.\\./evil.py",
-        'ffmpeg -i ".."/".."/secret.mp4 out.mp4',
+        'python .claude/skills/".."/".."/evil.py',
         # Windows 反斜杠分隔符下的 .. 穿越同样要拒（归一化后 ../ 命中）
         "python .claude\\skills\\..\\..\\evil.py",
         # python 入口必须是 <skill>/scripts/<script>.py：skills 目录下任意其它

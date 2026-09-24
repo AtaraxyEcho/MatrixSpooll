@@ -125,11 +125,11 @@ class AgentAccessPolicy:
     # Windows 回退（sandbox_enabled=False）的 Bash 命令白名单：等价于沙箱化前
     # settings.json permissions.allow 段。也是 can_use_tool deny hint 文案的
     # 单一真相源（format_bash_whitelist_deny_message 从此派生）。
-    WINDOWS_BASH_PREFIX_WHITELIST: ClassVar[tuple[str, ...]] = (
-        _PYTHON_SKILLS_PREFIX,
-        "ffmpeg",
-        "ffprobe",
-    )
+    #
+    # 刻意不含 ffmpeg/ffprobe：无 sandbox 时它们可用绝对路径任意读写宿主文件系统
+    # （``ffmpeg -i C:\secrets\.env -f data out.bin``），远超「媒体工具」的必要面。
+    # 合成/探测走 MCP 工具或 server 进程内 ffmpeg_runner，不走 agent 裸 Bash。
+    WINDOWS_BASH_PREFIX_WHITELIST: ClassVar[tuple[str, ...]] = (_PYTHON_SKILLS_PREFIX,)
 
     # Windows 回退白名单的 shell metachar 黑名单：``;`` ``&`` ``|`` ``<`` ``>``
     # `` ` `` ``$`` 与换行都可能在白名单前缀后挂任意命令（链式/管道/重定向/
@@ -417,6 +417,10 @@ class AgentAccessPolicy:
         ``is_bash_command_whitelisted`` 的前缀白名单永远匹配不上——「包装破坏
         白名单匹配」的互斥约束就锁在这两个方法之间。空/非字符串 command 同样
         不包装。
+
+        Windows 路径的密钥隔离改由 ``options.env`` 空值覆盖承担（见
+        ``options_assembler.load_provider_env_overrides``）：skill 子进程继承的
+        已是剥离后的环境，不依赖本包装。
         """
         if not isinstance(command, str) or not command.strip():
             return None
@@ -494,6 +498,7 @@ class AgentAccessPolicy:
             "且命令不得包含 shell 元字符（; & | < > ` $ 或换行）或 .. 路径穿越——"
             "复合命令请拆成多次独立调用，脚本路径不要用 .. 逃出目录。\n"
             "python 仅允许跑 .claude/skills/<skill>/scripts/<script>.py 入口脚本。\n"
+            "ffmpeg/ffprobe 在 Windows 回退模式下不可用（无沙箱时可任意读写宿主文件）。\n"
             "其他 Bash 命令在 Windows 回退模式下不可用。"
         )
 

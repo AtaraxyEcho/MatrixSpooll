@@ -41,6 +41,7 @@ async def load_provider_env_overrides() -> dict[str, str]:
 
     - ANTHROPIC_* 从 DB active credential 取真值
     - 其他 provider env 全部空值覆盖（防御性兜底）
+    - 名字命中密钥模式的宿主 env 一律空值覆盖（Windows 无 sandbox 时 skill 会继承 environ）
 
     环境变量名单以 ``env_keys`` 为单一真相源；SDK 子进程只认 env 认证，父进程环境
     又是外部输入，故真值注入与空值围堵是常驻机制而非技术债（见 ADR）。
@@ -55,6 +56,11 @@ async def load_provider_env_overrides() -> dict[str, str]:
     result = dict(anthropic_env)
     for key in OTHER_PROVIDER_ENV_KEYS:
         result[key] = ""
+    from server.agent_runtime.agent_access_policy import AgentAccessPolicy
+
+    for key in AgentAccessPolicy._collect_env_keys_to_scrub():
+        if key not in result:
+            result[key] = ""
     return result
 
 
