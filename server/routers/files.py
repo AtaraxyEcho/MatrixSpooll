@@ -90,6 +90,11 @@ def _require_filename(file: UploadFile, _t: Callable[..., str]) -> str:
 
 
 _IMAGE_EXTS: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".webp")
+# Upload body caps — enforced before decode/normalize so a multi-GB multipart
+# cannot OOM the worker. product_ref keeps original bytes (ADR 0034) but still
+# gets a hard ceiling.
+IMAGE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024
+SOURCE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024
 
 # 落盘文件名策略
 #   stable_png — 稳定单图名 `{name}.png`（实际后缀由图片归一化结果决定）
@@ -149,12 +154,14 @@ UPLOAD_SPECS: dict[str, UploadSpec] = {
         subdir=("source",),
         naming="delegated",
         content_check="delegated",
+        max_bytes=SOURCE_UPLOAD_MAX_BYTES,
     ),
     "character": UploadSpec(
         allowed_exts=_IMAGE_EXTS,
         subdir=(ASSET_SPECS["character"].subdir,),
         naming="stable_png",
         content_check="normalize_image",
+        max_bytes=IMAGE_UPLOAD_MAX_BYTES,
         metadata_setter=ProjectManager.update_project_character_sheet,
     ),
     "character_ref": UploadSpec(
@@ -162,6 +169,7 @@ UPLOAD_SPECS: dict[str, UploadSpec] = {
         subdir=(ASSET_SPECS["character"].subdir, "refs"),
         naming="stable_png",
         content_check="normalize_image",
+        max_bytes=IMAGE_UPLOAD_MAX_BYTES,
         metadata_setter=ProjectManager.update_character_reference_image,
     ),
     "character_audio_ref": UploadSpec(
@@ -181,6 +189,7 @@ UPLOAD_SPECS: dict[str, UploadSpec] = {
         subdir=(ASSET_SPECS["scene"].subdir,),
         naming="stable_png",
         content_check="normalize_image",
+        max_bytes=IMAGE_UPLOAD_MAX_BYTES,
         metadata_setter=ProjectManager.update_scene_sheet,
     ),
     "prop": UploadSpec(
@@ -188,6 +197,7 @@ UPLOAD_SPECS: dict[str, UploadSpec] = {
         subdir=(ASSET_SPECS["prop"].subdir,),
         naming="stable_png",
         content_check="normalize_image",
+        max_bytes=IMAGE_UPLOAD_MAX_BYTES,
         metadata_setter=ProjectManager.update_prop_sheet,
     ),
     "product": UploadSpec(
@@ -195,6 +205,7 @@ UPLOAD_SPECS: dict[str, UploadSpec] = {
         subdir=(ASSET_SPECS["product"].subdir,),
         naming="stable_png",
         content_check="normalize_image",
+        max_bytes=IMAGE_UPLOAD_MAX_BYTES,
         metadata_setter=ProjectManager.update_product_sheet,
     ),
     "product_ref": UploadSpec(
@@ -204,6 +215,7 @@ UPLOAD_SPECS: dict[str, UploadSpec] = {
         # 产品原图是保真验收锚点（ADR 0034）：仅校验可解码，保留原件字节与扩展名，
         # 不做阈值压缩/重编码。请求体上限由生成发送前的参考压缩环节独立保障。
         content_check="validate_image",
+        max_bytes=IMAGE_UPLOAD_MAX_BYTES,
         metadata_setter=ProjectManager.add_product_reference_image,
         host_bucket=ASSET_SPECS["product"].bucket_key,
         host_not_found_key="product_not_found",
@@ -256,8 +268,17 @@ async def serve_project_file(
 
 
 @public_router.get("/global-assets/{asset_type}/{filename}")
-async def serve_global_asset(asset_type: str, filename: str, _t: Translator):
-    """服务 _global_assets 下的全局资产图片（仅全局库类型：character/scene/prop）"""
+async def serve_global_asset(
+    asset_type: str,
+    filename: str,
+    _t: Translator,
+    user: CurrentUserInfo = Depends(_get_project_file_user),
+):
+    """服务 _global_assets 下的全局资产图片（仅全局库类型：character/scene/prop）。
+
+    需登录：角色设定图等资产可能来自私有项目语境，不对匿名访问开放。
+    """
+    del user  # authentication only; global library is shared among signed-in users
     if asset_type not in GLOBAL_LIBRARY_ASSET_TYPES:
         raise HTTPException(status_code=400, detail=_t("invalid_asset_type"))
     if "/" in filename or ".." in filename:

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
+import os
 import re
+import socket
 from urllib.parse import urlparse
 
 # 官方 OpenAI 端点：既是 is_official_openai_base_url 的判定基准，也是上层
@@ -103,3 +106,60 @@ def ensure_anthropic_base_url(url: str | None) -> str | None:
     s = re.sub(r"/v\d+[a-zA-Z]*(?:/messages)?$", "", s)
     s = re.sub(r"/messages$", "", s)
     return s
+
+
+def _allow_private_provider_endpoints() -> bool:
+    return os.environ.get("ALLOW_PRIVATE_PROVIDER_ENDPOINTS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def validate_provider_base_url(url: str) -> str:
+    """校验自定义供应商 base_url，拒绝 SSRF 高危目标。
+
+    拒绝 link-local / metadata / 未明确放行的回环与私网。自托管 vLLM 等内网端点
+    可通过 ``ALLOW_PRIVATE_PROVIDER_ENDPOINTS=true`` 显式放行。主机名解析失败时
+    放行（无法证明为内网；后续 discover/test 仍会连通失败），只对「已解析出的
+    高危地址」与 IP 字面量 fail-closed。
+    """
+    raw = (url or "").strip()
+    if not raw:
+        raise ValueError("base_url is required")
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("base_url must be http(s)")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("base_url host is required")
+    if host.lower() in {"metadata.google.internal", "metadata", "instance-data"}:
+        raise ValueError("base_url points at cloud metadata")
+    allow_private = _allow_private_provider_endpoints()
+
+    def _check_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
+        mapped = getattr(ip, "ipv4_mapped", None)
+        if mapped is not None:
+            ip = mapped
+        if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+            raise ValueError("base_url resolves to a link-local or invalid address")
+        if not allow_private and (ip.is_loopback or ip.is_private):
+            raise ValueError(
+                "base_url resolves to a private/loopback address; set ALLOW_PRIVATE_PROVIDER_ENDPOINTS=true to allow"
+            )
+
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        _check_ip(literal)
+        return raw
+
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80))
+    except OSError:
+        return raw
+    for info in infos:
+        try:
+            resolved = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        _check_ip(resolved)
+    return raw

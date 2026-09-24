@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.api_errors import BadRequestError
 from lib.config.repository import mask_secret
+from lib.config.url_utils import validate_provider_base_url
 from lib.custom_provider import make_provider_id
 from lib.custom_provider.capabilities import (
     AUDIO_OVERRIDE_KEYS,
@@ -51,7 +52,7 @@ from lib.db.repositories.custom_provider_repo import CustomProviderRepository
 from lib.i18n import Translator
 from lib.image_backends.base import ImageCapability
 from lib.video_backends.base import ReferenceAudioMode
-from server.auth import require_admin
+from server.auth import CurrentUser, require_admin
 
 
 def _validate_endpoint(value: str) -> str:
@@ -276,7 +277,7 @@ class ProviderResponse(BaseModel):
     id: int
     display_name: str
     discovery_format: str
-    base_url: str
+    base_url: str | None = None
     api_key_masked: str
     models: list[ModelResponse]
     created_at: str | None = None
@@ -421,20 +422,31 @@ def _model_to_response(m, global_bucket_refs: list[str] | None = None) -> ModelR
     )
 
 
-def _provider_to_response(provider, models, global_bucket_refs: dict[str, list[str]] | None = None) -> ProviderResponse:
+def _provider_to_response(
+    provider,
+    models,
+    global_bucket_refs: dict[str, list[str]] | None = None,
+    *,
+    include_connection: bool = True,
+) -> ProviderResponse:
     refs = global_bucket_refs or {}
     return ProviderResponse(
         id=provider.id,
         display_name=provider.display_name,
         discovery_format=provider.discovery_format,
-        base_url=provider.base_url,
-        api_key_masked=mask_secret(provider.api_key),
+        base_url=provider.base_url if include_connection else None,
+        api_key_masked=mask_secret(provider.api_key) if include_connection else "",
         models=[_model_to_response(m, refs.get(m.model_id)) for m in models],
         created_at=dt_to_iso(provider.created_at),
         image_max_workers=provider.image_max_workers,
         video_max_workers=provider.video_max_workers,
         audio_max_workers=provider.audio_max_workers,
     )
+
+
+def _can_see_connection(user) -> bool:
+    """base_url / masked key are admin-only; members only need the model catalog."""
+    return bool(getattr(user, "is_superadmin", False) or getattr(user, "role", "") == "admin")
 
 
 def _cleanup_project_refs(prefix: str, setting_keys: tuple[str, ...]) -> None:
@@ -644,9 +656,11 @@ async def _invalidate_caches(request: Request) -> None:
 
 @router.get("")
 async def list_providers(
+    user: CurrentUser,
     session: AsyncSession = Depends(get_async_session),
 ):
-    """列出所有自定义供应商（含模型列表）。"""
+    """列出所有自定义供应商（含模型列表）。连接信息仅管理员可见。"""
+    include_connection = _can_see_connection(user)
     repo = CustomProviderRepository(session)
     pairs = await repo.list_providers_with_models()
     from lib.config.service import ConfigService
@@ -654,7 +668,13 @@ async def list_providers(
     all_settings = await ConfigService(session).get_all_settings()
     return {
         "providers": [
-            _provider_to_response(p, models, _extract_global_bucket_refs(all_settings, p.id)) for p, models in pairs
+            _provider_to_response(
+                p,
+                models,
+                _extract_global_bucket_refs(all_settings, p.id),
+                include_connection=include_connection,
+            )
+            for p, models in pairs
         ]
     }
 
@@ -676,6 +696,10 @@ async def create_provider(
     session: AsyncSession = Depends(get_async_session),
 ):
     """创建自定义供应商，可同时创建模型列表。"""
+    try:
+        body.base_url = validate_provider_base_url(body.base_url)
+    except ValueError as exc:
+        raise BadRequestError("provider_base_url_forbidden", reason=str(exc)) from exc
     if body.models:
         _check_duplicate_model_ids(body.models, _t)
         _check_unique_defaults(body.models, _t)
@@ -703,16 +727,22 @@ async def create_provider(
 @router.get("/{provider_id}")
 async def get_provider(
     provider_id: int,
+    user: CurrentUser,
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
 ):
-    """获取单个自定义供应商详情。"""
+    """获取单个自定义供应商详情。连接信息仅管理员可见。"""
     repo = CustomProviderRepository(session)
     provider = await repo.get_provider(provider_id)
     if provider is None:
         raise HTTPException(status_code=404, detail=_t("provider_not_found"))
     models = await repo.list_models(provider_id)
-    return _provider_to_response(provider, models, await _global_bucket_refs_for_provider(session, provider_id))
+    return _provider_to_response(
+        provider,
+        models,
+        await _global_bucket_refs_for_provider(session, provider_id),
+        include_connection=_can_see_connection(user),
+    )
 
 
 @router.get(
@@ -748,7 +778,10 @@ async def update_provider(
     if body.display_name is not None:
         kwargs["display_name"] = body.display_name
     if body.base_url is not None:
-        kwargs["base_url"] = body.base_url
+        try:
+            kwargs["base_url"] = validate_provider_base_url(body.base_url)
+        except ValueError as exc:
+            raise BadRequestError("provider_base_url_forbidden", reason=str(exc)) from exc
     if body.api_key is not None:
         kwargs["api_key"] = body.api_key
 
@@ -780,9 +813,13 @@ async def full_update_provider(
     _check_unique_defaults(body.models, _t)
     _check_model_capability_overrides(body.models, _t)
     repo = CustomProviderRepository(session)
+    try:
+        validated_base_url = validate_provider_base_url(body.base_url)
+    except ValueError as exc:
+        raise BadRequestError("provider_base_url_forbidden", reason=str(exc)) from exc
     kwargs: dict = {
         "display_name": body.display_name,
-        "base_url": body.base_url,
+        "base_url": validated_base_url,
         # PUT 为并发上限的权威来源：始终写入（含 None 清除），不做"仅非空更新"
         "image_max_workers": body.image_max_workers,
         "video_max_workers": body.video_max_workers,
@@ -994,6 +1031,11 @@ async def _run_discover(
     """共用的模型发现逻辑（明文凭证 / 已存储凭证两条入口共用）。"""
     from lib.custom_provider.discovery import UnsupportedDiscoveryFormatError, discover_models
 
+    if base_url:
+        try:
+            base_url = validate_provider_base_url(base_url)
+        except ValueError as exc:
+            raise BadRequestError("provider_base_url_forbidden", reason=str(exc)) from exc
     try:
         models = await discover_models(
             discovery_format=discovery_format,
@@ -1015,6 +1057,10 @@ async def _run_connection_test(
     discovery_format: str, base_url: str, api_key: str, _t: Callable[..., str]
 ) -> ConnectionTestResponse:
     """共用的连接测试逻辑。"""
+    try:
+        base_url = validate_provider_base_url(base_url)
+    except ValueError as exc:
+        raise BadRequestError("provider_base_url_forbidden", reason=str(exc)) from exc
     try:
         if discovery_format == "openai":
             result = await asyncio.wait_for(

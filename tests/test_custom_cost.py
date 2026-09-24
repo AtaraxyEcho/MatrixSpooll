@@ -10,6 +10,18 @@ from lib.pricing.strategies import PricingParams
 pytestmark = pytest.mark.unit
 
 
+def test_provider_base_url_blocks_metadata_and_loopback():
+    from lib.config.url_utils import validate_provider_base_url
+
+    with pytest.raises(ValueError):
+        validate_provider_base_url("http://169.254.169.254/")
+    with pytest.raises(ValueError):
+        validate_provider_base_url("http://metadata.google.internal/computeMetadata/v1/")
+    with pytest.raises(ValueError):
+        validate_provider_base_url("http://127.0.0.1:8080/v1")
+    assert validate_provider_base_url("https://api.example.com/v1")
+
+
 class TestCustomTextCost:
     """Test text cost calculation for custom providers."""
 
@@ -64,6 +76,40 @@ class TestCustomImageCost:
         )
         assert currency == "CNY"
         assert abs(amount - 0.22) < 0.0001
+
+
+class TestPriceUnitOverride:
+    """price_unit drives the billing dimension independently of call_type."""
+
+    def test_video_priced_per_image_is_flat(self):
+        calc = CostCalculator()
+        amount, _ = calc.calculate_cost(
+            "custom-9",
+            PricingParams(call_type="video", model="m", duration_seconds=30),
+            custom_price_input=1.5,
+            custom_price_unit="image",
+        )
+        assert abs(amount - 1.5) < 1e-9
+
+    def test_image_priced_per_second_uses_duration(self):
+        calc = CostCalculator()
+        amount, _ = calc.calculate_cost(
+            "custom-9",
+            PricingParams(call_type="image", model="m", duration_seconds=4),
+            custom_price_input=0.25,
+            custom_price_unit="second",
+        )
+        assert abs(amount - 1.0) < 1e-9
+
+    def test_unknown_unit_bills_zero(self):
+        calc = CostCalculator()
+        amount, _ = calc.calculate_cost(
+            "custom-9",
+            PricingParams(call_type="video", model="m", duration_seconds=10),
+            custom_price_input=9.0,
+            custom_price_unit="gigawatt",
+        )
+        assert amount == 0.0
 
 
 class TestCustomVideoCost:

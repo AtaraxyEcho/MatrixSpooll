@@ -37,7 +37,7 @@ from lib.config.service import ConfigService
 from lib.db import get_async_session
 from lib.httpx_shared import get_http_client
 from lib.i18n import Translator
-from server.auth import require_admin
+from server.auth import CurrentUser, require_admin
 from server.dependencies import get_config_service
 from server.routers._validators import validate_backend_value
 
@@ -326,9 +326,11 @@ _STRING_SETTINGS = (
 
 @router.get("/system/config")
 async def get_system_config(
+    user: CurrentUser,
     svc: Annotated[ConfigService, Depends(get_config_service)],
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
+    """读取系统配置。默认层模型选项对所有登录用户开放；密钥与 Agent 路由仅管理员。"""
     # Read all settings in a single query
     all_s = await svc.get_all_settings()
     video_generate_audio_raw = all_s.get("video_generate_audio", "")
@@ -350,6 +352,7 @@ async def get_system_config(
     # 语速 setting 为字符串存储，损坏值（手工改库等）按未设置处理
     narration_speed = ConfigService.parse_narration_speed(all_s.get("narration_speed", ""))
 
+    is_admin = bool(getattr(user, "is_superadmin", False) or getattr(user, "role", "") == "admin")
     settings: dict[str, Any] = {
         "default_video_backend": all_s.get("default_video_backend", ""),
         "default_video_backend_i2v": all_s.get("default_video_backend_i2v", ""),
@@ -362,21 +365,26 @@ async def get_system_config(
         "narration_voice": all_s.get("narration_voice", ""),
         "narration_speed": narration_speed,
         "video_generate_audio": video_generate_audio,
-        "anthropic_api_key": {
-            "is_set": bool(anthropic_key),
-            "masked": mask_secret(anthropic_key) if anthropic_key else None,
-        },
-        "anthropic_base_url": all_s.get("anthropic_base_url") or None,
-        "anthropic_model": all_s.get("anthropic_model") or None,
-        "anthropic_default_haiku_model": all_s.get("anthropic_default_haiku_model") or None,
-        "anthropic_default_opus_model": all_s.get("anthropic_default_opus_model") or None,
-        "anthropic_default_sonnet_model": all_s.get("anthropic_default_sonnet_model") or None,
-        "claude_code_subagent_model": all_s.get("claude_code_subagent_model") or None,
-        "agent_session_cleanup_delay_seconds": int(all_s.get("agent_session_cleanup_delay_seconds") or "300"),
-        "agent_max_concurrent_sessions": int(all_s.get("agent_max_concurrent_sessions") or "5"),
         "text_backend_simple": all_s.get("text_backend_simple") or "",
         "text_backend_complex": all_s.get("text_backend_complex") or "",
     }
+    if is_admin:
+        settings.update(
+            {
+                "anthropic_api_key": {
+                    "is_set": bool(anthropic_key),
+                    "masked": mask_secret(anthropic_key) if anthropic_key else None,
+                },
+                "anthropic_base_url": all_s.get("anthropic_base_url") or None,
+                "anthropic_model": all_s.get("anthropic_model") or None,
+                "anthropic_default_haiku_model": all_s.get("anthropic_default_haiku_model") or None,
+                "anthropic_default_opus_model": all_s.get("anthropic_default_opus_model") or None,
+                "anthropic_default_sonnet_model": all_s.get("anthropic_default_sonnet_model") or None,
+                "claude_code_subagent_model": all_s.get("claude_code_subagent_model") or None,
+                "agent_session_cleanup_delay_seconds": int(all_s.get("agent_session_cleanup_delay_seconds") or "300"),
+                "agent_max_concurrent_sessions": int(all_s.get("agent_max_concurrent_sessions") or "5"),
+            }
+        )
 
     options = await _build_options(svc, session)
 
@@ -458,6 +466,7 @@ async def get_system_version(
 @router.patch("/system/config", dependencies=[Depends(require_admin)])
 async def patch_system_config(
     req: SystemConfigPatchRequest,
+    user: CurrentUser,
     svc: Annotated[ConfigService, Depends(get_config_service)],
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
@@ -536,4 +545,4 @@ async def patch_system_config(
     await session.commit()
 
     # Return updated config
-    return await get_system_config(svc=svc, session=session)
+    return await get_system_config(user=user, svc=svc, session=session)
