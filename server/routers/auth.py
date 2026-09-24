@@ -29,7 +29,6 @@ from server.auth import (
     create_token,
     create_user_session,
     database_auth_initialized,
-    database_user_exists,
     get_user_session_state,
     is_auth_enabled,
     revoke_all_user_sessions,
@@ -246,10 +245,10 @@ async def _authenticate_login(
                 email=user.email,
             )
 
-    if is_auth_enabled() and (
-        (database_auth_initialized() and await database_user_exists(username))
-        or not check_credentials(username, password)
-    ):
+    if is_auth_enabled() and database_auth_initialized():
+        # Database is the sole credential source after bootstrap. Env
+        # AUTH_USERNAME/AUTH_PASSWORD must not mint sessions for accounts that
+        # are missing from the user table (or after a rename).
         logger.warning("Login failed for user %s", username)
         ACCOUNT_LOGIN_THROTTLE.record_failure(account_key)
         IP_LOGIN_THROTTLE.record_failure(ip_key)
@@ -266,6 +265,36 @@ async def _authenticate_login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if is_auth_enabled():
+        # Auth on, database not bootstrapped yet: only the env bootstrap pair
+        # may sign a short-lived bare token. It dies as soon as
+        # database_auth_initialized() flips true (see _payload_to_user).
+        if not check_credentials(username, password):
+            logger.warning("Login failed for user %s", username)
+            ACCOUNT_LOGIN_THROTTLE.record_failure(account_key)
+            IP_LOGIN_THROTTLE.record_failure(ip_key)
+            await _record_login_event_safely(
+                request,
+                outcome=LoginOutcome.FAILURE,
+                username=username,
+                reason="invalid_credentials",
+                device_id=normalized_device_id,
+            )
+            raise HTTPException(
+                status_code=401,
+                detail=translate("unauthorized"),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        logger.info("Bootstrap env login before database auth init: %s", username)
+        ACCOUNT_LOGIN_THROTTLE.clear(account_key)
+        return _LoginResult(
+            token=create_token(username),
+            username=username,
+            role="admin",
+            is_superadmin=True,
+        )
+
+    # AUTH_ENABLED=false — local single-user transport only.
     logger.info("User logged in: %s", username)
     ACCOUNT_LOGIN_THROTTLE.clear(account_key)
     return _LoginResult(

@@ -665,8 +665,12 @@ async def update_user(
         user.nickname = nickname
     user.role = next_role
     user.is_active = next_active
+    revoked_key_hashes: list[str] = []
     if not user.is_active:
         await revoke_all_user_sessions(user.id, session=session)
+        from lib.db.repositories.api_key_repository import ApiKeyRepository
+
+        revoked_key_hashes = await ApiKeyRepository(session).revoke_all_for_user(user.id)
     record_audit_event(
         session,
         actor=admin,
@@ -682,6 +686,11 @@ async def update_user(
     )
     await session.commit()
     await session.refresh(user)
+    if revoked_key_hashes:
+        from server.auth import invalidate_api_key_cache
+
+        for key_hash in revoked_key_hashes:
+            invalidate_api_key_cache(key_hash)
     return _as_summary(user)
 
 

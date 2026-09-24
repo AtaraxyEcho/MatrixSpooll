@@ -491,6 +491,43 @@ async def import_project_archive(
             _cleanup_temp_file(upload_path)
 
 
+async def _authorize_download_token(download_token: str, project_name: str, _t: Callable[..., str]) -> None:
+    """Verify a download token and re-check project membership at download time.
+
+    Membership is re-evaluated so a token minted before demotion/removal cannot
+    still pull the archive inside its TTL window.
+    """
+    import jwt as pyjwt
+
+    try:
+        payload = verify_download_token(download_token, project_name)
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail=_t("download_expired"))
+    except ValueError:
+        raise HTTPException(status_code=403, detail=_t("download_token_mismatch"))
+    except pyjwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail=_t("download_token_invalid"))
+
+    if not is_auth_enabled() or not database_auth_initialized():
+        # Pre-bootstrap tests / auth-off local mode: purpose+project already checked.
+        return
+
+    user_id = payload.get("uid")
+    subject = payload.get("sub")
+    async with async_session_factory() as db_session:
+        user = None
+        if isinstance(user_id, str) and user_id:
+            user = await db_session.get(User, user_id)
+        if user is None and isinstance(subject, str) and subject:
+            user = await db_session.scalar(select(User).where(User.username == subject))
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=403, detail=_t("download_access_denied"))
+        try:
+            await resolve_project_access(project_name, user, db_session, required_role="viewer")
+        except ApiError as exc:
+            raise HTTPException(status_code=403, detail=_t("download_access_denied")) from exc
+
+
 @router.post("/projects/{name}/export/token")
 async def create_export_token(
     name: str,
@@ -502,6 +539,8 @@ async def create_export_token(
     try:
         if scope not in ("full", "current"):
             raise HTTPException(status_code=422, detail=_t("scope_invalid"))
+        async with async_session_factory() as db_session:
+            await resolve_project_access(name, current_user, db_session, required_role="viewer")
 
         def _sync():
             if not get_project_manager().project_exists(name):
@@ -510,13 +549,15 @@ async def create_export_token(
 
         diagnostics = await asyncio.to_thread(_sync)
         username = current_user.sub
-        download_token = create_download_token(username, name)
+        download_token = create_download_token(username, name, user_id=current_user.id)
         return {
             "download_token": download_token,
             "expires_in": 300,
             "diagnostics": diagnostics,
         }
     except HTTPException:
+        raise
+    except ApiError:
         raise
     except Exception:
         logger.exception("请求处理失败")
@@ -534,17 +575,7 @@ async def export_project_archive(
     if scope not in ("full", "current"):
         raise HTTPException(status_code=422, detail=_t("scope_invalid"))
 
-    # 验证 download_token
-    import jwt as pyjwt
-
-    try:
-        verify_download_token(download_token, name)
-    except pyjwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail=_t("download_expired"))
-    except ValueError:
-        raise HTTPException(status_code=403, detail=_t("download_token_mismatch"))
-    except pyjwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail=_t("download_token_invalid"))
+    await _authorize_download_token(download_token, name, _t)
 
     try:
         archive_path, download_name = await asyncio.to_thread(
@@ -599,17 +630,7 @@ async def export_jianying_draft(
     ),
 ):
     """导出指定集的剪映草稿 ZIP"""
-    import jwt as pyjwt
-
-    # 1. 验证 download_token
-    try:
-        verify_download_token(download_token, name)
-    except pyjwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail=_t("download_expired"))
-    except ValueError:
-        raise HTTPException(status_code=403, detail=_t("download_token_mismatch"))
-    except pyjwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail=_t("download_token_invalid"))
+    await _authorize_download_token(download_token, name, _t)
 
     # 2. 校验 draft_path
     draft_path = _validate_draft_path(draft_path, _t)

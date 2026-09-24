@@ -15,7 +15,7 @@ from lib.db.models.user_session import UserSession
 pytestmark = pytest.mark.integration
 
 
-async def test_same_ip_login_revokes_other_browser_but_keeps_other_ip(db_factory, monkeypatch) -> None:
+async def test_same_device_login_replaces_session_but_other_devices_stay(db_factory, monkeypatch) -> None:
     monkeypatch.setattr(auth, "async_session_factory", db_factory)
     user = User(
         id="00000000000040008000000000000011",
@@ -41,11 +41,19 @@ async def test_same_ip_login_revokes_other_browser_but_keeps_other_ip(db_factory
         ip_address="198.51.100.20",
         user_agent="Remote Browser",
     )
+    # Same IP but different device must NOT replace (NAT multi-device).
     edge = await auth.create_user_session(
         user,
         device_id="edge",
         ip_address="192.0.2.10",
         user_agent="Edge",
+    )
+    # Same device replaces the previous chrome session.
+    chrome_again = await auth.create_user_session(
+        user,
+        device_id="chrome",
+        ip_address="203.0.113.50",
+        user_agent="Chrome",
     )
 
     async with db_factory() as session:
@@ -54,10 +62,12 @@ async def test_same_ip_login_revokes_other_browser_but_keeps_other_ip(db_factory
     assert rows[first.id].revoked_at is not None
     assert rows[remote.id].revoked_at is None
     assert rows[edge.id].revoked_at is None
-    assert rows[edge.id].last_seen_at is not None
+    assert rows[chrome_again.id].revoked_at is None
+    assert rows[chrome_again.id].last_seen_at is not None
     assert await auth.get_user_session_state(user.id, first.id) == "replaced"
     assert await auth.get_user_session_state(user.id, remote.id) == "active"
     assert await auth.get_user_session_state(user.id, edge.id) == "active"
+    assert await auth.get_user_session_state(user.id, chrome_again.id) == "active"
 
 
 async def test_explicitly_revoked_session_is_not_reported_as_replaced(db_factory, monkeypatch) -> None:

@@ -66,6 +66,21 @@ class ApiKeyRepository(BaseRepository):
         result = await self.session.execute(stmt)
         return [_row_to_dict(r) for r in result.scalars()]
 
+    async def revoke_all_for_user(self, user_id: str) -> list[str]:
+        """Revoke every active key owned by ``user_id``. Returns key hashes for cache invalidation."""
+        now = utc_now()
+        result = await self.session.execute(
+            select(ApiKey.key_hash).where(ApiKey.user_id == user_id, ApiKey.revoked_at.is_(None))
+        )
+        key_hashes = list(result.scalars().all())
+        if not key_hashes:
+            return []
+        await self.session.execute(
+            update(ApiKey).where(ApiKey.user_id == user_id, ApiKey.revoked_at.is_(None)).values(revoked_at=now)
+        )
+        await self.session.flush()
+        return key_hashes
+
     async def get_by_hash(self, key_hash: str) -> dict[str, Any] | None:
         """Look up a key by its SHA-256 hash. Returns full row including hash."""
         stmt = select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.revoked_at.is_(None))

@@ -330,3 +330,25 @@ class TestGetCurrentUser:
                     cookie_token=None,
                 )
             assert exc_info.value.status_code == 401
+
+    async def test_bare_jwt_rejected_after_database_bootstrap(self):
+        """Session-less JWTs must not resolve to a user once DB auth is live."""
+        with patch.dict(os.environ, {"AUTH_TOKEN_SECRET": "test-secret-key-that-is-at-least-32-bytes"}):
+            auth_module._database_auth_initialized = True
+            token = auth_module.create_token("admin")
+            with pytest.raises(HTTPException) as exc_info:
+                await auth_module.get_current_user(lambda key, **_kwargs: key, token=token)
+            assert exc_info.value.status_code == 401
+            assert exc_info.value.detail == "token_legacy_rejected"
+
+    async def test_session_token_requires_live_session(self):
+        """uid+sid tokens resolve only through a non-revoked database session."""
+        with patch.dict(os.environ, {"AUTH_TOKEN_SECRET": "test-secret-key-that-is-at-least-32-bytes"}):
+            auth_module._database_auth_initialized = True
+            token = auth_module.create_token("admin", user_id="u1", session_id="s1")
+            with (
+                patch.object(auth_module, "_session_user", return_value=None),
+                pytest.raises(HTTPException) as exc_info,
+            ):
+                await auth_module.get_current_user(lambda key, **_kwargs: key, token=token)
+            assert exc_info.value.status_code == 401

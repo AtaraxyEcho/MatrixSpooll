@@ -33,9 +33,6 @@ async def test_login_attempts_are_recorded_without_credentials(db_factory, monke
     async def authenticate(username: str, password: str):
         return user if username == "alice" and password == "correct-password" else None
 
-    async def user_exists(username: str) -> bool:
-        return username == "alice"
-
     async def create_session(*_args, **_kwargs):
         return SimpleNamespace(id="session-alice")
 
@@ -43,7 +40,6 @@ async def test_login_attempts_are_recorded_without_credentials(db_factory, monke
     monkeypatch.setattr(auth_router, "is_auth_enabled", lambda: True)
     monkeypatch.setattr(auth_router, "database_auth_initialized", lambda: True)
     monkeypatch.setattr(auth_router, "authenticate_database_user", authenticate)
-    monkeypatch.setattr(auth_router, "database_user_exists", user_exists)
     monkeypatch.setattr(auth_router, "create_user_session", create_session)
     monkeypatch.setattr(auth_router, "create_token", lambda *_args, **_kwargs: "signed-token")
     reset_login_throttles()

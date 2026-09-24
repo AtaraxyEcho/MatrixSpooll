@@ -21,7 +21,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from datetime import UTC, timedelta
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import jwt
@@ -29,7 +29,7 @@ from fastapi import Cookie, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -248,12 +248,16 @@ async def create_user_session(
     ip_address: str | None,
     user_agent: str | None,
 ) -> UserSession:
-    """Replace an existing session from the same browser identity or source IP."""
+    """Replace an existing session from the same device identity.
+
+    Matching is by ``device_id`` only — same-IP multi-device (NAT) keeps
+    concurrent sessions; only a re-login on the same device replaces the old one.
+    """
     now = utc_now()
     session_id = uuid4().hex
+    # Only the same device replaces an existing session. Matching by IP alone
+    # would log out phone+laptop behind the same NAT on every login.
     same_client = UserSession.device_id == device_id
-    if ip_address:
-        same_client = or_(same_client, UserSession.ip_address == ip_address)
     async with async_session_factory() as db_session:
         async with db_session.begin():
             await db_session.execute(
@@ -323,8 +327,6 @@ async def get_user_session_state(user_id: str, session_id: str) -> SessionState:
             return "active"
 
         same_client = UserSession.device_id == browser_session.device_id
-        if browser_session.ip_address:
-            same_client = or_(same_client, UserSession.ip_address == browser_session.ip_address)
         replacement = await db_session.scalar(
             select(UserSession.id)
             .where(
@@ -422,16 +424,14 @@ def create_token(
     session_id: str | None = None,
     role: str | None = None,
 ) -> str:
-    """创建 JWT token
+    """创建 JWT token。
 
-    Args:
-        username: 用户名
-
-    Returns:
-        JWT token 字符串
+    生产登录路径必须同时传入 ``user_id`` 与 ``session_id``，使 token 可被
+    登出 / 吊销会话立刻作废。缺少 ``sid`` 的裸 JWT 仅在数据库认证尚未
+    bootstrap 的测试 / 预启动窗口可被 ``_payload_to_user`` 接受。
     """
     now = time.time()
-    payload = {
+    payload: dict[str, Any] = {
         "sub": username,
         "iat": now,
         "exp": now + TOKEN_EXPIRY_SECONDS,
@@ -464,16 +464,21 @@ def verify_token(token: str) -> dict | None:
 DOWNLOAD_TOKEN_EXPIRY_SECONDS = 300  # 5 分钟
 
 
-def create_download_token(username: str, project_name: str) -> str:
-    """签发短时效下载 token，用于浏览器原生下载认证"""
+def create_download_token(username: str, project_name: str, *, user_id: str | None = None) -> str:
+    """签发短时效下载 token，用于浏览器原生下载认证。
+
+    ``user_id`` 供下载时刻复检成员资格；旧调用省略时下载侧按用户名兜底。
+    """
     now = time.time()
-    payload = {
+    payload: dict[str, Any] = {
         "sub": username,
         "project": project_name,
         "purpose": "download",
         "iat": now,
         "exp": now + DOWNLOAD_TOKEN_EXPIRY_SECONDS,
     }
+    if user_id is not None:
+        payload["uid"] = user_id
     return jwt.encode(payload, get_token_secret(), algorithm="HS256")
 
 
@@ -827,24 +832,21 @@ async def _payload_to_user(
             )
         return user
 
-    # Older JWTs did not carry a session id. Resolve their subject by username
-    # during the migration window instead of mapping them to a magic id.
-    subject = payload.get("sub")
-    if isinstance(subject, str) and subject:
-        if not database_auth_initialized():
+    # Session-less JWTs cannot be revoked by logout/password change. Accept them
+    # only before database auth bootstrap (pre-lifespan tests / early clients).
+    # After bootstrap every JWT must carry uid+sid and pass the session check.
+    if not database_auth_initialized():
+        subject = payload.get("sub")
+        if isinstance(subject, str) and subject:
             return CurrentUserInfo(
                 id=uuid5(NAMESPACE_URL, f"matrixspooll:bootstrap-user:{subject}").hex,
                 sub=subject,
                 role="admin",
                 is_superadmin=True,
             )
-        async with async_session_factory() as db_session:
-            user = await db_session.scalar(select(User).where(User.username == subject, User.is_active.is_(True)))
-        if user is not None:
-            return CurrentUserInfo(id=user.id, sub=user.username, role=user.role, is_superadmin=user.is_superadmin)
     raise HTTPException(
         status_code=401,
-        detail=_t("session_invalid"),
+        detail=_t("token_legacy_rejected"),
         headers={"WWW-Authenticate": "Bearer"},
     )
 
