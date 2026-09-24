@@ -516,14 +516,17 @@ def _full_reset_from_profile(
     # reset 留下半完成状态 + 不完整 manifest。
     dest_tree = project_dir / _PROFILE_TREE_ROOT
     dest_top = project_dir / _PROFILE_TOP_FILE
-    if dest_tree.is_symlink() or dest_tree.is_file():
-        dest_tree.unlink()
-    elif dest_tree.is_dir():
-        shutil.rmtree(dest_tree)
-    if dest_top.is_symlink() or dest_top.is_file():
-        dest_top.unlink()
-    elif dest_top.is_dir():
-        shutil.rmtree(dest_top)
+    # Quarantine instead of hard-delete so user_only / user_modified skills can
+    # be recovered if a mode mismatch was caused by a missing content_mode field
+    # or a truncated manifest rather than a deliberate destructive switch.
+    has_dest = dest_tree.exists() or dest_tree.is_symlink() or dest_top.exists() or dest_top.is_symlink()
+    quarantine_root = project_dir / f".profile-quarantine-{time.time_ns()}"
+    if has_dest:
+        quarantine_root.mkdir(parents=True, exist_ok=True)
+    if dest_tree.is_symlink() or dest_tree.is_file() or dest_tree.is_dir():
+        dest_tree.rename(quarantine_root / _PROFILE_TREE_ROOT)
+    if dest_top.is_symlink() or dest_top.is_file() or dest_top.is_dir():
+        dest_top.rename(quarantine_root / _PROFILE_TOP_FILE)
 
     manifest = Manifest.empty()
     for rel in sorted(mapping):

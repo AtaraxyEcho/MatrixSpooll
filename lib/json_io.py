@@ -86,6 +86,8 @@ def atomic_write_json(path: Path, data: Any) -> None:
         ) as tmp:
             tmp_path = Path(tmp.name)
             json.dump(data, tmp, ensure_ascii=False, indent=2)
+            tmp.flush()
+            os.fsync(tmp.fileno())
         _replace_file(tmp_path, path)
         tmp_path = None
     finally:

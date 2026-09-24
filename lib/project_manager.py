@@ -576,23 +576,28 @@ class ProjectManager:
         return get_profile_status(agent_profile_dir(), project_dir, content_mode)
 
     def _resolve_content_mode(self, project_dir: Path) -> ContentMode:
-        """从 project_dir/project.json 读 content_mode；缺失回退 narration。
+        """从 project_dir/project.json 读 content_mode。
 
-        ``project.json`` 不存在或缺 ``content_mode`` 字段 → 回退 narration（兼容
-        老项目）。文件存在但读取/解析失败 → raise，让上层 sync_all_agent_profiles
-        走 failed_projects 分支；若静默回退到 narration，drama 项目会因 manifest
-        记录的 mode 不匹配触发破坏性 reset，把 profile 错误切回说书变体。
+        文件不存在 → 回退 narration（新建脚手架）。文件存在但缺 ``content_mode``
+        或解析失败 → raise，让上层 sync_all_agent_profiles 走 failed_projects；
+        静默回退会让 drama/ad 项目因 manifest mode 不匹配触发破坏性 profile reset。
         """
         pj_path = project_dir / self.PROJECT_FILE
         try:
             data = load_json(pj_path)
         except FileNotFoundError:
+            # Missing project.json is a new/empty project scaffold, not a
+            # corrupted drama/ad project — narration remains the safe default.
             logger.info("project.json missing under %s, defaulting content_mode=narration", project_dir)
             return "narration"
         mode = data.get("content_mode") if isinstance(data, dict) else None
         if mode is None:
-            logger.info("project.json has no content_mode under %s, defaulting narration", project_dir)
-            return "narration"
+            # Do not silently treat a present-but-incomplete project.json as
+            # narration: that flips manifest mode and used to wipe .claude/.
+            raise ValueError(
+                f"project {project_dir.name}: project.json is missing content_mode; "
+                "refusing to default it and risk a destructive profile reset"
+            )
         if not isinstance(mode, str) or mode not in VALID_CONTENT_MODES:
             raise ValueError(
                 f"project {project_dir.name}: invalid content_mode={mode!r} "

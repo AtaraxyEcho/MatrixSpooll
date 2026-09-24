@@ -914,17 +914,14 @@ def test_sync_agent_profile_reads_content_mode_from_project_json(
     assert (project_dir / "CLAUDE.md").read_text() == "drama top"
 
 
-def test_sync_agent_profile_missing_mode_fallback_narration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_sync_agent_profile_missing_mode_refuses_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """缺 content_mode 的 project.json 不得静默回落 narration（会触发破坏性 mode reset）。"""
     pm, _ = _setup_pm_with_profile(tmp_path, monkeypatch)
     project_dir = pm.create_project("demo", content_mode="narration")
-    # 模拟老项目：project.json 没有 content_mode 字段
     pj_path = project_dir / "project.json"
     pj_path.write_text(json.dumps({"title": "demo"}))
-    pm.sync_agent_profile(project_dir)
-    # 回退 narration，内容不变
-    assert (project_dir / "CLAUDE.md").read_text() == "narration top"
+    with pytest.raises(ValueError, match="content_mode"):
+        pm.sync_agent_profile(project_dir)
 
 
 def test_sync_agent_profile_invalid_mode_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
