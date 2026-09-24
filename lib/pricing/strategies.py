@@ -200,7 +200,17 @@ def _per_token_video(pricing: PerTokenVideo, params: PricingParams) -> tuple[flo
     model = params.model or pricing.default_model
     model_costs = pricing.rates.get(model, pricing.rates[pricing.default_model])
     key = (params.service_tier, params.generate_audio)
-    price_per_million = model_costs.get(key, model_costs.get(("default", True), 16.00))
+    price_per_million = model_costs.get(key, model_costs.get(("default", True)))
+    if price_per_million is None:
+        # Fail loud rather than silently billing a hard-coded rate. Callers that
+        # only need an estimate may treat 0 as "unpriced".
+        logger.warning(
+            "per_token_video 未命中定价 model=%s tier=%s audio=%s，按 0 计费并需补全价目",
+            model,
+            params.service_tier,
+            params.generate_audio,
+        )
+        return 0.0, pricing.currency
     amount = (params.usage_tokens or 0) / 1_000_000 * price_per_million
     return amount, pricing.currency
 

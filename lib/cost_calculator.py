@@ -33,6 +33,7 @@ class CostCalculator:
         custom_price_input: float | None = None,
         custom_price_output: float | None = None,
         custom_currency: str | None = None,
+        custom_price_unit: str | None = None,
         estimate_only: bool = False,
     ) -> tuple[float, str]:
         """统一费用计算入口。调用方直接构造 ``PricingParams`` 传入，返回 ``(amount, currency)``。
@@ -51,6 +52,7 @@ class CostCalculator:
                 price_input=custom_price_input,
                 price_output=custom_price_output,
                 currency=custom_currency,
+                price_unit=custom_price_unit,
                 input_tokens=params.input_tokens,
                 output_tokens=params.output_tokens,
                 duration_seconds=params.duration_seconds,
@@ -119,29 +121,42 @@ class CostCalculator:
         price_input: float | None = None,
         price_output: float | None = None,
         currency: str | None = None,
+        price_unit: str | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         duration_seconds: int | None = None,
         usage_tokens: int | None = None,
     ) -> tuple[float, str]:
-        """根据调用方预查的价格信息计算自定义供应商费用。"""
+        """根据调用方预查的价格信息计算自定义供应商费用。
+
+        ``price_unit``（token/image/second/character）优先；未声明时按 ``call_type``
+        取历史默认维度。缺价返回 0，供调用方区分「真免费」与「未配置」。
+        """
         if price_input is None:
-            return 0.0, "USD"
+            return 0.0, currency or "USD"
 
         cur = currency or "USD"
+        unit = (price_unit or "").strip().lower()
+        if not unit:
+            unit = {"text": "token", "image": "image", "video": "second", "audio": "character"}.get(call_type, "")
 
-        if call_type == "text":
+        if unit == "token":
             inp = (input_tokens or 0) * price_input
             out = (output_tokens or 0) * (price_output or 0)
             return (inp + out) / 1_000_000, cur
-        elif call_type == "image":
+        if unit == "image":
             return price_input, cur
-        elif call_type == "video":
+        if unit == "second":
             return (duration_seconds or 8) * price_input, cur
-        elif call_type == "audio":
-            # usage_tokens 承载合成字符数（与 _per_character 同模式）；单价口径为每万字符，
-            # 与内置 per_character pricing kind 共用同一计价单位常量。
+        if unit == "character":
+            # usage_tokens 承载合成字符数（与 _per_character 同模式）；单价口径为每万字符。
             return (usage_tokens or 0) / CHARACTERS_PER_PRICING_UNIT * price_input, cur
+
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "自定义供应商未知 price_unit=%r call_type=%s，按 0 计费", price_unit, call_type
+        )
         return 0.0, cur
 
 

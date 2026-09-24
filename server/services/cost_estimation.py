@@ -133,6 +133,7 @@ def quote_video_request_from_price(
             generate_audio=facts.generate_audio,
         ),
         custom_price_input=price.price_input,
+        custom_price_unit=price.price_unit,
         custom_price_output=price.price_output,
         custom_currency=price.currency,
         estimate_only=True,
@@ -245,6 +246,7 @@ def _estimate_unit_video_cost(
                 generate_audio=video.generate_audio,
             ),
             custom_price_input=video.price.price_input,
+            custom_price_unit=video.price.price_unit,
             custom_price_output=video.price.price_output,
             custom_currency=video.price.currency,
             estimate_only=True,
@@ -455,6 +457,7 @@ class CostEstimationService:
                     resolution=image_resolution or _IMAGE_PRICING_FALLBACK_RESOLUTION,
                 ),
                 custom_price_input=image_price.price_input,
+                custom_price_unit=image_price.price_unit,
                 custom_price_output=image_price.price_output,
                 custom_currency=image_price.currency,
             )
@@ -471,6 +474,7 @@ class CostEstimationService:
                         resolution=image_resolution or GRID_FALLBACK_RESOLUTION,
                     ),
                     custom_price_input=image_price.price_input,
+                    custom_price_unit=image_price.price_unit,
                     custom_price_output=image_price.price_output,
                     custom_currency=image_price.currency,
                 )
@@ -612,6 +616,7 @@ class CostEstimationService:
                             generate_audio=episode_video.generate_audio,
                         ),
                         custom_price_input=episode_video.price.price_input,
+                        custom_price_unit=episode_video.price.price_unit,
                         custom_price_output=episode_video.price.price_output,
                         custom_currency=episode_video.price.currency,
                     )
@@ -628,6 +633,7 @@ class CostEstimationService:
                             audio_provider,
                             PricingParams(call_type="audio", model=audio_model, usage_tokens=narration_chars),
                             custom_price_input=audio_price.price_input,
+                            custom_price_unit=audio_price.price_unit,
                             custom_price_output=audio_price.price_output,
                             custom_currency=audio_price.currency,
                         )

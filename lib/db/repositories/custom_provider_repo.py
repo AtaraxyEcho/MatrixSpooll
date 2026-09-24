@@ -15,15 +15,16 @@ logger = logging.getLogger(__name__)
 
 
 class CustomProviderPrice(NamedTuple):
-    """自定义供应商价格三元组，作为 ``calculate_cost`` 的 ``custom_price_*`` 入参来源。
+    """自定义供应商价格四元组，作为 ``calculate_cost`` 的 ``custom_price_*`` 入参来源。
 
-    三字段全 ``None`` 表示无自定义价格：预置供应商 / 畸形 provider id / 查询异常 / 查无模型
-    均归为此语义，``calculate_cost`` 据此对自定义供应商缺价时计为 0。
+    价格字段全 ``None`` 表示无自定义价格；``price_unit`` 决定计价维度
+    （token/image/second/character），缺省时按 call_type 兜底。
     """
 
     price_input: float | None = None
     price_output: float | None = None
     currency: str | None = None
+    price_unit: str | None = None
 
 
 _NO_PRICE = CustomProviderPrice()
@@ -216,7 +217,12 @@ class CustomProviderRepository(BaseRepository):
             return _NO_PRICE
         if price_model is None:
             return _NO_PRICE
-        return CustomProviderPrice(price_model.price_input, price_model.price_output, price_model.currency)
+        return CustomProviderPrice(
+            price_model.price_input,
+            price_model.price_output,
+            price_model.currency,
+            price_model.price_unit,
+        )
 
     async def get_default_model(self, provider_id: int, media_type: str) -> CustomProviderModel | None:
         """获取指定供应商 + 媒体类型的默认已启用模型。

@@ -270,6 +270,7 @@ class UsageRepository(BaseRepository):
                 custom_price_input=custom_price.price_input,
                 custom_price_output=custom_price.price_output,
                 custom_currency=custom_price.currency,
+                custom_price_unit=custom_price.price_unit,
             )
 
         return _SettledCall(
