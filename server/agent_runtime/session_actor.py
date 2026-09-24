@@ -193,6 +193,10 @@ class SessionActor:
             cmd.complete(self._fatal or _ActorClosed())
             return
         await self._cmd_queue.put(cmd)
+        # Close the put/drain TOCTOU: if the actor exited between the done()
+        # check and put(), nobody will consume this command.
+        if self._task is not None and self._task.done():
+            self._drain_pending_commands(self._fatal or _ActorClosed())
 
     def _drain_pending_commands(self, exc: BaseException) -> None:
         while not self._cmd_queue.empty():

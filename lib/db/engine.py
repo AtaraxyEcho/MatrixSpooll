@@ -121,7 +121,13 @@ class _SafeSessionContext:
         return self._session
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        with contextlib.suppress(OperationalError, asyncio.CancelledError):
+        # Do not swallow CancelledError from close(): suppressing it would clear
+        # the task's cancelling state and let generation continue after cancel.
+        if exc_type is asyncio.CancelledError:
+            with contextlib.suppress(OperationalError):
+                await self._session.close()
+            raise
+        with contextlib.suppress(OperationalError):
             await self._session.close()
         return False
 

@@ -246,7 +246,11 @@ async def get_active_tasks_for_resources(
 
 
 def _run_in_fresh_loop(coro):
-    """Run *coro* with ``asyncio.run()``, disposing stale pool connections first."""
+    """Run *coro* with ``asyncio.run()``, disposing stale pool connections first.
+
+    Only safe when this process is not serving the live FastAPI loop: disposing
+    the shared engine would yank connections out from under the server.
+    """
     from lib.db.engine import dispose_pool
 
     dispose_pool()
@@ -261,11 +265,9 @@ def _run_sync(coro):
         loop = None
 
     if loop is not None and loop.is_running():
-        # Already inside an event loop — create a new thread to run the coroutine.
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(_run_in_fresh_loop, coro).result()
+        # In-process skill wrappers must not dispose the shared engine while the
+        # server event loop owns it. Refuse rather than corrupt the pool.
+        raise RuntimeError("enqueue_*_sync cannot be used inside a running event loop; call the async API instead")
     return _run_in_fresh_loop(coro)
 
 

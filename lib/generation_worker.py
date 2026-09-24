@@ -13,7 +13,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from lib.config.registry import ProviderMeta
@@ -869,19 +869,35 @@ class GenerationWorker:
                 await self._sync_free_creation_metadata(task, status="cancelled", discard_result=True)
             return
 
+        rows_box: dict[str, int] = {}
+
+        async def _mark_succeeded() -> None:
+            rows_box["rows"] = await self.queue.mark_task_succeeded(task_id, result)
+
+        mark_task = asyncio.ensure_future(_mark_succeeded())
         try:
-            rows = await asyncio.shield(self.queue.mark_task_succeeded(task_id, result))
+            await asyncio.shield(mark_task)
         except asyncio.CancelledError:
-            # mark_succeeded 期间被取消：shield 让 inner 跑完了；inner 完成情况由
-            # rowcount 决定——拿不到了，按"被外部取消"语义兜底。
-            await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
-            await self._sync_free_creation_metadata(task, status="cancelled", discard_result=True)
+            # shield lets the mark finish; only treat as user-cancel when the
+            # guarded UPDATE affected 0 rows. A successful commit must keep the
+            # artifact and must not discard free-creation media.
+            try:
+                await asyncio.wait_for(asyncio.shield(mark_task), timeout=5)
+            except (TimeoutError, asyncio.CancelledError, Exception):
+                pass
+            if "rows" not in rows_box:
+                # mark still in flight or timed out — do not discard a possible success
+                raise
+            if rows_box["rows"] == 0:
+                await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
+                await self._sync_free_creation_metadata(task, status="cancelled", discard_result=True)
             raise
         except Exception:
             # mark_succeeded 自身抛错（DB 超时 / OperationalError）：上层 _drain_finished_tasks
             # 只吞掉异常 debug 日志，stack trace 会丢失，因此在这里显式 logger.exception 保留现场。
             logger.exception("标记任务成功失败 %s", task_id)
             raise
+        rows = rows_box.get("rows", 0)
         if rows == 0:
             # 0-rows-cancelled 协议：execute 跑赢但 DB 已被外部翻 cancelling
             await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
@@ -904,8 +920,15 @@ class GenerationWorker:
         task_type = task.get("task_type", "unknown")
 
         checkpoint = None
-        if task_type in ("video", "reference_video"):
-            state, checkpoint = classify_video_resume_state(task)
+        free_checkpoint = task.get("_free_video_checkpoint")
+        is_free_video = task_type == "free_video" or (task_type == "free_edit" and task.get("media_type") == "video")
+        if task_type in ("video", "reference_video") or is_free_video:
+            if is_free_video:
+                from lib.free_video_checkpoint import classify_free_video_resume_state
+
+                state, free_checkpoint = classify_free_video_resume_state(task)
+            else:
+                state, checkpoint = classify_video_resume_state(task)
             if state is not VideoResumeState.READY:
                 code = (
                     "restart_lost_checkpoint_no_job_id"
@@ -915,7 +938,13 @@ class GenerationWorker:
                     else "execution_identity_unrecoverable"
                 )
                 params = (
-                    {"detail": "missing, malformed, or mismatched video submission checkpoint"}
+                    {
+                        "detail": (
+                            "missing, malformed, or mismatched free video submission checkpoint"
+                            if is_free_video
+                            else "missing, malformed, or mismatched video submission checkpoint"
+                        )
+                    }
                     if (code == "execution_identity_unrecoverable")
                     else {}
                 )
@@ -947,7 +976,11 @@ class GenerationWorker:
                 task["payload"] = payload
             payload["image_provider"] = persisted_provider_id
 
-        provider_id = checkpoint.provider_id if checkpoint is not None else await _extract_provider(task)
+        provider_id = (
+            checkpoint.provider_id
+            if checkpoint is not None
+            else (free_checkpoint or {}).get("provider_id") or await _extract_provider(task)
+        )
         logger.info(
             "重启自愈处理任务 %s (type=%s, provider=%s, job=%s)",
             task_id,
@@ -961,6 +994,19 @@ class GenerationWorker:
 
         async def _execute_with_video_cleanup() -> dict[str, Any]:
             try:
+                if is_free_video and free_checkpoint is not None:
+                    from server.services.free_creation_tasks import resume_free_video_task
+
+                    return await resume_free_video_task(
+                        task["project_name"],
+                        str(task["resource_id"]),
+                        task,
+                        free_checkpoint,
+                        job_id=job_id,
+                        user_id=task.get("user_id") or "",
+                        output_type=cast(Literal["video", "edit"], free_checkpoint.get("output_type") or "video"),
+                        parent_creation_id=free_checkpoint.get("parent_creation_id"),
+                    )
                 return await execute_resume_video_task(task, job_id=job_id)
             finally:
                 if checkpoint is not None:
@@ -978,6 +1024,12 @@ class GenerationWorker:
             )
             if rows == 0:
                 await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
+            if is_free_video:
+                await self._sync_free_creation_metadata(
+                    task,
+                    status="failed" if rows else "cancelled",
+                    discard_result=True,
+                )
             return
         except ResumeEndpointChangedError as exc:
             logger.warning("resume endpoint 已变更 task %s: %s", task_id, exc)
@@ -1000,14 +1052,33 @@ class GenerationWorker:
             rows = await asyncio.shield(self.queue.mark_task_failed(task_id, _encode_task_failure_message(exc)))
             if rows == 0:
                 await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
+            if is_free_video:
+                await self._sync_free_creation_metadata(
+                    task,
+                    status="failed" if rows else "cancelled",
+                    discard_result=True,
+                )
             return
 
+        rows_box: dict[str, int] = {}
+
+        async def _mark_succeeded() -> None:
+            rows_box["rows"] = await self.queue.mark_task_succeeded(task_id, result)
+
+        mark_task = asyncio.ensure_future(_mark_succeeded())
         try:
-            rows = await asyncio.shield(self.queue.mark_task_succeeded(task_id, result))
+            await asyncio.shield(mark_task)
         except asyncio.CancelledError:
-            await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
+            try:
+                await asyncio.wait_for(asyncio.shield(mark_task), timeout=5)
+            except (TimeoutError, asyncio.CancelledError, Exception):
+                pass
+            if "rows" not in rows_box:
+                raise
+            if rows_box["rows"] == 0:
+                await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
             raise
-        if rows == 0:
+        if rows_box.get("rows", 0) == 0:
             await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
         else:
             logger.info("重启自愈完成 %s", task_id)
@@ -1216,26 +1287,54 @@ class GenerationWorker:
                     await self.queue.mark_task_cancelled(task_id, cancelled_by="user")
                 continue
 
-            # 自由视频尚未持久化可恢复的 provider 提交身份。重启后重跑会重复扣费，
-            # 因此明确落失败，交给用户决定是否重试。
+            # 自由视频：有 checkpoint + job_id 时 resume 已提交的付费 job（不重提）。
             if task_type == "free_video" or (task_type == "free_edit" and media_type == "video"):
-                failure = encode_failure(
-                    "execution_identity_unrecoverable",
-                    detail="free creation video resume checkpoint is unavailable",
-                )
-                rows = await self.queue.mark_task_failed(
-                    task_id,
-                    failure,
-                )
-                if rows == 0:
-                    await self.queue.mark_task_cancelled(task_id, cancelled_by="user")
-                await self._sync_free_creation_metadata(
-                    task,
-                    status="failed" if rows else "cancelled",
-                    error_code="execution_identity_unrecoverable" if rows else None,
-                    error=failure if rows else None,
-                    discard_result=True,
-                )
+                from lib.free_video_checkpoint import classify_free_video_resume_state
+
+                resume_state, free_checkpoint = classify_free_video_resume_state(task)
+                if resume_state is not VideoResumeState.READY:
+                    if resume_state is VideoResumeState.NO_CHECKPOINT_NO_JOB:
+                        failure = encode_failure("restart_lost_no_job_id")
+                        error_code = "restart_lost_no_job_id"
+                    elif resume_state is VideoResumeState.CHECKPOINT_WITHOUT_JOB:
+                        failure = encode_failure("restart_lost_checkpoint_no_job_id")
+                        error_code = "restart_lost_checkpoint_no_job_id"
+                    else:
+                        failure = encode_failure(
+                            "execution_identity_unrecoverable",
+                            detail="missing, malformed, or mismatched free video submission checkpoint",
+                        )
+                        error_code = "execution_identity_unrecoverable"
+                    rows = await self.queue.mark_task_failed(task_id, failure)
+                    if rows == 0:
+                        await self.queue.mark_task_cancelled(task_id, cancelled_by="user")
+                    await self._sync_free_creation_metadata(
+                        task,
+                        status="failed" if rows else "cancelled",
+                        error_code=error_code if rows else None,
+                        error=failure if rows else None,
+                        discard_result=True,
+                    )
+                    continue
+                provider_id = (free_checkpoint or {}).get("provider_id") or task.get("provider_id")
+                if provider_id in NON_RESUMABLE_VIDEO_PROVIDERS:
+                    rows = await self.queue.mark_task_failed(
+                        task_id,
+                        encode_failure("resume_unsupported_provider", provider_id=provider_id),
+                    )
+                    if rows == 0:
+                        await self.queue.mark_task_cancelled(task_id, cancelled_by="user")
+                    await self._sync_free_creation_metadata(
+                        task,
+                        status="failed" if rows else "cancelled",
+                        error_code="resume_unsupported_provider" if rows else None,
+                        discard_result=True,
+                    )
+                    continue
+                task["_free_video_checkpoint"] = free_checkpoint
+                if provider_id:
+                    task["provider_id"] = provider_id
+                resumable_by_provider.setdefault(provider_id or "unknown", []).append(task)
                 continue
 
             # 本地后处理没有供应商扣费，进程重启后可安全回队重跑。

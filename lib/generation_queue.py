@@ -526,15 +526,17 @@ class GenerationQueue:
         """Returns rows_affected (0 = 已被外部翻成非 running 终/中间态，worker 走 0-rows-cancelled 协议)."""
         async with self._task_repo() as repo:
             affected = await repo.mark_succeeded(task_id, result)
-        if affected > 0:
-            logger.info("任务成功 task_id=%s", task_id)
-        else:
-            logger.info("mark_succeeded 0 rows task_id=%s (已被外部翻状态)", task_id)
-            if isinstance(result, CompensableGenerationResult):
-                try:
-                    await asyncio.to_thread(result.compensate_cancelled)
-                except Exception:
-                    logger.exception("取消补偿失败 task_id=%s", task_id)
+            if affected > 0:
+                logger.info("任务成功 task_id=%s", task_id)
+            else:
+                logger.info("mark_succeeded 0 rows task_id=%s (已被外部翻状态)", task_id)
+                # Compensate before the context exits: emit_task_terminal_events runs
+                # on exit and must not be able to skip cancellation compensation.
+                if isinstance(result, CompensableGenerationResult):
+                    try:
+                        await asyncio.to_thread(result.compensate_cancelled)
+                    except Exception:
+                        logger.exception("取消补偿失败 task_id=%s", task_id)
         return affected
 
     async def mark_task_failed(self, task_id: str, error_message: str) -> int:

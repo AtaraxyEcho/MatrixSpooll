@@ -13,6 +13,7 @@ from lib.artifact_manifest import ArtifactBasis, ArtifactKey, ArtifactManifest, 
 from lib.async_thread import run_noninterruptible_sync
 from lib.content_digest import prefixed_sha256_file
 from lib.formal_write import project_metadata_lock
+from lib.free_video_checkpoint import build_free_video_checkpoint, dump_free_video_checkpoint
 from lib.generation_queue import DispatchProviderChanged, free_video_capability, get_generation_queue
 from lib.json_io import atomic_write_json, load_json_or_none
 from lib.path_safety import safe_join
@@ -497,6 +498,41 @@ async def execute_free_video_task(
             claimed_provider_id=claimed_provider_id,
             actual_provider_id=ctx.video.provider_model.provider_id,
         )
+    capability = free_video_capability(payload) or "i2v"
+    aspect_ratio = str(payload.get("aspect_ratio") or project.get("aspect_ratio") or "9:16")
+    duration_seconds = int(payload.get("duration_seconds") or 4)
+    resolution = payload.get("resolution") or ctx.video.resolution
+    generate_audio = bool(payload.get("generate_audio", project.get("video_generate_audio", True)))
+
+    async def _checkpoint_before_submit(api_call_id: int):
+        """Freeze submit identity so restart can resume the paid provider job."""
+        if not task_id:
+            return None
+        checkpoint = build_free_video_checkpoint(
+            task_id=task_id,
+            project_name=project_name,
+            resource_id=resource_id,
+            capability=capability,
+            provider_id=ctx.video.provider_model.provider_id,
+            provider_model_id=ctx.video.provider_model.model_id,
+            backend_model_id=ctx.video.backend_model,
+            endpoint_guard=ctx.video.endpoint,
+            prompt=generation_prompt,
+            duration_seconds=duration_seconds,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            generate_audio=generate_audio,
+            output_type=output_type,
+            parent_creation_id=parent_creation_id,
+            api_call_id=api_call_id,
+        )
+        await get_generation_queue().persist_execution_checkpoint(
+            task_id,
+            dump_free_video_checkpoint(checkpoint),
+            checkpoint["provider_id"],
+        )
+        return {"execution_checkpoint_kind": checkpoint["kind"]}
+
     output_path, version, _video_ref, _video_uri = await ctx.generator.generate_video_async(
         prompt=generation_prompt,
         resource_type="free_videos",
@@ -506,10 +542,12 @@ async def execute_free_video_task(
         reference_images=list(reference_plan.reference_images) or None,
         reference_videos=list(reference_plan.reference_videos) or None,
         reference_audio_files=list(reference_plan.reference_audio) or None,
-        aspect_ratio=str(payload.get("aspect_ratio") or project.get("aspect_ratio") or "9:16"),
-        duration_seconds=int(payload.get("duration_seconds") or 4),
-        resolution=payload.get("resolution") or ctx.video.resolution,
+        aspect_ratio=aspect_ratio,
+        duration_seconds=duration_seconds,
+        resolution=resolution,
         task_id=task_id,
+        before_submit=_checkpoint_before_submit if task_id else None,
+        generate_audio=generate_audio,
         source="free_creation",
         prompt_mode="original",
     )
@@ -527,11 +565,12 @@ async def execute_free_video_task(
         "references": payload.get("references") or [],
         "reference_claims": payload.get("reference_claims") or [],
         "effective_mode": payload.get("effective_mode"),
-        "aspect_ratio": payload.get("aspect_ratio") or project.get("aspect_ratio") or "9:16",
-        "resolution": payload.get("resolution"),
+        "aspect_ratio": aspect_ratio,
+        "resolution": resolution,
         "size": payload.get("size"),
         "quantity": int(payload.get("quantity") or 1),
-        "duration_seconds": int(payload.get("duration_seconds") or 4),
+        "duration_seconds": duration_seconds,
+        "generate_audio": generate_audio,
         "parent_creation_id": parent_creation_id,
         "storyboard_plan_id": payload.get("storyboard_plan_id"),
         "storyboard_shot_id": payload.get("storyboard_shot_id"),
@@ -549,6 +588,110 @@ async def execute_free_video_task(
             if extracted_cover is not None:
                 extracted_cover.unlink(missing_ok=True)
             raise
+    return metadata
+
+
+async def resume_free_video_task(
+    project_name: str,
+    resource_id: str,
+    task: dict[str, Any],
+    checkpoint: dict[str, Any],
+    *,
+    job_id: str,
+    user_id: str,
+    output_type: Literal["video", "edit"] = "video",
+    parent_creation_id: str | None = None,
+) -> dict[str, Any]:
+    """Poll an already-submitted free-video provider job and commit the result.
+
+    Never re-submits — that is the whole point of the checkpoint + job_id pair.
+    """
+    from server.services.generation_context import resolve_generation_context
+
+    pm = get_project_manager()
+    project = await asyncio.to_thread(pm.load_project, project_name)
+    project_path = pm.get_project_path(project_name)
+    prompt = str(checkpoint.get("prompt") or "")
+    aspect_ratio = str(checkpoint.get("aspect_ratio") or "9:16")
+    duration_seconds = int(checkpoint.get("duration_seconds") or 4)
+    resolution = checkpoint.get("resolution")
+    generate_audio = bool(checkpoint.get("generate_audio", True))
+    provider_model = f"{checkpoint['provider_id']}/{checkpoint['provider_model_id']}"
+    resolver_payload = {
+        f"video_provider_{checkpoint.get('capability') or 'i2v'}": provider_model,
+    }
+    ctx = await resolve_generation_context(
+        project_name,
+        resolver_payload,
+        project=project,
+        project_path=project_path,
+        user_id=user_id,
+        video=VideoLaneRequest(capability=checkpoint.get("capability") or "i2v"),
+    )
+    if ctx.video.provider_model.provider_id != checkpoint.get(
+        "provider_id"
+    ) or ctx.video.provider_model.model_id != checkpoint.get("provider_model_id"):
+        from lib.reference_video.execution_checkpoint import ReferenceExecutionIdentityError
+
+        raise ReferenceExecutionIdentityError("resolved free video identity does not match checkpoint")
+    endpoint_guard = checkpoint.get("endpoint_guard")
+    if endpoint_guard != ctx.video.endpoint:
+        from lib.video_backends.base import ResumeEndpointChangedError
+
+        raise ResumeEndpointChangedError(
+            job_id=job_id,
+            provider=str(checkpoint.get("provider_id")),
+            submitted_endpoint=endpoint_guard or "<builtin>",
+            current_endpoint=ctx.video.endpoint or "<builtin>",
+        )
+    submitted = task.get("submitted_base_url")
+    submitted_base_url = (
+        submitted if isinstance(submitted, str) and submitted.startswith(("http://", "https://")) else None
+    )
+    output_path, version, _ref, _uri = await ctx.generator.resume_video_async(
+        job_id=job_id,
+        resource_type="free_videos",
+        resource_id=resource_id,
+        prompt=prompt,
+        aspect_ratio=aspect_ratio,
+        duration_seconds=duration_seconds,
+        resolution=resolution,
+        task_id=task.get("task_id"),
+        api_call_id=checkpoint.get("api_call_id"),
+        submitted_base_url=submitted_base_url,
+        generate_audio=generate_audio,
+    )
+    cover_path = project_path / "free_creation" / "covers" / f"{resource_id}.jpg"
+    extracted_cover = await extract_video_thumbnail(output_path, cover_path)
+    metadata = {
+        "creation_id": resource_id,
+        "request_id": (task.get("payload") or {}).get("request_id"),
+        "status": "succeeded",
+        "output_type": output_type,
+        "media_type": "video",
+        "prompt": prompt,
+        "prompt_mode": "original",
+        "model": f"{ctx.video.provider_model.provider_id}/{ctx.video.backend_model}",
+        "references": (task.get("payload") or {}).get("references") or [],
+        "reference_claims": (task.get("payload") or {}).get("reference_claims") or [],
+        "effective_mode": (task.get("payload") or {}).get("effective_mode"),
+        "aspect_ratio": aspect_ratio,
+        "resolution": resolution,
+        "size": (task.get("payload") or {}).get("size"),
+        "quantity": int((task.get("payload") or {}).get("quantity") or 1),
+        "duration_seconds": duration_seconds,
+        "generate_audio": generate_audio,
+        "parent_creation_id": parent_creation_id or checkpoint.get("parent_creation_id"),
+        "storyboard_plan_id": (task.get("payload") or {}).get("storyboard_plan_id"),
+        "storyboard_shot_id": (task.get("payload") or {}).get("storyboard_shot_id"),
+        "sequence_index": (task.get("payload") or {}).get("sequence_index"),
+        "media_path": output_path.relative_to(project_path).as_posix(),
+        "cover_path": extracted_cover.relative_to(project_path).as_posix() if extracted_cover else None,
+        "version": version,
+        "task_id": task.get("task_id"),
+        "updated_at": _now(),
+    }
+    await _commit_generated_free_creation(project_path, metadata, task.get("task_id"))
     return metadata
 
 

@@ -1291,7 +1291,7 @@ class TestGenerationWorker:
         assert len(queue.failed) == 1
         assert queue.failed[0][0] == "free-edit-video-orphan"
         assert "[execution_identity_unrecoverable]" in queue.failed[0][1]
-        assert "free creation video resume checkpoint is unavailable" in queue.failed[0][1]
+        assert "free video submission checkpoint" in queue.failed[0][1]
         assert updates == [
             {
                 "status": "failed",
@@ -1300,6 +1300,54 @@ class TestGenerationWorker:
                 "discard_result": True,
             }
         ]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_free_video_orphan_with_checkpoint_and_job_is_resumable(self, monkeypatch):
+        from lib.free_video_checkpoint import build_free_video_checkpoint, dump_free_video_checkpoint
+
+        checkpoint = build_free_video_checkpoint(
+            task_id="free-resume",
+            project_name="demo",
+            resource_id="c_resume",
+            capability="r2v",
+            provider_id="ark",
+            provider_model_id="m",
+            backend_model_id="m",
+            endpoint_guard=None,
+            prompt="hi",
+            duration_seconds=4,
+            aspect_ratio="9:16",
+            resolution=None,
+            generate_audio=True,
+        )
+        queue = _FakeQueue()
+        queue._orphans = [
+            {
+                "task_id": "free-resume",
+                "status": "running",
+                "provider_id": "ark",
+                "provider_job_id": "job-1",
+                "media_type": "video",
+                "task_type": "free_video",
+                "payload": {},
+                "project_name": "demo",
+                "resource_id": "c_resume",
+                "execution_checkpoint_json": dump_free_video_checkpoint(checkpoint),
+            }
+        ]
+        worker = GenerationWorker(queue=queue)
+        dispatched: list[list] = []
+
+        async def _fake_dispatch(_self, buckets):
+            dispatched.append(list(buckets))
+
+        monkeypatch.setattr(GenerationWorker, "_dispatch_resume_orphans_background", _fake_dispatch)
+        await worker._handle_orphan_tasks_on_start()
+        assert not queue.failed
+        if worker._orphan_dispatcher_task is not None:
+            await worker._orphan_dispatcher_task
+        assert dispatched and "ark" in dispatched[0]
 
     @pytest.mark.unit
     @pytest.mark.asyncio
