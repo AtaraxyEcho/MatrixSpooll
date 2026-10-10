@@ -18,7 +18,7 @@ if (!legalAttribution) {
 const config: Config = {
   title: "MatrixSpooll 文档中心",
   tagline: "开源、自托管的 AI 视频创作平台",
-  favicon: "img/logo.jpg",
+  favicon: "img/favicon.ico",
 
   url: docsSiteUrl,
   baseUrl: docsBaseUrl,

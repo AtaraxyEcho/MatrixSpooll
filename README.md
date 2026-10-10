@@ -1,12 +1,6 @@
 <h1 align="center">
   <br>
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="frontend/public/matrixspooll-mark.svg">
-    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/matrixspooll-mark.svg">
-    <img src="frontend/public/matrixspooll-mark.svg" alt="MatrixSpooll Logo" width="128">
-  </picture>
-  <br>
-  MatrixSpooll
+  <img src="frontend/public/logo-horizontal.png" alt="MatrixSpooll Logo" width="440">
   <br>
 </h1>
 
