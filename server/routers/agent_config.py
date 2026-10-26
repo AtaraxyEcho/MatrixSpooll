@@ -13,10 +13,12 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.agent_provider_catalog import CUSTOM_SENTINEL_ID, get_preset, list_presets
+from lib.api_errors import BadRequestError
 from lib.config.anthropic_probe import DiagnosisCode, run_test
 from lib.config.anthropic_probe import ProbeResult as ProbeResultDC
 from lib.config.anthropic_probe import TestConnectionResponse as TestConnectionResponseDC
 from lib.config.repository import mask_secret
+from lib.config.url_utils import validate_provider_base_url
 from lib.db import get_async_session
 from lib.db.base import dt_to_iso
 from lib.db.repositories.agent_credential_repo import AgentCredentialRepository
@@ -27,6 +29,18 @@ from server.auth import require_admin
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["Agent 配置"])
+
+
+def _validated_base_url(base_url: str, _t: Translator) -> str:
+    """保存/探测前的 SSRF 围栏：与自定义供应商同一套判定与错误码。
+
+    Agent 凭证的 base_url 同样会被用来发真实请求（保存后探测、跑会话），
+    缺这层校验时只需一次「测试连接」就能把服务端当跳板打内网与云元数据。
+    """
+    try:
+        return validate_provider_base_url(base_url)
+    except ValueError as exc:
+        raise BadRequestError("provider_base_url_forbidden", reason=str(exc)) from exc
 
 
 # ── Response models ─────────────────────────────────────────────────
@@ -195,7 +209,7 @@ async def create_credential(
     cred = await repo.create(
         preset_id=body.preset_id,
         display_name=display_name,
-        base_url=base_url,
+        base_url=_validated_base_url(base_url, _t),
         api_key=api_key,
         model=model,
         haiku_model=body.haiku_model,
@@ -232,6 +246,8 @@ async def update_credential(
             fields.pop(required, None)
     if not fields:
         raise HTTPException(status_code=400, detail=_t("agent_no_fields_to_update"))
+    if "base_url" in fields:
+        fields["base_url"] = _validated_base_url(fields["base_url"], _t)
     cred = await repo.update(cred_id, **fields)
     if cred is None:
         raise HTTPException(status_code=404, detail=_t("agent_credential_not_found"))
@@ -363,7 +379,7 @@ async def test_connection_draft(
         raise HTTPException(status_code=422, detail=_t("anthropic_discovery_no_key"))
     return await _run_and_serialize(
         preset_id=body.preset_id,
-        base_url=body.base_url,
+        base_url=_validated_base_url(body.base_url, _t) if body.base_url else None,
         api_key=api_key,
         model=body.model,
         _t=_t,

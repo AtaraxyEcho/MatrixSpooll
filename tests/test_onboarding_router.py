@@ -92,13 +92,15 @@ async def test_mark_seen_is_idempotent(authed_client) -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_mark_seen_persists_flag_under_expected_key(authed_client, _session_factory) -> None:
-    """标记写在实例级 SystemSetting 的 `onboarding_seen` 上，不是内存态。"""
+async def test_mark_seen_persists_flag_under_per_user_key(authed_client, _session_factory) -> None:
+    """标记写在按用户隔离的 SystemSetting 键上，不是全局键也不是内存态。"""
     await authed_client.post("/api/v1/onboarding/seen")
 
     async with _session_factory() as session:
-        stored = await ConfigService(session).get_setting(onboarding.ONBOARDING_SEEN_KEY)
+        stored = await ConfigService(session).get_setting(onboarding._seen_key("default"))
+        global_flag = await ConfigService(session).get_setting(onboarding.ONBOARDING_SEEN_KEY)
     assert stored == "true"
+    assert global_flag == ""
 
 
 @pytest.mark.integration
@@ -110,10 +112,28 @@ async def test_mark_seen_writes_only_the_flag(authed_client, _session_factory) -
 
     await authed_client.post("/api/v1/onboarding/seen")
 
+    key = onboarding._seen_key("default")
     async with _session_factory() as session:
         after = await ConfigService(session).get_all_settings()
-    assert set(after) - set(before) == {onboarding.ONBOARDING_SEEN_KEY}
-    assert {k: v for k, v in after.items() if k != onboarding.ONBOARDING_SEEN_KEY} == before
+    assert set(after) - set(before) == {key}
+    assert {k: v for k, v in after.items() if k != key} == before
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_seen_flag_is_isolated_per_user(_session_factory) -> None:
+    """多用户：A 看完引导不能让 B 也变成已看过。"""
+    app = _make_app(_session_factory)
+    transport = ASGITransport(app=app)
+
+    app.dependency_overrides[get_current_user] = lambda: CurrentUserInfo(id="user-a", sub="a", role="member")
+    async with AsyncClient(transport=transport, base_url="http://test") as user_a:
+        assert (await user_a.post("/api/v1/onboarding/seen")).status_code == 200
+
+    app.dependency_overrides[get_current_user] = lambda: CurrentUserInfo(id="user-b", sub="b", role="member")
+    async with AsyncClient(transport=transport, base_url="http://test") as user_b:
+        resp = await user_b.get("/api/v1/onboarding/status")
+        assert resp.json() == {"seen": False}
 
 
 @pytest.mark.integration

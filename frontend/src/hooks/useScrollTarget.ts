@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useAppStore } from "@/stores/app-store";
 import type { WorkspaceFocusTarget } from "@/types";
+import i18n from "@/i18n";
 
 interface UseScrollTargetOptions {
   prepareTarget?: (target: WorkspaceFocusTarget) => boolean;
@@ -78,7 +79,7 @@ export function useScrollTarget(
         }
         if (Date.now() >= currentTarget.expires_at) {
           clearScrollTarget(requestId);
-          pushToast(`未找到可定位的内容：${currentTarget.id}`, "warning");
+          pushToast(i18n.t("dashboard:scroll_target_not_found", { id: currentTarget.id }), "warning");
           return;
         }
         retryTimerRef.current = setTimeout(tryResolveTarget, 50);

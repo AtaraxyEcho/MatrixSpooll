@@ -38,6 +38,12 @@ function AssetCardImpl({ asset, onEdit, onDelete }: Props) {
         <span className="pointer-events-none absolute right-2 top-2 rounded border border-hairline bg-bg-grad-b/70 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-text-3 backdrop-blur-sm">
           {t(`type.${asset.type}`)}
         </span>
+        {/* 私有资产显式标注：共享是默认态，只在"别人看不到"时提醒 */}
+        {asset.visibility === "private" && (
+          <span className="pointer-events-none absolute left-2 top-2 rounded border border-hairline bg-bg-grad-b/70 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-text-3 backdrop-blur-sm">
+            {t("badge.private")}
+          </span>
+        )}
       </div>
       <div className="p-3">
         <div className="flex items-start gap-2">

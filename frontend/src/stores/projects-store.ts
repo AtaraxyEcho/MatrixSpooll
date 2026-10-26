@@ -3,6 +3,7 @@ import type { ProjectData, ProjectSummary, EpisodeScript } from "@/types";
 import { API } from "@/api";
 import { isDemoProject } from "@/onboarding/demo-project";
 import { useAppStore } from "./app-store";
+import { registerSessionResetter } from "./session-scope";
 
 /**
  * {@link ProjectsState.refreshProject} 的结算结果：
@@ -307,4 +308,9 @@ export const useProjectsStore = create<ProjectsState>((set, get) => {
       });
     },
   };
+});
+
+// 登出即丢弃项目列表与详情缓存：换账号后不得沿用上一位用户的可见项目
+registerSessionResetter(() => {
+  useProjectsStore.setState(useProjectsStore.getInitialState(), true);
 });

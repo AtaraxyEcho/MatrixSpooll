@@ -556,7 +556,7 @@ async def update_avatar(
     ext = Path(avatar.filename or "").suffix.lower()
     if ext not in ALLOWED_AVATAR_EXTS:
         raise HTTPException(status_code=415, detail=_t("invalid_image_format"))
-    data = await avatar.read()
+    data = await avatar.read(MAX_AVATAR_BYTES + 1)
     if len(data) > MAX_AVATAR_BYTES:
         raise HTTPException(status_code=413, detail=_t("avatar_too_large"))
 

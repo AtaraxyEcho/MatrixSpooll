@@ -264,6 +264,38 @@ function SystemSettingsGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * 管理员门户路由守卫。
+ *
+ * 管理页自己那一层重定向要等首屏请求失败（401/403 已弹全局 Toast）之后才执行，
+ * 未登录或普通成员直达 `/app/admin/manager/*` 会先闪出后台骨架再跳走。这里在路由层
+ * 先判角色：不合格直接去管理员登录页，不发任何管理端请求。
+ */
+function AdminRouteGuard({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading, role } = useAuthStore();
+  const { t } = useTranslation("common");
+
+  if (isLoading) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex h-screen items-center justify-center gap-2 bg-bg text-[13px] text-text-4"
+      >
+        <Loader2 aria-hidden className="h-4 w-4 motion-safe:animate-spin" />
+        <span>{t("loading")}</span>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || role !== "admin") {
+    const from = window.location.pathname + window.location.search + window.location.hash;
+    return <Redirect to={`~${ROUTE_ADMIN_LOGIN}?from=${encodeURIComponent(from)}`} />;
+  }
+
+  return <>{children}</>;
+}
+
 type ProjectSettingsResponse = Awaited<ReturnType<typeof API.getProject>>;
 type ProjectSettingsAccessState =
   | { projectRef: string; status: "loading" }
@@ -529,16 +561,24 @@ export function AppRoutes() {
           <LoginPage adminOnly />
         </Route>
         <Route path={ROUTE_ADMIN_USERS}>
-          <AdminManagerPage section="users" />
+          <AdminRouteGuard>
+            <AdminManagerPage section="users" />
+          </AdminRouteGuard>
         </Route>
         <Route path={ROUTE_ADMIN_SESSIONS}>
-          <AdminManagerPage section="sessions" />
+          <AdminRouteGuard>
+            <AdminManagerPage section="sessions" />
+          </AdminRouteGuard>
         </Route>
         <Route path={ROUTE_ADMIN_LOGS}>
-          <AdminManagerPage section="logs" />
+          <AdminRouteGuard>
+            <AdminManagerPage section="logs" />
+          </AdminRouteGuard>
         </Route>
         <Route path={ROUTE_ADMIN_TASKS}>
-          <AdminManagerPage section="tasks" />
+          <AdminRouteGuard>
+            <AdminManagerPage section="tasks" />
+          </AdminRouteGuard>
         </Route>
         <Route path={ROUTE_ADMIN_MANAGER}>
           <Redirect to={ROUTE_ADMIN_USERS} />

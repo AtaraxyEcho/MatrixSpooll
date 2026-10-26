@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import json
 from io import BytesIO
@@ -7,10 +8,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from PIL import Image
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import lib.project_manager as project_manager_module
 from lib.artifact_activation import ArtifactCurrencyResolver
 from lib.artifact_manifest import MANIFEST_FILENAME, ArtifactKey, ArtifactStatus, ProjectArtifactManifestAdapter
+from lib.db.base import Base
+from lib.db.models.asset import Asset
 from lib.i18n.en import assets as en_assets
 from lib.i18n.vi import assets as vi_assets
 from lib.i18n.zh import assets as zh_assets
@@ -19,6 +23,46 @@ from server.auth import CurrentUserInfo, get_current_user
 from server.error_handlers import register_error_handlers
 from server.routers import files
 from tests.conftest import _wav_bytes
+
+
+def _attach_global_asset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    asset_type: str,
+    filename: str,
+    visibility: str = "shared",
+    owner_user_id: str | None = None,
+) -> None:
+    """为 _global_assets 下的文件补一条 assets 记录。
+
+    全局素材直链现在按 asset 行做可见性校验（仅登录不够），故测试必须先建行；
+    用文件型 sqlite，让建行（asyncio.run）与请求（TestClient 线程）共享同一个库。
+    """
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{(tmp_path / 'global-assets.db').as_posix()}")
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _seed() -> None:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        async with factory() as session:
+            session.add(
+                Asset(
+                    id=f"asset-{asset_type}-{filename}",
+                    type=asset_type,
+                    name=filename,
+                    description="",
+                    voice_style="",
+                    image_path=f"_global_assets/{asset_type}/{filename}",
+                    owner_user_id=owner_user_id,
+                    visibility=visibility,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_seed())
+    monkeypatch.setattr(files, "async_session_factory", factory)
 
 
 class _FakeTextBackend:
@@ -1394,6 +1438,7 @@ class TestFilesRouter:
         client, pm = _client(monkeypatch, tmp_path)
         target = pm.get_global_assets_root() / "character" / "abc.png"
         target.write_bytes(b"img-bytes")
+        _attach_global_asset(monkeypatch, tmp_path, asset_type="character", filename="abc.png")
 
         with client:
             resp = client.get("/api/v1/global-assets/character/abc.png")
@@ -1407,6 +1452,8 @@ class TestFilesRouter:
         root = pm.get_global_assets_root()
         (root / "scene" / "s.png").write_bytes(b"scene-bytes")
         (root / "prop" / "p.png").write_bytes(b"prop-bytes")
+        _attach_global_asset(monkeypatch, tmp_path, asset_type="scene", filename="s.png")
+        _attach_global_asset(monkeypatch, tmp_path, asset_type="prop", filename="p.png")
 
         with client:
             r_scene = client.get("/api/v1/global-assets/scene/s.png")
@@ -1430,6 +1477,8 @@ class TestFilesRouter:
     def test_global_asset_missing_file_returns_404(self, tmp_path, monkeypatch):
         """文件不存在时返回 404"""
         client, _ = _client(monkeypatch, tmp_path)
+        # 行存在、磁盘文件缺失：仍按 404 收口（与"资产不存在"同口径）
+        _attach_global_asset(monkeypatch, tmp_path, asset_type="character", filename="nonexistent.png")
 
         with client:
             resp = client.get("/api/v1/global-assets/character/nonexistent.png")

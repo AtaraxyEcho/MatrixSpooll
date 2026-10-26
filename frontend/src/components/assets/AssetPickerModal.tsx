@@ -216,6 +216,15 @@ export function AssetPickerModal({ type, existingNames, onClose, onImport }: Pro
                 }}
               >
                 <AssetThumb imageUrl={url} alt={a.name} fallback="—" variant="picker" />
+                {/* 私有资产在共享池里不会出现，这里标出来是为了让"同项目私有素材"一眼可辨 */}
+                {a.visibility === "private" && (
+                  <span
+                    className="absolute right-1 top-1 rounded px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.1em]"
+                    style={{ background: "oklch(0.24 0.012 265 / 0.9)", color: "var(--color-text-4)" }}
+                  >
+                    {t("badge.private")}
+                  </span>
+                )}
                 <div
                   className="mt-1.5 truncate text-[12px] font-semibold"
                   style={{ color: "var(--color-text)" }}

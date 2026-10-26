@@ -35,6 +35,25 @@ from claude_agent_sdk.types import HookMatcher, SystemPromptPreset
 
 SDK_AVAILABLE = True
 
+#: PreToolUse 备份字典上限。每条备份是整份 JSON 原文（剧本可达数 MB），
+#: PostToolUse 缺失时（工具被中断、进程重启）条目不会自然回收，故设硬上限
+#: 并按插入顺序淘汰最早的一条。
+_JSON_BACKUP_LIMIT = 64
+
+
+def _remember_json_backup(
+    backups: dict[str, tuple[Path, str]],
+    tool_use_id: str,
+    backup: tuple[Path, str],
+) -> None:
+    """登记一份编辑前快照，超过上限时淘汰最早条目。"""
+    backups[tool_use_id] = backup
+    while len(backups) > _JSON_BACKUP_LIMIT:
+        oldest = next(iter(backups), None)
+        if oldest is None or oldest == tool_use_id:
+            break
+        backups.pop(oldest, None)
+
 
 async def load_provider_env_overrides() -> dict[str, str]:
     """构造 options.env 注入字典。
@@ -370,6 +389,27 @@ class OptionsAssembler:
             path_key = path_tools[tool_name]
             file_path = tool_input.get(path_key)
 
+            def _deny(reason: str | None) -> dict[str, Any]:
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    },
+                }
+
+            # Glob/Grep 的搜索根由 path + pattern 共同决定：pattern 可以自己跳出
+            # 项目目录（`../*/*.json`），缺省 path 时工具以 cwd 为根，也不能当作
+            # 「没有路径要校验」直接放行。
+            if tool_name in policy.SEARCH_TOOLS:
+                pattern = tool_input.get("pattern")
+                if isinstance(pattern, str):
+                    pattern_allowed, pattern_reason = policy.check_search_pattern(pattern)
+                    if not pattern_allowed:
+                        return _deny(pattern_reason)
+                if not file_path:
+                    file_path = str(project_cwd)
+
             if file_path:
                 allowed, deny_reason = policy.check_path_access(
                     file_path,
@@ -377,13 +417,7 @@ class OptionsAssembler:
                     project_cwd,
                 )
                 if not allowed:
-                    return {
-                        "hookSpecificOutput": {
-                            "hookEventName": "PreToolUse",
-                            "permissionDecision": "deny",
-                            "permissionDecisionReason": deny_reason,
-                        },
-                    }
+                    return _deny(deny_reason)
 
             return {"continue_": True}
 
@@ -418,7 +452,7 @@ class OptionsAssembler:
             tool_input = input_data.get("tool_input", {})
 
             file_path = tool_input.get("file_path", "")
-            if not file_path or not file_path.endswith(".json"):
+            if not file_path or Path(file_path).suffix.lower() != ".json":
                 return {}
 
             # --- Reject curly/smart quotes that would corrupt JSON ---
@@ -430,6 +464,7 @@ class OptionsAssembler:
 
             # --- Simulate the result without touching the file ---
             simulated: str | None = None
+            backup_candidate: tuple[Path, str] | None = None
 
             if tool_name == "Write":
                 simulated = tool_input.get("content")
@@ -486,9 +521,9 @@ class OptionsAssembler:
                     )
                     return {}
 
-                # Save backup for PostToolUse restore on corruption
-                if json_backups is not None and _tool_use_id:
-                    json_backups[_tool_use_id] = (resolved, current)
+                # 备份候选：只有本次编辑确认放行后才写入 json_backups（见下方 valid 分支）。
+                # 拦截分支不会触发 PostToolUse，先写就会永久滞留整份剧本原文。
+                backup_candidate = (resolved, current)
 
                 if old_string not in current:
                     # Edit tool will fail on its own; no need to intervene.
@@ -527,6 +562,8 @@ class OptionsAssembler:
                     tool_name,
                     file_path,
                 )
+                if backup_candidate is not None and json_backups is not None and _tool_use_id:
+                    _remember_json_backup(json_backups, _tool_use_id, backup_candidate)
                 return {}
             except json.JSONDecodeError as exc:
                 logger.warning(
@@ -535,6 +572,9 @@ class OptionsAssembler:
                     tool_name,
                     exc,
                 )
+                if json_backups is not None and _tool_use_id:
+                    # 拦截即无 PostToolUse，备份不会有人 pop
+                    json_backups.pop(_tool_use_id, None)
                 return {
                     "hookSpecificOutput": {
                         "hookEventName": "PreToolUse",
@@ -590,7 +630,7 @@ class OptionsAssembler:
             tool_input = input_data.get("tool_input", {})
 
             file_path = tool_input.get("file_path", "")
-            if not file_path or not file_path.endswith(".json"):
+            if not file_path or Path(file_path).suffix.lower() != ".json":
                 return {}
 
             # Pop the backup regardless of outcome to avoid memory leaks

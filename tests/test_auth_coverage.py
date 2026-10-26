@@ -26,7 +26,6 @@ PUBLIC_OPERATIONS = frozenset(
         "GET /api/v1/auth/status",
         "POST /api/v1/auth/token",
         "POST /api/v1/auth/session",
-        "GET /api/v1/avatars/{filename}",
         "GET /api/v1/files/{project_name}/{path}",
         "GET /api/v1/global-assets/{asset_type}/{filename}",
     }
@@ -125,6 +124,11 @@ def test_exempt_operations_are_registered():
     assert not stale, f"豁免清单引用了不存在的操作：{sorted(stale)}"
 
 
+def test_avatar_endpoint_requires_authentication(client):
+    """头像不再匿名可读：文件名可枚举，未登录不该拿到他人头像。"""
+    assert client.get("/api/v1/avatars/missing.png").status_code == 401
+
+
 def test_public_endpoints_stay_reachable(client):
     """公开端点不被 router 级依赖误伤。"""
     assert client.get("/health").status_code == 200
@@ -139,7 +143,6 @@ def test_public_endpoints_stay_reachable(client):
     # 静态媒体：项目不存在时是 404，不该是 401。
     assert client.get("/api/v1/files/demo/x.png").status_code != 401
     assert client.get("/api/v1/global-assets/characters/x.png").status_code != 401
-    assert client.get("/api/v1/avatars/missing.png").status_code != 401
     assert client.post("/api/v1/auth/session", json={}).status_code != 401
 
 

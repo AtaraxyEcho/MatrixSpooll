@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import tempfile
@@ -70,6 +71,23 @@ def load_json_or_none(path: Path) -> Any | None:
         return load_json(path)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
+
+
+def json_snapshot(value: Any) -> Any:
+    """JSON 原生结构的深拷贝，供「改前快照」这类高频场景替代 ``copy.deepcopy``。
+
+    ``copy.deepcopy`` 对纯 JSON 数据要走完整的 memo/协议分派，实测比直接递归
+    dict/list 慢一倍以上；而剧本、项目元数据这类被快照的对象全部来自 ``json.load``，
+    标量都是不可变类型，共享安全。遇到 dict/list/标量以外的类型（自定义对象、set）
+    回退到 ``copy.deepcopy``，保持与旧实现完全一致的语义。
+    """
+    if isinstance(value, dict):
+        return {key: json_snapshot(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [json_snapshot(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return copy.deepcopy(value)
 
 
 def atomic_write_json(path: Path, data: Any) -> None:

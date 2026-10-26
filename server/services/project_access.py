@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from lib.api_errors import BadRequestError, ForbiddenError, NotFoundError
 from lib.db import async_session_factory, get_async_session
 from lib.db.base import LEGACY_DEFAULT_USER_ID, utc_now
+from lib.db.like import LIKE_ESCAPE_CHAR, contains_pattern
 from lib.db.models.project import ProjectMember, ProjectRegistry
 from lib.db.models.user import User
 from lib.db.project_identity import backfill_project_record_ids
@@ -55,9 +56,18 @@ def _required_role(request: Request, project_name: str) -> str:
         return "viewer"
 
     path = request.url.path.rstrip("/")
-    # These POST endpoints only calculate data or issue a download token. They
-    # do not mutate project content and are intentionally readable by viewers.
-    if path.endswith(("/workflow-plan", "/export/token", "/script-preview")):
+    # These POST endpoints only calculate data, issue a download token, or stream
+    # an archive built from existing artifacts. They do not mutate project
+    # content and are intentionally readable by viewers; their GET counterparts
+    # (export / bundle downloads) already require viewer only.
+    if path.endswith(
+        (
+            "/workflow-plan",
+            "/export/token",
+            "/script-preview",
+            "/free-creation-export",
+        )
+    ):
         return "viewer"
 
     segments = [segment for segment in request.url.path.split("/") if segment]
@@ -419,7 +429,7 @@ async def list_accessible_projects(
             .distinct()
         )
     if name_query:
-        stmt = stmt.where(ProjectRegistry.name.ilike(f"%{name_query}%"))
+        stmt = stmt.where(ProjectRegistry.name.ilike(contains_pattern(name_query), escape=LIKE_ESCAPE_CHAR))
     stmt = stmt.order_by(ProjectRegistry.updated_at.desc(), ProjectRegistry.name.asc())
     if offset is not None:
         stmt = stmt.offset(offset)
@@ -443,5 +453,5 @@ async def count_accessible_projects(
             or_(ProjectRegistry.owner_id == user_id, ProjectMember.user_id == user_id)
         )
     if name_query:
-        stmt = stmt.where(ProjectRegistry.name.ilike(f"%{name_query}%"))
+        stmt = stmt.where(ProjectRegistry.name.ilike(contains_pattern(name_query), escape=LIKE_ESCAPE_CHAR))
     return int((await session.scalar(stmt)) or 0)

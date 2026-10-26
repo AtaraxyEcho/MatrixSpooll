@@ -17,7 +17,7 @@ import {
   ICON_BTN_FILLED_CLS,
   INPUT_CLS,
 } from "@/components/ui/darkroom-tokens";
-import type { Asset, AssetType } from "@/types/asset";
+import type { Asset, AssetScope, AssetType, AssetVisibility } from "@/types/asset";
 
 const ASSET_LIBRARY_RETURN_TO_KEY = "assetLibrary:returnTo";
 
@@ -120,6 +120,8 @@ export function AssetLibraryPage() {
     if (urlQ === debouncedQ) return;
     writeQuery({ q: debouncedQ });
   }, [debouncedQ, urlQ, writeQuery]);
+  // 可见性筛选：全部可见 / 我创建的 / 共享池
+  const [scope, setScope] = useState<AssetScope>("all");
   const [formModal, setFormModal] = useState<{ mode: "create" | "edit"; asset?: Asset } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Asset | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -131,19 +133,26 @@ export function AssetLibraryPage() {
   const deleteAssetLocal = useAssetsStore((s) => s.deleteAsset);
 
   useEffect(() => {
-    void loadList(activeTab, debouncedQ || undefined);
-  }, [activeTab, debouncedQ, loadList]);
+    void loadList(activeTab, debouncedQ || undefined, scope);
+  }, [activeTab, debouncedQ, loadList, scope]);
 
   const assets = byType[activeTab];
   const ActiveIcon = TABS.find((tab) => tab.type === activeTab)!.icon;
 
   const handleSubmit = async (payload: {
-    name: string; description: string; voice_style: string; image?: File | null;
+    name: string;
+    description: string;
+    voice_style: string;
+    visibility: AssetVisibility;
+    image?: File | null;
   }) => {
     try {
       if (formModal?.mode === "edit" && formModal.asset) {
         const { asset } = await API.updateAsset(formModal.asset.id, {
-          name: payload.name, description: payload.description, voice_style: payload.voice_style,
+          name: payload.name,
+          description: payload.description,
+          voice_style: payload.voice_style,
+          visibility: payload.visibility,
         });
         if (payload.image) {
           const { asset: after } = await API.replaceAssetImage(asset.id, payload.image);
@@ -154,7 +163,8 @@ export function AssetLibraryPage() {
       } else {
         const { asset } = await API.createAsset({
           type: activeTab, name: payload.name, description: payload.description,
-          voice_style: payload.voice_style, image: payload.image ?? undefined,
+          voice_style: payload.voice_style, visibility: payload.visibility,
+          image: payload.image ?? undefined,
         });
         addAsset(asset);
       }
@@ -273,6 +283,26 @@ export function AssetLibraryPage() {
               </button>
             );
           })}
+
+          {/* 可见性筛选：服务端按可见性过滤，客户端不再二次筛 */}
+          <div className="ml-auto flex items-center gap-1 rounded-[8px] border border-hairline-soft bg-bg-grad-a/40 p-0.5">
+            {(["all", "mine", "shared"] as const).map((value) => {
+              const active = scope === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setScope(value)}
+                  className={`rounded-[6px] px-2.5 py-1 text-[11.5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                    active ? "bg-accent-soft text-accent-2" : "text-text-4 hover:text-text"
+                  }`}
+                >
+                  {t(`scope.${value}`)}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </header>
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from typing import Any
 
@@ -116,24 +117,29 @@ def _tool_edit_result(name: str, result: ScriptBatchEditResult) -> dict[str, Any
     return output
 
 
-def _execute_current(
+async def _execute_current(
     ctx: ToolContext,
     script_filename: str,
     operations: list[dict[str, Any]],
     *,
     expected_revision: str | None = None,
 ) -> ScriptBatchEditResult:
-    if expected_revision is None:
-        current = ctx.pm.load_script(ctx.project_name, script_filename)
-        expected_revision = script_revision(current)
-    command = ScriptBatchEditCommand.model_validate(
-        {
-            "script": script_filename,
-            "expected_revision": expected_revision,
-            "operations": operations,
-        }
-    )
-    return ScriptBatchEditor(ctx.pm).execute(ctx.project_name, command)
+    def _sync() -> ScriptBatchEditResult:
+        revision = expected_revision
+        if revision is None:
+            current = ctx.pm.load_script(ctx.project_name, script_filename)
+            revision = script_revision(current)
+        command = ScriptBatchEditCommand.model_validate(
+            {
+                "script": script_filename,
+                "expected_revision": revision,
+                "operations": operations,
+            }
+        )
+        return ScriptBatchEditor(ctx.pm).execute(ctx.project_name, command)
+
+    # 剧本锁 + 读改写 + 事件发射都是同步 I/O，放进线程池才不会卡住事件循环。
+    return await asyncio.to_thread(_sync)
 
 
 def get_episode_script_revision_tool(ctx: ToolContext):
@@ -261,7 +267,7 @@ def insert_segment_tool(ctx: ToolContext):
             items, id_field, _kind = resolve_items(preview)
             anchor_index = next(i for i, entry in enumerate(items) if str(entry.get(id_field)) == after_id)
             inserted = items[anchor_index + 1]
-            result = _execute_current(
+            result = await _execute_current(
                 ctx,
                 script_filename,
                 [{"op": "insert_after", "after_id": after_id, "item": inserted}],
@@ -296,7 +302,7 @@ def remove_segment_tool(ctx: ToolContext):
         try:
             script_filename = validate_script_filename(args["script"])
             item_id = str(args["id"])
-            result = _execute_current(ctx, script_filename, [{"op": "remove", "id": item_id}])
+            result = await _execute_current(ctx, script_filename, [{"op": "remove", "id": item_id}])
             output = _tool_edit_result("remove_segment", result)
             if result.success:
                 new_ids = _item_ids(ctx.pm.load_script(ctx.project_name, script_filename))
@@ -356,7 +362,7 @@ def split_segment_tool(ctx: ToolContext):
             for generated_item in generated:
                 operations.append({"op": "insert_after", "after_id": after_id, "item": generated_item})
                 after_id = str(generated_item[id_field])
-            result = _execute_current(
+            result = await _execute_current(
                 ctx,
                 script_filename,
                 operations,

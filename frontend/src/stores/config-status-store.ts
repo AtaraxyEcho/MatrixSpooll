@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import { API } from "@/api";
 import { useEndpointCatalogStore } from "./endpoint-catalog-store";
+import { getCustomProviderModels, getProviderModels, getSystemConfigShared } from "@/utils/provider-models";
 
 // ---------------------------------------------------------------------------
 // ConfigIssue
@@ -15,10 +15,10 @@ export interface ConfigIssue {
 async function getConfigStatus(): Promise<{ issues: ConfigIssue[]; availableMediaTypes: string[] }> {
   const issues: ConfigIssue[] = [];
 
-  const [{ providers }, { providers: customProviders }, configRes] = await Promise.all([
-    API.getProviders(),
-    API.listCustomProviders(),
-    API.getSystemConfig(),
+  const [providers, customProviders, configRes] = await Promise.all([
+    getProviderModels(),
+    getCustomProviderModels(),
+    getSystemConfigShared(),
   ]);
 
   const settings = configRes.settings;

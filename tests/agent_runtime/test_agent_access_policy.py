@@ -93,6 +93,57 @@ def test_read_other_project_denied(policy: AgentAccessPolicy) -> None:
     assert "跨项目" in reason or "项目" in reason
 
 
+def test_read_projects_root_itself_denied(policy: AgentAccessPolicy) -> None:
+    """projects_root 自身必须拒：Glob/Grep 传 `path=".."` 会 resolve 到这里。
+
+    relative_to 得到空 parts，早先的「无子路径 → 放行」分支让一次检索就能枚举所有租户目录。
+    """
+    cwd = _cwd(policy)
+    allowed, reason = policy.check_path_access(str(policy.projects_root), "Glob", cwd)
+    assert not allowed
+    assert reason and "项目根目录" in reason
+
+
+def test_read_projects_root_parent_denied(policy: AgentAccessPolicy) -> None:
+    cwd = _cwd(policy)
+    allowed, _ = policy.check_path_access("..", "Grep", cwd)
+    assert not allowed
+
+
+@pytest.mark.parametrize("pattern", ["../*/*.json", "**/../../secret*", "/etc/passwd", "C:////Windows////*", "~/x"])
+def test_search_pattern_escape_denied(pattern: str) -> None:
+    """pattern 自己就能跳出项目目录：绝对路径与 `..` 穿越在入口拒。"""
+    allowed, reason = AgentAccessPolicy.check_search_pattern(pattern)
+    assert not allowed
+    assert reason
+
+
+@pytest.mark.parametrize("pattern", ["**/*.json", "scripts/*.json", "episode_01.json", "**/project.json"])
+def test_search_pattern_normal_allowed(pattern: str) -> None:
+    allowed, reason = AgentAccessPolicy.check_search_pattern(pattern)
+    assert allowed
+    assert reason is None
+
+
+def test_sandbox_deny_read_covers_sibling_projects(tmp_path: Path) -> None:
+    """Bash 子进程只有内核层挡得住：其它项目目录必须进 denyRead。"""
+    policy = _make_policy(tmp_path)
+    cwd = policy.projects_root / "selfproj"
+    cwd.mkdir(parents=True, exist_ok=True)
+    other = policy.projects_root / "otherproj"
+    other.mkdir(parents=True)
+    (other / "project.json").write_text("{}", encoding="utf-8")
+    shared = policy.projects_root / "_global_assets"
+    shared.mkdir(parents=True)
+
+    deny_read = policy.build_sandbox_settings(cwd)["filesystem"]["denyRead"]
+
+    assert str(other) in deny_read
+    # 共享素材目录留给 agent 读（素材合成），不能被连带拉黑
+    assert str(shared) not in deny_read
+    assert str(cwd) not in deny_read
+
+
 def test_read_lib_passes(policy: AgentAccessPolicy) -> None:
     """cwd 外的非 projects 路径允许读（用于 agent 查 docs/lib 等参考资料）。"""
     cwd = _cwd(policy)

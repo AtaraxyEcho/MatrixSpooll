@@ -58,6 +58,7 @@ from server.auth import (
     CurrentUser,
     create_download_token,
     database_auth_initialized,
+    get_user_session_state,
     is_auth_enabled,
     verify_download_token,
 )
@@ -514,6 +515,7 @@ async def _authorize_download_token(download_token: str, project_name: str, _t: 
 
     user_id = payload.get("uid")
     subject = payload.get("sub")
+    session_id = payload.get("sid")
     async with async_session_factory() as db_session:
         user = None
         if isinstance(user_id, str) and user_id:
@@ -522,6 +524,11 @@ async def _authorize_download_token(download_token: str, project_name: str, _t: 
             user = await db_session.scalar(select(User).where(User.username == subject))
         if user is None or not user.is_active:
             raise HTTPException(status_code=403, detail=_t("download_access_denied"))
+        # 令牌绑定签发时的浏览器会话：登出 / 管理员吊销后，未过期的 token 不能再下载。
+        if isinstance(session_id, str) and session_id:
+            state = await get_user_session_state(user.id, session_id)
+            if state != "active":
+                raise HTTPException(status_code=403, detail=_t("download_access_denied"))
         try:
             await resolve_project_access(project_name, user, db_session, required_role="viewer")
         except ApiError as exc:
@@ -549,7 +556,12 @@ async def create_export_token(
 
         diagnostics = await asyncio.to_thread(_sync)
         username = current_user.sub
-        download_token = create_download_token(username, name, user_id=current_user.id)
+        download_token = create_download_token(
+            username,
+            name,
+            user_id=current_user.id,
+            session_id=current_user.session_id,
+        )
         return {
             "download_token": download_token,
             "expires_in": 300,
@@ -2185,7 +2197,11 @@ async def set_project_source(
                 raise HTTPException(status_code=400, detail=_t("unsupported_file_type", name=suffix))
             if file.size is not None and file.size > MAX_CHARS * 4:
                 raise HTTPException(status_code=400, detail=_t("file_too_large", max_chars=MAX_CHARS))
-            raw = await file.read()
+            # 有界读取：file.size 可能缺失（分块上传 / 代理未给 Content-Length），
+            # 无界 read() 会在上限判断之前把整块请求体读进内存。
+            raw = await file.read(MAX_CHARS * 4 + 1)
+            if len(raw) > MAX_CHARS * 4:
+                raise HTTPException(status_code=400, detail=_t("file_too_large", max_chars=MAX_CHARS))
         text_content: str = content or ""
 
         # 同步文件 I/O 在线程中执行

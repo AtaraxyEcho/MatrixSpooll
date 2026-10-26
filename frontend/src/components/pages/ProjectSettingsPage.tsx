@@ -7,7 +7,7 @@ import { API, type AgentProfileStatus } from "@/api";
 import { useAppStore } from "@/stores/app-store";
 import { useCapabilitiesStore } from "@/stores/capabilities-store";
 import { PROVIDER_NAMES } from "@/components/ui/ProviderIcon";
-import { getProviderModels, getCustomProviderModels } from "@/utils/provider-models";
+import { getProviderModels, getCustomProviderModels, getSystemConfigShared } from "@/utils/provider-models";
 import { ModelConfigSection } from "@/components/shared/ModelConfigSection";
 import { ProjectMembersSection } from "@/components/shared/ProjectMembersSection";
 import { executingImageModel, executingVideoModel } from "@/components/shared/LayeredModelFields";
@@ -235,7 +235,7 @@ export function ProjectSettingsPage({ initialProjectResponse }: ProjectSettingsP
     let disposed = false;
 
     voidCall(Promise.all([
-      API.getSystemConfig(),
+      getSystemConfigShared(),
       initialProjectResponse ?? API.getProject(projectName),
       getProviderModels().catch(() => [] as ProviderInfo[]),
       getCustomProviderModels().catch(() => [] as CustomProviderInfo[]),

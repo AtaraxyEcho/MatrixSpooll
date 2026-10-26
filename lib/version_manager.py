@@ -12,6 +12,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import weakref
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -26,7 +27,9 @@ from lib.resource_paths import RESOURCE_TYPES as _RESOURCE_TYPES
 from lib.resource_paths import resource_extension, resource_relative_path
 
 _LOCKS_GUARD = threading.Lock()
-_LOCKS_BY_VERSIONS_FILE: dict[str, threading.RLock] = {}
+# 弱引用：每个 versions.json 一把可重入锁，无人持有时交给 GC 回收，
+# 避免项目增删/版本文件路径漂移后锁表只增不减。
+_LOCKS_BY_VERSIONS_FILE: weakref.WeakValueDictionary[str, threading.RLock] = weakref.WeakValueDictionary()
 _PREVIOUS_CURRENT_VERSION = "_previous_current_version"
 MANUAL_UPLOAD_VERSION_SOURCE = "manual_upload"
 logger = logging.getLogger(__name__)

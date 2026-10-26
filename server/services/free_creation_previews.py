@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import weakref
 from pathlib import Path
 
 from lib.path_safety import safe_join
 from lib.thumbnail import extract_video_thumbnail
 from server.services.free_creation_workspace import load_reference_upload
 
-_cover_locks: dict[tuple[str, str], asyncio.Lock] = {}
+# 弱引用字典：无协程持有的锁可被 GC 回收，避免按项目/素材无限累积
+_cover_locks: weakref.WeakValueDictionary[tuple[str, str], asyncio.Lock] = weakref.WeakValueDictionary()
 
 
 async def ensure_reference_video_cover(project_path: Path, reference_id: str) -> Path | None:

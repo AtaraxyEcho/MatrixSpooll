@@ -253,14 +253,15 @@ export function AssetSidebar({ className }: AssetSidebarProps) {
                 <span className="flex-1" />
                 <button
                   type="button"
-                  disabled
-                  aria-disabled="true"
-                  className="grid h-5 w-5 place-items-center rounded focus-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  // 剧集不在侧边栏直接新建：入口指向源文件页（导入/续写剧本后由助手生成新集），
+                  // 保留一个恒定 disabled 的加号只会让用户以为界面卡死。
+                  onClick={() => setLocation("/source")}
+                  className="grid h-5 w-5 place-items-center rounded transition-colors hover:bg-white/10 focus-ring"
                   style={{
                     background: "oklch(0.28 0.012 250 / 0.6)",
                     color: "var(--color-text-3)",
                   }}
-                  title={t("dashboard:add_episode_unavailable")}
+                  title={t("dashboard:add_episode_hint")}
                   aria-label={t("dashboard:add_episode")}
                 >
                   <Plus className="h-3 w-3" />

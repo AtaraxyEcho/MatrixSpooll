@@ -9,10 +9,11 @@ import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,12 +33,14 @@ from lib.asset_types import (
     validate_asset_name,
 )
 from lib.db import async_session_factory, get_async_session
+from lib.db.models.asset import ASSET_VISIBILITY_PRIVATE, ASSET_VISIBILITY_SHARED, Asset
 from lib.db.models.user import User
 from lib.db.repositories.asset_repo import AssetRepository
 from lib.i18n import Translator
 from lib.project_manager import ProjectManager, get_project_manager
 from server.auth import CurrentUser
 from server.routers._asset_router_factory import localize_project_asset_name_conflict
+from server.services.asset_access import visible_asset_clause
 from server.services.project_access import resolve_project_access, resolve_project_access_by_id
 
 logger = logging.getLogger(__name__)
@@ -67,7 +70,9 @@ def _serialize(asset, owner: User | None = None) -> dict:
         "image_path": asset.image_path,
         "audio_path": asset.audio_path,
         "source_project": asset.source_project,
+        "source_project_id": asset.source_project_id,
         "owner_user_id": asset.owner_user_id,
+        "visibility": asset.visibility,
         "owner": (
             {"username": owner.username, "nickname": owner.nickname, "avatar_path": owner.avatar_path}
             if owner is not None
@@ -75,6 +80,23 @@ def _serialize(asset, owner: User | None = None) -> dict:
         ),
         "updated_at": asset.updated_at.isoformat() if asset.updated_at else None,
     }
+
+
+def _validate_visibility(value: str, _t: Translator) -> str:
+    """可见性取值校验；非法值 400 而非静默回落，避免"选了私有却存成共享"。"""
+
+    if value not in (ASSET_VISIBILITY_PRIVATE, ASSET_VISIBILITY_SHARED):
+        raise HTTPException(status_code=400, detail=_t("asset_invalid_visibility"))
+    return value
+
+
+def _source_project_id(access) -> str | None:
+    """来源项目的注册表 ID；legacy 兼容路径（``legacy:`` 前缀）不是真实行，不写 FK。"""
+
+    project_id = getattr(access, "project_id", None)
+    if isinstance(project_id, str) and project_id and not project_id.startswith("legacy:"):
+        return project_id
+    return None
 
 
 def _require_asset_owner(asset, user: CurrentUser, _t: Translator) -> None:
@@ -107,7 +129,7 @@ async def _save_upload(file: UploadFile, asset_type: str, _t: Translator) -> str
     if ext not in ALLOWED_EXTS:
         raise HTTPException(status_code=415, detail=_t("asset_unsupported_format"))
 
-    data = await file.read()
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=_t("asset_upload_too_large"))
 
@@ -133,21 +155,40 @@ def _delete_global_asset_file(rel_path: str) -> None:
 @router.get("")
 async def list_assets(
     _t: Translator,
+    user: CurrentUser,
     type: str | None = None,
     q: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
+    scope: Literal["all", "mine", "shared"] = "all",
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ):
+    """列出当前用户可见的资产。
+
+    可见性谓词下推到 SQL（见 ``server/services/asset_access.py``），不在应用层过滤——
+    否则分页会先按全表切页再丢弃，页面上出现"空页"且计数失真。
+    """
+    visible_to = visible_asset_clause(user)
+    if scope == "mine":
+        visible_to = and_(visible_to, Asset.owner_user_id == user.id)
+    elif scope == "shared":
+        visible_to = and_(visible_to, Asset.visibility == ASSET_VISIBILITY_SHARED)
     async with async_session_factory() as s:
-        items = await AssetRepository(s).list(type=type, q=q, limit=limit, offset=offset)
+        items = await AssetRepository(s).list(
+            type=type,
+            q=q,
+            limit=limit,
+            offset=offset,
+            visible_to=visible_to,
+        )
     owners = await _load_asset_owners([a.owner_user_id for a in items])
     return {"items": [_serialize(a, owners.get(a.owner_user_id or "")) for a in items]}
 
 
 @router.get("/{asset_id}")
-async def get_asset(asset_id: str, _t: Translator):
+async def get_asset(asset_id: str, _t: Translator, user: CurrentUser):
+    # 不可见与不存在同样返回 404：403 会让 asset id 变成存在性探针
     async with async_session_factory() as s:
-        a = await AssetRepository(s).get_by_id(asset_id)
+        a = await AssetRepository(s).get_visible_by_id(asset_id, visible_to=visible_asset_clause(user))
         if not a:
             raise HTTPException(status_code=404, detail=_t("asset_not_found", name=asset_id))
     owner = await _load_asset_owner(a.owner_user_id)
@@ -162,11 +203,13 @@ async def create_asset(
     name: str = Form(...),
     description: str = Form(""),
     voice_style: str = Form(""),
+    visibility: str = Form(ASSET_VISIBILITY_SHARED),
     image: UploadFile | None = File(None),
 ):
     if type not in GLOBAL_LIBRARY_ASSET_TYPES:
         raise HTTPException(status_code=400, detail=_t("asset_invalid_type"))
     name = _validate_asset_name(name, _t)
+    visibility = _validate_visibility(visibility, _t)
 
     # 1) 先落盘再 create；IntegrityError 路径负责清理 orphan
     image_path: str | None = None
@@ -186,6 +229,7 @@ async def create_asset(
                     image_path=image_path,
                     source_project=None,
                     owner_user_id=user.id,
+                    visibility=visibility,
                 )
                 await s.commit()
                 await s.refresh(a)
@@ -211,6 +255,7 @@ class UpdateAssetRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     voice_style: str | None = None
+    visibility: str | None = None
 
 
 @router.patch("/{asset_id}")
@@ -223,6 +268,8 @@ async def update_asset(
     patch = {k: v for k, v in req.model_dump().items() if v is not None}
     if "name" in patch:
         patch["name"] = _validate_asset_name(patch["name"], _t)
+    if "visibility" in patch:
+        patch["visibility"] = _validate_visibility(patch["visibility"], _t)
     async with async_session_factory() as s:
         repo = AssetRepository(s)
         a = await repo.get_by_id(asset_id)
@@ -304,6 +351,7 @@ class FromProjectRequest(BaseModel):
     resource_id: str
     override_name: str | None = None
     overwrite: bool = False
+    visibility: Literal["private", "shared"] = ASSET_VISIBILITY_SHARED
 
 
 @router.post("/from-project")
@@ -386,16 +434,23 @@ async def from_project(
             source_audio_path = None
 
     # 4) DB 预检查（orphan-safe：先查再拷贝文件）
+    # 名称全局唯一，所以同名冲突可能指向他人私有资产：此时只报冲突、不回显内容，
+    # 否则 409 会变成"用名称换他人资产详情"的探针。
     async with async_session_factory() as s:
         repo = AssetRepository(s)
         existing = await repo.get_by_type_name(req.resource_type, asset_name)
+        existing_visible = (
+            await repo.get_visible_by_id(existing.id, visible_to=visible_asset_clause(user))
+            if existing is not None
+            else None
+        )
 
     if existing is not None and not req.overwrite:
         raise HTTPException(
             status_code=409,
             detail={
                 "message": _t("asset_already_exists", name=asset_name),
-                "existing": _serialize(existing),
+                "existing": _serialize(existing) if existing_visible is not None else None,
             },
         )
     if existing is not None:
@@ -447,7 +502,9 @@ async def from_project(
                     image_path=new_image_path,
                     audio_path=new_audio_path,
                     source_project=req.project_name,
+                    source_project_id=_source_project_id(access),
                     owner_user_id=user.id,
+                    visibility=req.visibility,
                 )
                 await s.commit()
                 await s.refresh(a)
@@ -465,7 +522,9 @@ async def from_project(
                         image_path=new_image_path,
                         audio_path=new_audio_path,
                         source_project=req.project_name,
+                        source_project_id=_source_project_id(access),
                         owner_user_id=user.id,
+                        visibility=req.visibility,
                     )
                     await s.commit()
                     await s.refresh(a)
@@ -539,7 +598,9 @@ async def apply_to_project(
 
     # 3) 批量读取所有请求的 asset，缺失的直接归入 failed
     async with async_session_factory() as s:
-        assets = await AssetRepository(s).get_by_ids(asset_ids)
+        # 越权点就在这行：不按可见性过滤时，知道 asset id 就能把别人的私有资产连
+        # 图片/音频一起拷进自己的项目。不可见按 not_found 处理，不泄露存在性。
+        assets = await AssetRepository(s).get_by_ids(asset_ids, visible_to=visible_asset_clause(user))
     assets_by_id = {a.id: a for a in assets}
     for asset_id in asset_ids:
         if asset_id not in assets_by_id:

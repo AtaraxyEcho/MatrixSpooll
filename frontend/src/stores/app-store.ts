@@ -6,6 +6,7 @@ import type {
   WorkspaceNotificationInput,
   WorkspaceNotificationTarget,
 } from "@/types";
+import { registerSessionResetter } from "./session-scope";
 
 interface Toast {
   id: string;
@@ -285,3 +286,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     );
   },
 }));
+
+// 登出即复位 UI 级缓存（实体版本号、滚动目标、通知）：版本号跨账号保留会让新账号的
+// 首屏误判「已是最新」而不重新拉取。
+registerSessionResetter(() => {
+  useAppStore.setState(useAppStore.getInitialState(), true);
+});

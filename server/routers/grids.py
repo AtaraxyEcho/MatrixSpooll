@@ -65,7 +65,7 @@ class GenerateGridResponse(BaseModel):
     message: str
 
 
-def _load_admitted_grid_script(
+async def _load_admitted_grid_script(
     project_name: str,
     project: dict,
     script_file: str,
@@ -73,16 +73,20 @@ def _load_admitted_grid_script(
 ) -> dict:
     """Load a grid script and prove its active project/episode binding."""
 
-    with domain_error_on_value_error(lambda _exc: BadRequestError("invalid_script_file", name=script_file)):
-        script = get_project_manager().load_script(project_name, script_file)
-        script_episode = resolve_artifact_episode(
-            project=project,
-            script=script,
-            script_filename=script_file,
-        )
-        if script_episode != episode:
-            raise ValueError(f"script episode {script_episode!r} does not match requested episode {episode}")
-    return script
+    def _sync() -> dict:
+        with domain_error_on_value_error(lambda _exc: BadRequestError("invalid_script_file", name=script_file)):
+            script = get_project_manager().load_script(project_name, script_file)
+            script_episode = resolve_artifact_episode(
+                project=project,
+                script=script,
+                script_filename=script_file,
+            )
+            if script_episode != episode:
+                raise ValueError(f"script episode {script_episode!r} does not match requested episode {episode}")
+        return script
+
+    # 剧本读要拿文件锁并解析整份 JSON：留在事件循环里会阻塞所有请求与 SSE。
+    return await asyncio.to_thread(_sync)
 
 
 # ==================== 宫格图生成 ====================
@@ -104,10 +108,10 @@ async def generate_grid(
     """
     # 广告/短片项目与关闭宫格开关的项目在此一并拒绝：写入边界（create/PATCH 拒 ad 开启
     # grid_storyboard）之外，动作端点再设一道防线，不让 HTTP 直调绕过开关产生计费任务
-    project = _load_project_for_grid_write(project_name)
+    project = await _load_project_for_grid_write(project_name)
     # 路径穿越、解绑、集号失配均是坏请求，400 而非落入下方 500 兜底；剧本文件损坏
     # （JSONDecodeError）不能被误判为非法 script_file，交由 app 级 catch-all 收口为通用 500。
-    script = _load_admitted_grid_script(project_name, project, req.script_file, episode)
+    script = await _load_admitted_grid_script(project_name, project, req.script_file, episode)
     project_path = get_project_manager().get_project_path(project_name)
 
     items, id_field, _, _, _ = get_storyboard_items(script)
@@ -275,13 +279,17 @@ async def get_grid(project_name: str, grid_id: str):
 # ==================== 重新生成宫格图 ====================
 
 
-def _load_project_for_grid_write(project_name: str) -> dict:
+async def _load_project_for_grid_write(project_name: str) -> dict:
     """加载项目并校验宫格写操作闸门；判定与版本还原共用 ``ensure_grid_writable``。"""
+
     # project.json 损坏（JSONDecodeError）不能被误判为非法项目名，交由 app 级 catch-all 收口为通用 500
-    with domain_error_on_value_error(lambda _exc: BadRequestError("invalid_project_name", name=project_name)):
-        project = get_project_manager().load_project(project_name)
-    ensure_grid_writable(project)
-    return project
+    def _sync() -> dict:
+        with domain_error_on_value_error(lambda _exc: BadRequestError("invalid_project_name", name=project_name)):
+            project = get_project_manager().load_project(project_name)
+        ensure_grid_writable(project)
+        return project
+
+    return await asyncio.to_thread(_sync)
 
 
 def _ensure_grid_idle(grid: GridGeneration) -> None:
@@ -294,11 +302,11 @@ def _ensure_grid_idle(grid: GridGeneration) -> None:
 @router.post("/grids/{grid_id}/regenerate")
 async def regenerate_grid(project_name: str, grid_id: str, user: CurrentUser):
     """重置宫格图状态并重新入队联合图生成任务（不隐含落格，切分另行显式触发）。"""
-    project = _load_project_for_grid_write(project_name)
+    project = await _load_project_for_grid_write(project_name)
     project_path = get_project_manager().get_project_path(project_name)
     gm = GridManager(project_path)
     grid = _load_grid_or_404(project_path, grid_id)
-    _load_admitted_grid_script(project_name, project, grid.script_file, grid.episode)
+    await _load_admitted_grid_script(project_name, project, grid.script_file, grid.episode)
 
     # 重生成沿用记录上冻结的 rows/cols 与比例。Worker 在执行时从同一份当前剧本、
     # 风格和冻结布局重建 provider prompt 与 provenance basis，队列里的 prompt 仅作
@@ -350,7 +358,7 @@ async def split_grid(project_name: str, grid_id: str):
     逐格覆写前旧文件补登版本、覆写后登记新版本；frame_chain 中已不在剧本内的
     scene id 跳过（missing_scene_ids 返回）。切坏可在分镜格的版本史逐格回滚。
     """
-    _load_project_for_grid_write(project_name)
+    await _load_project_for_grid_write(project_name)
     project_path = get_project_manager().get_project_path(project_name)
     grid = _load_grid_or_404(project_path, grid_id)
     _ensure_grid_idle(grid)
@@ -389,7 +397,7 @@ async def upload_grid_image(
     布局正确性由用户自行负责），登记为一个新的 grids 版本；不触发切分、
     不触碰任何分镜格。
     """
-    project = _load_project_for_grid_write(project_name)
+    project = await _load_project_for_grid_write(project_name)
     project_path = get_project_manager().get_project_path(project_name)
     grid = _load_grid_or_404(project_path, grid_id)
     _ensure_grid_idle(grid)

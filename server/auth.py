@@ -464,10 +464,18 @@ def verify_token(token: str) -> dict | None:
 DOWNLOAD_TOKEN_EXPIRY_SECONDS = 300  # 5 分钟
 
 
-def create_download_token(username: str, project_name: str, *, user_id: str | None = None) -> str:
+def create_download_token(
+    username: str,
+    project_name: str,
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> str:
     """签发短时效下载 token，用于浏览器原生下载认证。
 
-    ``user_id`` 供下载时刻复检成员资格；旧调用省略时下载侧按用户名兜底。
+    ``user_id`` 供下载时刻复检成员资格；``session_id`` 绑定签发时的浏览器会话，
+    登出 / 会话被吊销后 token 立即失效（否则它能在 TTL 内绕过吊销继续下载）。
+    旧调用省略时下载侧按用户名兜底。
     """
     now = time.time()
     payload: dict[str, Any] = {
@@ -479,6 +487,8 @@ def create_download_token(username: str, project_name: str, *, user_id: str | No
     }
     if user_id is not None:
         payload["uid"] = user_id
+    if session_id is not None:
+        payload["sid"] = session_id
     return jwt.encode(payload, get_token_secret(), algorithm="HS256")
 
 
@@ -630,6 +640,10 @@ def invalidate_api_key_cache(key_hash: str) -> None:
     """清除缓存并阻止已经在途的旧查询重新写入该密钥。"""
     _api_key_cache_generations[key_hash] = _api_key_cache_generations.get(key_hash, 0) + 1
     _api_key_cache.pop(key_hash, None)
+    # 代数表只是「在途旧查询不得回写」的屏障：最老的键早无在途查询，超限即淘汰，
+    # 避免反复失效不同密钥时字典无界增长。
+    while len(_api_key_cache_generations) > _API_KEY_CACHE_MAX:
+        _api_key_cache_generations.pop(next(iter(_api_key_cache_generations)), None)
 
 
 def _get_cached_api_key_payload(key_hash: str) -> tuple[bool, dict | None]:

@@ -47,7 +47,7 @@ describe("AssetFormModal", () => {
       <AssetFormModal
         type="character" mode="import"
         initialData={{ name: "王", description: "" }}
-        conflictWith={{ id: "1", type: "character", name: "王", description: "", voice_style: "", image_path: null, audio_path: null, source_project: null, owner_user_id: null, owner: null, updated_at: null }}
+        conflictWith={{ id: "1", type: "character", name: "王", description: "", voice_style: "", image_path: null, audio_path: null, source_project: null, source_project_id: null, owner_user_id: null, owner: null, visibility: "shared" as const, updated_at: null }}
         onClose={() => {}} onSubmit={vi.fn()}
       />
     );

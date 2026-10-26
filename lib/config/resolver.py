@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -1020,7 +1021,9 @@ class ConfigResolver:
         svc: ConfigService,
         project_name: str | None,
     ) -> bool:
-        project = get_project_manager().load_project(project_name) if project_name else None
+        # 项目读走线程池：load_project 内部是 portalocker 排他锁 + 磁盘 JSON 解析，
+        # 在主事件循环里跑会被后台上锁的写操作拖住，连带卡死所有 HTTP 与 SSE。
+        project = await asyncio.to_thread(get_project_manager().load_project, project_name) if project_name else None
         return await self._resolve_video_generate_audio_from_project(svc, project)
 
     async def _resolve_video_generate_audio_from_project(
@@ -1058,7 +1061,9 @@ class ConfigResolver:
 
         走四级骨架的不定桶键位（``_VIDEO_DEFAULT_LAYERED_KEYS``），桶层缺席由骨架跳过。
         """
-        project = get_project_manager().load_project(project_name) if project_name else None
+        # 项目读走线程池：load_project 内部是 portalocker 排他锁 + 磁盘 JSON 解析，
+        # 在主事件循环里跑会被后台上锁的写操作拖住，连带卡死所有 HTTP 与 SSE。
+        project = await asyncio.to_thread(get_project_manager().load_project, project_name) if project_name else None
         return await self._resolve_layered_backend(svc, session, project, _VIDEO_DEFAULT_LAYERED_KEYS)
 
     async def _resolve_layered_backend(
@@ -1317,7 +1322,9 @@ class ConfigResolver:
         project_name: str | None,
     ) -> dict:
         """按两步解析：先选 model，再读 model 能力。"""
-        project = get_project_manager().load_project(project_name) if project_name else None
+        # 项目读走线程池：load_project 内部是 portalocker 排他锁 + 磁盘 JSON 解析，
+        # 在主事件循环里跑会被后台上锁的写操作拖住，连带卡死所有 HTTP 与 SSE。
+        project = await asyncio.to_thread(get_project_manager().load_project, project_name) if project_name else None
         return await self._resolve_video_capabilities_from_project(svc, session, project)
 
     async def _resolve_video_capabilities_from_project(
@@ -1600,7 +1607,9 @@ class ConfigResolver:
         task_type: TextTaskType,
         project_name: str | None,
     ) -> tuple[str, str]:
-        project = get_project_manager().load_project(project_name) if project_name else None
+        # 项目读走线程池：load_project 内部是 portalocker 排他锁 + 磁盘 JSON 解析，
+        # 在主事件循环里跑会被后台上锁的写操作拖住，连带卡死所有 HTTP 与 SSE。
+        project = await asyncio.to_thread(get_project_manager().load_project, project_name) if project_name else None
         keys = _TEXT_LAYERED_KEYS[TEXT_TASK_TIERS[task_type]]
         resolved = await self._resolve_layered_backend(svc, session, project, keys)
         if task_type in VISION_REQUIRED_TASKS:

@@ -13,7 +13,8 @@ vi.mock("react-i18next", () => ({
 const asset = {
   id: "1", type: "scene" as const, name: "庙宇", description: "阴森古朴",
   voice_style: "", image_path: null, audio_path: null, source_project: "demo",
-  owner_user_id: null, owner: null, updated_at: null,
+  source_project_id: null,
+  owner_user_id: null, owner: null, visibility: "shared" as const, updated_at: null,
 };
 
 describe("AssetCard", () => {

@@ -8,10 +8,12 @@ is managed by the providers router.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import shutil
 import subprocess
+import time
 import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -77,6 +79,23 @@ def _runtime_tool_status(command: str) -> dict[str, Any]:
         # The executable can disappear between which() and invocation.
         version = None
     return {"available": True, "path": path, "version": version}
+
+
+#: 探测结果缓存 TTL。`/system/config` 每次打开设置页、切换画布都会打进来，
+#: 每次现拉两个子进程（`ffmpeg -version` / `ffprobe -version`）会同步阻塞事件循环。
+_RUNTIME_TOOL_CACHE_TTL_SECONDS = 60
+_runtime_tool_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _cached_runtime_tool_status(command: str) -> dict[str, Any]:
+    """带 TTL 的探测结果读取；缓存过期后重新起子进程（用户可能后装 ffmpeg）。"""
+    now = time.monotonic()
+    cached = _runtime_tool_cache.get(command)
+    if cached is not None and now - cached[0] < _RUNTIME_TOOL_CACHE_TTL_SECONDS:
+        return dict(cached[1])
+    status = _runtime_tool_status(command)
+    _runtime_tool_cache[command] = (now, status)
+    return dict(status)
 
 
 # ---------------------------------------------------------------------------
@@ -388,12 +407,18 @@ async def get_system_config(
 
     options = await _build_options(svc, session)
 
+    # 探测要起子进程：缓存 + 线程池双保险，避免每次打开设置页都同步阻塞事件循环。
+    ffmpeg_status, ffprobe_status = await asyncio.gather(
+        asyncio.to_thread(_cached_runtime_tool_status, "ffmpeg"),
+        asyncio.to_thread(_cached_runtime_tool_status, "ffprobe"),
+    )
+
     return {
         "settings": settings,
         "options": options,
         "runtime_tools": {
-            "ffmpeg": _runtime_tool_status("ffmpeg"),
-            "ffprobe": _runtime_tool_status("ffprobe"),
+            "ffmpeg": ffmpeg_status,
+            "ffprobe": ffprobe_status,
         },
     }
 

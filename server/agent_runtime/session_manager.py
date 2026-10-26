@@ -979,6 +979,9 @@ class SessionManager:
                 project_name=meta.project_name,
                 assistant_model=assistant_model,
                 resolved_sdk_id=meta.id,  # 标记为已注册，防止重复创建 DB 记录
+                # 冷恢复必须带回持久化的归属用户：否则审计与用量在下次
+                # send_message 之前会全部记到 "default" 名下。
+                actor_user_id=meta.actor_user_id or DEFAULT_USER_ID,
             )
             managed.sdk_id_event.set()  # 已有会话不需要等待 sdk_id
             managed.entry_pipeline = self._build_entry_pipeline(managed)

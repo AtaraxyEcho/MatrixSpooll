@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { consumeLegacyToken, sessionFetch } from "@/utils/auth";
+import { resetSessionScopedStores } from "./session-scope";
 
 interface SessionProfile {
   id?: unknown;
@@ -114,13 +115,18 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     void sessionFetch("/api/v1/auth/logout", { method: "POST" }).catch(() => undefined);
     set({
+      id: null,
       username: null,
       nickname: null,
       avatarPath: null,
       role: null,
+      // id / isSuperadmin 不清会让下一位登录者的权限判断与「我」的标识短暂沿用上一位用户
+      isSuperadmin: false,
       isAuthenticated: false,
       sessionEndReason: null,
     });
+    // 业务 Store 缓存的项目/会话/任务全部作废，避免换账号后短暂看到上一位用户的数据
+    resetSessionScopedStores();
   },
 
   endSession: (sessionEndReason) => {

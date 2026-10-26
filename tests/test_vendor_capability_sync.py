@@ -6,6 +6,7 @@ API 回显与手动同步端点、整体替换语义下的声明结转。HTTP �
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -66,7 +67,7 @@ def app(session_factory) -> FastAPI:
 
 
 @pytest.fixture()
-def client(app) -> TestClient:
+def client(app) -> Iterator[TestClient]:
     with TestClient(app) as c:
         yield c
 

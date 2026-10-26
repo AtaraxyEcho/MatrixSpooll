@@ -4,7 +4,6 @@
 管理视频项目的目录结构、分镜剧本读写、状态追踪。
 """
 
-import copy
 import errno
 import json
 import logging
@@ -59,7 +58,7 @@ from lib.episode_paths import (
     episode_script_relpath,
 )
 from lib.formal_write import formal_write_transaction, project_metadata_lock
-from lib.json_io import atomic_write_bytes, atomic_write_json, load_json, load_json_or_none
+from lib.json_io import atomic_write_bytes, atomic_write_json, json_snapshot, load_json, load_json_or_none
 from lib.path_safety import PathTraversalError, safe_join
 from lib.profile_manifest import (
     VALID_CONTENT_MODES,
@@ -1054,7 +1053,7 @@ class ProjectManager:
         with self._script_lock(project_name, norm):
             # 已持锁，走 unlocked 变体取剧本（迁移结果随写回落盘）
             script, _migrated = self._read_script_unlocked(project_name, norm)
-            before = copy.deepcopy(script) if validate else None
+            before = json_snapshot(script) if validate else None
             yield script
             self._commit_script_unlocked(
                 project_name,
@@ -1147,7 +1146,7 @@ class ProjectManager:
                 script_path = Path(self._safe_subpath(self.get_project_path(project_name) / "scripts", norm))
                 project_path = self._get_project_file_path(project_name)
                 script, _migrated = self._read_script_unlocked(project_name, norm)
-                before = copy.deepcopy(script) if validate else None
+                before = json_snapshot(script) if validate else None
                 yield script
                 with formal_write_transaction(script_path, project_path):
                     self._write_script_unlocked(
@@ -1661,7 +1660,7 @@ class ProjectManager:
                 for name in normalized:
                     try:
                         script, _migrated = self._read_script_unlocked(project_name, name)
-                        before = copy.deepcopy(script)
+                        before = json_snapshot(script)
                         self._set_scene_asset_in_script(script, scene_id, asset_type, asset_path)
                     except KeyError:
                         continue
@@ -2929,7 +2928,7 @@ class ProjectManager:
             changed_scripts: list[tuple[str, dict, dict]] = []
             for filename in script_files:
                 script, _migrated = self._read_script_unlocked(project_name, filename)
-                before = copy.deepcopy(script)
+                before = json_snapshot(script)
                 changes = rewrite_payload_references(script, asset_type, old_key, new_clean)
                 if changes:
                     changed_scripts.append((filename, script, before))
@@ -2952,7 +2951,7 @@ class ProjectManager:
             version_files = version_manager.rename_resource(spec.bucket_key, old_key, new_clean, dry_run=True)
 
             # project.json 变更先在副本上应用并做「不更坏」校验：校验失败整体拒绝、任何一处不落盘。
-            mutated = copy.deepcopy(project)
+            mutated = json_snapshot(project)
             validator = DataValidator(str(self.projects_root))
             before_errors = _rename_agnostic_errors(validator.validate_project_payload(mutated), old_key, new_clean)
             entry = rekey_equivalent_entries(mutated[spec.bucket_key], old_key, new_clean)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import weakref
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,7 +59,9 @@ class _BackendCache:
 
     def __init__(self) -> None:
         self._entries: dict[_CacheKey, Any] = {}
-        self._locks: dict[_CacheKey, asyncio.Lock] = {}
+        # 弱引用：单飞锁只在有调用方持有时需要存活，无人持有即回收，
+        # 避免按能力桶/lane 组合累积锁对象。
+        self._locks: weakref.WeakValueDictionary[_CacheKey, asyncio.Lock] = weakref.WeakValueDictionary()
         self._generation = 0
 
     async def get_or_create(self, key: _CacheKey, factory: Callable[[], Awaitable[Any]]) -> Any:

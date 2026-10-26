@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.db import get_async_session
 from lib.db.base import DEFAULT_USER_ID, utc_now
+from lib.db.like import LIKE_ESCAPE_CHAR, contains_pattern
 from lib.db.models.audit import AuditEvent
 from lib.db.models.login_event import LoginEvent
 from lib.db.models.project import ProjectRegistry
@@ -267,8 +268,13 @@ async def list_users(
 ) -> AdminUsersResponse:
     filters = []
     if username:
-        pattern = f"%{username.strip()}%"
-        filters.append(or_(User.username.ilike(pattern), User.email.ilike(pattern)))
+        pattern = contains_pattern(username.strip())
+        filters.append(
+            or_(
+                User.username.ilike(pattern, escape=LIKE_ESCAPE_CHAR),
+                User.email.ilike(pattern, escape=LIKE_ESCAPE_CHAR),
+            )
+        )
     total_result = await session.execute(select(func.count()).select_from(User).where(*filters))
     total = int(total_result.scalar_one())
     result = await session.execute(
@@ -302,9 +308,11 @@ async def list_audit_events(
     if actor_user_id:
         filters.append(AuditEvent.actor_user_id == actor_user_id)
     if actor_username:
-        filters.append(AuditEvent.actor_username.ilike(f"%{actor_username.strip()}%"))
+        filters.append(
+            AuditEvent.actor_username.ilike(contains_pattern(actor_username.strip()), escape=LIKE_ESCAPE_CHAR)
+        )
     if project_name:
-        filters.append(AuditEvent.project_name.ilike(f"%{project_name.strip()}%"))
+        filters.append(AuditEvent.project_name.ilike(contains_pattern(project_name.strip()), escape=LIKE_ESCAPE_CHAR))
 
     total_result = await session.execute(select(func.count()).select_from(AuditEvent).where(*filters))
     total = int(total_result.scalar_one())
@@ -348,7 +356,7 @@ async def list_login_events(
 ) -> AdminLoginEventsResponse:
     filters = []
     if username:
-        filters.append(LoginEvent.username.ilike(f"%{username.strip()}%"))
+        filters.append(LoginEvent.username.ilike(contains_pattern(username.strip()), escape=LIKE_ESCAPE_CHAR))
     if outcome:
         filters.append(LoginEvent.outcome == outcome)
     total_result = await session.execute(select(func.count()).select_from(LoginEvent).where(*filters))
@@ -404,7 +412,7 @@ async def list_sessions(
     online_cutoff = now - timedelta(seconds=SESSION_ONLINE_WINDOW_SECONDS)
     filters = []
     if username:
-        filters.append(User.username.ilike(f"%{username.strip()}%"))
+        filters.append(User.username.ilike(contains_pattern(username.strip()), escape=LIKE_ESCAPE_CHAR))
     filters.extend(
         [
             UserSession.revoked_at.is_(None),

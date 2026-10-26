@@ -48,6 +48,7 @@ import {
 import { buildEntityRevisionKey } from "@/utils/project-changes";
 import {
   getProviderModels,
+  getSystemConfigShared,
   getCustomProviderModels,
   lookupProjectVideoResolution,
 } from "@/utils/provider-models";
@@ -126,7 +127,7 @@ export function StudioCanvasRouter() {
     // 是「时长与后端不兼容」的橙色标记——对虚构数据那是伪告警，不值得为它发三个全局请求。
     if (demoMode) return;
     let disposed = false;
-    Promise.all([getProviderModels(), getCustomProviderModels(), API.getSystemConfig()]).then(
+    Promise.all([getProviderModels(), getCustomProviderModels(), getSystemConfigShared()]).then(
       ([provList, customList, configRes]) => {
         if (disposed) return;
         setProviders(provList);

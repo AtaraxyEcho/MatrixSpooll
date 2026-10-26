@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import tempfile
@@ -146,7 +147,9 @@ async def download_logs(_t: Translator, _admin: AdminUser) -> StreamingResponse:
     diagnostics_lines: list[str] = []
 
     spooled = tempfile.SpooledTemporaryFile(max_size=_SPOOL_MAX)
-    try:
+
+    def _build_archive() -> None:
+        """遍历日志目录 + 压缩写 ZIP + 收集诊断信息（纯同步 I/O，丢线程池跑）。"""
         with zipfile.ZipFile(spooled, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             if log_dir.exists():
                 for path in sorted(log_dir.glob(_LOG_GLOB)):
@@ -166,6 +169,10 @@ async def download_logs(_t: Translator, _admin: AdminUser) -> StreamingResponse:
             zf.writestr("diagnostics.txt", diagnostics_text)
 
         spooled.seek(0)
+
+    try:
+        # 压缩可能要读几十 MB 日志：在主事件循环里跑会把所有用户请求与 SSE 流一起卡住。
+        await asyncio.to_thread(_build_archive)
     except Exception:
         spooled.close()
         raise

@@ -165,6 +165,8 @@ class AgentAccessPolicy:
         "Grep": "path",
     }
     _WRITE_TOOLS: ClassVar[set[str]] = {"Write", "Edit"}
+    #: 搜索类工具：``path`` 之外 ``pattern`` 也参与决定搜索根，需额外围栏。
+    SEARCH_TOOLS: ClassVar[frozenset[str]] = frozenset({"Glob", "Grep"})
     #: 受保护写路径规则表——hook 拒绝与 sandbox denyWrite 的单一真相源。谓词引用本类的
     #: classmethod，故在类体之后赋值（见模块尾部）；新增受保护类别只在该表加一行。
     PROTECTED_WRITE_RULES: ClassVar[tuple[ProtectedWriteRule, ...]]
@@ -299,6 +301,24 @@ class AgentAccessPolicy:
             return self._check_write_access(resolved, project_cwd, logical_norm=logical_norm)
         return self._check_read_access(resolved, project_cwd)
 
+    @staticmethod
+    def check_search_pattern(pattern: str) -> tuple[bool, str | None]:
+        """Glob/Grep 的 ``pattern`` 围栏：拒绝绝对路径与 ``..`` 穿越。
+
+        ``path`` 之外 ``pattern`` 也是搜索根的一部分：``Glob(pattern="../*/*.json")``
+        不带 ``path`` 时以 cwd 为起点，但模式本身就能跳出项目目录。工具层最终会把
+        命中路径逐个交给读钩子，可那里只拦得住「读」，拦不住枚举结果把其它租户的
+        文件名带回上下文，因此在入口按模式本身先拒。
+        """
+        normalized = (pattern or "").strip()
+        if not normalized:
+            return True, None
+        if normalized.startswith(("/", "\\", "~")) or re.match(r"^[A-Za-z]:[\\/]", normalized):
+            return False, f"访问被拒绝：搜索模式不允许绝对路径 ({pattern})"
+        if any(segment == ".." for segment in re.split(r"[\\/]", normalized)):
+            return False, f"访问被拒绝：搜索模式不允许向上穿越 ({pattern})"
+        return True, None
+
     def build_sandbox_settings(self, project_cwd: Path) -> dict[str, Any]:
         """构造 SandboxSettings dict（SDK Python TypedDict 未声明 filesystem
         子结构，但 CLI 运行时透传 JSON 接受）——内核沙箱层对同一份规则的编译投影。
@@ -306,7 +326,9 @@ class AgentAccessPolicy:
         - ``sandbox_enabled=False``（Windows 回退）：仅返回 ``{"enabled": False}``，
           Bash 工具改走 ``is_bash_command_whitelisted`` 代码白名单。
         - ``filesystem.denyRead``：内核级文件读拒绝（macOS Seatbelt / Linux
-          bwrap profile），对 sandbox 内所有子进程生效。
+          bwrap profile），对 sandbox 内所有子进程生效。含 ``projects_root`` 下
+          其它项目的目录——``Read``/``Glob``/``Grep`` 有 hook 层围栏，``Bash``
+          子进程（``cat ../*/project.json``、``python -c`` 枚举）只有这一层挡得住。
         - ``filesystem.denyWrite``：内核级文件写拒绝，覆盖 ``scripts/`` 目录、
           ``project.json`` 与 ``drafts/`` 目录——这几类文件的写入只能走 in-process MCP 工具
           （``patch_episode_script`` / ``patch_project`` / 参考拆分的取回与晋升等，跑在主进程
@@ -325,7 +347,7 @@ class AgentAccessPolicy:
             "network": {"allowedDomains": list(self._DEFAULT_SANDBOX_ALLOWED_DOMAINS)},
             "enableWeakerNestedSandbox": bool(self.in_docker),
             "filesystem": {
-                "denyRead": self._build_sensitive_abs_paths(),
+                "denyRead": self._build_sensitive_abs_paths(project_cwd),
                 "denyWrite": self._build_protected_write_abs_paths(project_cwd),
             },
         }
@@ -354,12 +376,13 @@ class AgentAccessPolicy:
                         paths.append(target_s)
         return paths
 
-    def _build_sensitive_abs_paths(self) -> list[str]:
+    def _build_sensitive_abs_paths(self, project_cwd: Path | None = None) -> list[str]:
         """构造敏感文件绝对路径列表，传给 sandbox profile 的 denyRead 字段。
 
         SDK CLI 会跳过不存在的 deny 路径（"Skipping non-existent deny path"），
         所以这里枚举当前真实存在的固定清单 + glob 命中项 + prefix 目录
-        （vertex_keys / 日志整目录交给 sandbox profile 递归 deny）。
+        （vertex_keys / 日志整目录交给 sandbox profile 递归 deny），以及
+        ``projects_root`` 下当前项目以外的项目目录。
 
         每次会话启动重新枚举，避免后建敏感文件（.env / .env.local）绕过
         sandbox profile — sandbox profile 在 SDK 客户端启动时一次性生效，
@@ -371,7 +394,34 @@ class AgentAccessPolicy:
         for parent, pattern in globs:
             if parent.exists():
                 candidates.extend(parent.glob(pattern))
+        candidates.extend(self._sibling_project_dirs(project_cwd))
         return [str(p) for p in candidates if p.exists()]
+
+    def _sibling_project_dirs(self, project_cwd: Path | None) -> list[Path]:
+        """``projects_root`` 下除当前项目以外的项目目录。
+
+        只认带 ``project.json`` 的目录：``_global_assets`` 之类的共享目录要留给
+        agent 读（素材合成），把整个 ``projects_root`` 拉黑会连带它一起封掉。
+        枚举失败（权限、竞态删除）时返回空列表——hook 层围栏仍然生效。
+        """
+        root = self.projects_root
+        current_names = (
+            {base.resolve().name for base in self._enumerate_cwd_bases(project_cwd)} if project_cwd else set()
+        )
+        try:
+            entries = list(root.iterdir())
+        except OSError:
+            return []
+        siblings: list[Path] = []
+        for entry in entries:
+            try:
+                if not entry.is_dir() or entry.name in current_names:
+                    continue
+                if (entry / "project.json").exists():
+                    siblings.append(entry)
+            except OSError:
+                continue
+        return siblings
 
     @classmethod
     @functools.cache
@@ -582,14 +632,18 @@ class AgentAccessPolicy:
         # SDK 后台任务输出例外（前缀计算见 _sdk_tmp_prefixes，实例内缓存一次）。
         if str(resolved).startswith(self._sdk_tmp_prefixes) and "tasks" in resolved.parts:
             return True, None
-        # projects_root 下：当前项目以外的子目录拒，根直放文件放行
+        # projects_root 下：当前项目以外的子目录拒，根直放文件放行。
+        # ``projects_root`` 自身必须拒——Glob/Grep 传 ``path=".."`` 时 resolve 到根，
+        # relative_to 得到空 parts，早先的 ``if rel_to_projects.parts`` 会跳过判定直接放行，
+        # 使一次检索就能枚举全部租户的项目目录。
         projects_root = self.projects_root
         if resolved.is_relative_to(projects_root):
             rel_to_projects = resolved.relative_to(projects_root)
-            if rel_to_projects.parts:
-                first_entry = projects_root / rel_to_projects.parts[0]
-                if first_entry.is_dir() and all(first_entry.name != base.name for base in cwd_bases):
-                    return False, (f"访问被拒绝：不允许跨项目读取 ({resolved} 不在当前项目 {project_cwd} 内)")
+            if not rel_to_projects.parts:
+                return False, (f"访问被拒绝：不允许检索项目根目录 ({projects_root})")
+            first_entry = projects_root / rel_to_projects.parts[0]
+            if first_entry.is_dir() and all(first_entry.name != base.name for base in cwd_bases):
+                return False, (f"访问被拒绝：不允许跨项目读取 ({resolved} 不在当前项目 {project_cwd} 内)")
             return True, None
         # 仓库根内的参考资料（lib/docs/agent_runtime_profile 等）放行
         if resolved.is_relative_to(self.project_root):

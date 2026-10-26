@@ -69,6 +69,19 @@ def _current_shot_generation(key: _ShotKey) -> int:
         return _shot_generations.get(key, 0)
 
 
+def _release_shot_generation(key: _ShotKey, generation: int) -> None:
+    """操作收尾后清理代次条目（仅当没有更新的操作接管）。
+
+    代次只服务于「同一次操作失败时判断有无并发接管」这条判断，长期保留没有意义——
+    镜头数 × 剧本数会随项目增长无限堆积。条目被清理后 ``_current_shot_generation``
+    返回 0，与任何真实代次都不相等，语义仍是「已有人接管 / 无从判断」（保留旧条目同样
+    会判为不等），故清理不改变裁决方向。
+    """
+    with _generation_lock:
+        if _shot_generations.get(key) == generation:
+            _shot_generations.pop(key, None)
+
+
 def _advance_shot_generation(key: _ShotKey) -> int:
     """推进该镜头的操作代次，返回新值。在临界区内、mutation 之前调用——无论后续
     是否失败，都代表「一次操作进入过临界区」，供失败一方的补偿回滚据此判断有无被接手。
@@ -223,6 +236,9 @@ def _write_snapshot_and_field(
         if entered:
             _restore_after_persist_failure(manager, project_name, script_file, target, old_bytes, key, generation)
         raise
+    finally:
+        if entered:
+            _release_shot_generation(key, generation)
 
 
 def _clear_snapshot_and_field(project_name: str, script_file: str, shot_id: str, target: Path) -> None:
@@ -255,6 +271,9 @@ def _clear_snapshot_and_field(project_name: str, script_file: str, shot_id: str,
         if entered:
             _restore_after_persist_failure(manager, project_name, script_file, target, old_bytes, key, generation)
         raise
+    finally:
+        if entered:
+            _release_shot_generation(key, generation)
 
 
 def read_project_image(project_path: Path, source_path: str) -> bytes:

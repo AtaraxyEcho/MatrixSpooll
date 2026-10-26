@@ -151,8 +151,10 @@ describe("AssetLibraryPage 删除确认文案", () => {
       image_path: "characters/王.png",
       audio_path: null,
       source_project: null,
+      source_project_id: null,
       owner_user_id: null,
       owner: null,
+      visibility: "shared" as const,
       updated_at: null,
       ...overrides,
     };

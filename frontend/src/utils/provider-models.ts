@@ -10,16 +10,49 @@ const CUSTOM_PREFIX = "custom-";
 // 每次消费都直拉后端，避免长生命周期副本与后端单一真相源漂移（ADR 0035，ADR 0018/0013 的前端推论）。
 // ---------------------------------------------------------------------------
 
-/** Fetch the built-in provider list (including models) fresh on every call. */
-export async function getProviderModels(): Promise<ProviderInfo[]> {
-  const res = await API.getProviders();
-  return res.providers;
+// 并发去重（不是缓存）：同一 tick 内多个消费者（设置页 + 画布 + 配置状态加载器）
+// 同时挂载时共用一次在途请求，请求落定即释放——下一次调用照旧直拉后端，
+// 与 ADR 0035「不做长生命周期目录副本」的约束一致。
+let providersInFlight: Promise<ProviderInfo[]> | null = null;
+let customProvidersInFlight: Promise<CustomProviderInfo[]> | null = null;
+
+/** Fetch the built-in provider list (including models); concurrent callers share one request. */
+export function getProviderModels(): Promise<ProviderInfo[]> {
+  providersInFlight ??= API.getProviders()
+    .then((res) => res.providers)
+    .finally(() => {
+      providersInFlight = null;
+    });
+  return providersInFlight;
 }
 
-/** Fetch the custom provider list fresh on every call. */
-export async function getCustomProviderModels(): Promise<CustomProviderInfo[]> {
-  const res = await API.listCustomProviders();
-  return res.providers;
+/** Fetch the custom provider list; concurrent callers share one request. */
+export function getCustomProviderModels(): Promise<CustomProviderInfo[]> {
+  customProvidersInFlight ??= API.listCustomProviders()
+    .then((res) => res.providers)
+    .finally(() => {
+      customProvidersInFlight = null;
+    });
+  return customProvidersInFlight;
+}
+
+/** 系统配置响应（设置页 / 画布 / 配置状态加载器共用同一份在途请求）。 */
+export type SystemConfigResponse = Awaited<ReturnType<typeof API.getSystemConfig>>;
+
+let systemConfigInFlight: Promise<SystemConfigResponse> | null = null;
+
+/**
+ * 取系统配置；并发调用共用一次请求。
+ *
+ * 设置页与工作台画布会在导航时几乎同时挂载，各自直拉一次会把同一份全量配置（含
+ * 服务端运行时探测）打两遍。这里只合并「在途」，落定后立刻释放，语义仍是「每次消费
+ * 都取服务端最新值」。
+ */
+export function getSystemConfigShared(): Promise<SystemConfigResponse> {
+  systemConfigInFlight ??= API.getSystemConfig().finally(() => {
+    systemConfigInFlight = null;
+  });
+  return systemConfigInFlight;
 }
 
 // ---------------------------------------------------------------------------

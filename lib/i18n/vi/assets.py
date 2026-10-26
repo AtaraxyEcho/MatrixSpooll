@@ -2,6 +2,7 @@ MESSAGES = {
     "asset_not_found": "Tài nguyên '{name}' không tồn tại",
     "asset_already_exists": "Đã tồn tại tài nguyên cùng loại có tên '{name}'",
     "asset_invalid_type": "Loại tài nguyên phải là character / scene / prop",
+    "asset_invalid_visibility": "Mức hiển thị phải là private hoặc shared",
     "asset_upload_too_large": "Kích thước ảnh vượt giới hạn (5MB)",
     "asset_unsupported_format": "Chỉ hỗ trợ các định dạng png/jpg/jpeg/webp",
     "asset_source_resource_not_found": "Dự án '{project}' không chứa {kind} '{name}'",

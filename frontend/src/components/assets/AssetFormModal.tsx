@@ -1,7 +1,7 @@
 import { useEffect, useId, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, ImagePlus, Landmark, Package, User } from "lucide-react";
-import type { Asset, AssetType } from "@/types/asset";
+import type { Asset, AssetType, AssetVisibility } from "@/types/asset";
 import { GlassModal } from "@/components/ui/GlassModal";
 import { ModalCloseButton } from "@/components/ui/ModalCloseButton";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
@@ -22,6 +22,7 @@ interface Props {
     name: string;
     description: string;
     voice_style: string;
+    visibility: AssetVisibility;
     image?: File | null;
     overwrite?: boolean;
   }) => Promise<void>;
@@ -40,6 +41,8 @@ export function AssetFormModal({
   const [name, setName] = useState(initialData?.name ?? "");
   const [description, setDescription] = useState(initialData?.description ?? "");
   const [voiceStyle, setVoiceStyle] = useState(initialData?.voice_style ?? "");
+  // 从项目入库（import）没有"谁可见"的选择余地：源项目成员本就可见，默认共享即可
+  const [visibility, setVisibility] = useState<AssetVisibility>(initialData?.visibility ?? "shared");
   const [image, setImage] = useState<File | null>(null);
   const [localPreview, setLocalPreview] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -77,7 +80,14 @@ export function AssetFormModal({
   const submit = async (overwrite = false) => {
     setSubmitting(true);
     try {
-      await onSubmit({ name: name.trim(), description, voice_style: voiceStyle, image, overwrite });
+      await onSubmit({
+        name: name.trim(),
+        description,
+        voice_style: voiceStyle,
+        visibility,
+        image,
+        overwrite,
+      });
       onClose();
     } finally {
       setSubmitting(false);
@@ -273,6 +283,34 @@ export function AssetFormModal({
                     color: "var(--color-text)",
                   }}
                 />
+              </FieldLabel>
+            )}
+
+            {mode !== "import" && (
+              <FieldLabel label={t("visibility.label")}>
+                <div className="flex items-center gap-1 rounded-lg p-0.5" style={{ border: "1px solid var(--color-hairline)" }}>
+                  {(["shared", "private"] as const).map((value) => {
+                    const active = visibility === value;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => setVisibility(value)}
+                        className="focus-ring flex-1 rounded-md px-2.5 py-1.5 text-[12px] transition-colors"
+                        style={{
+                          background: active ? "var(--color-accent-dim)" : "transparent",
+                          color: active ? "var(--color-accent-2)" : "var(--color-text-3)",
+                        }}
+                      >
+                        {t(`visibility.${value}`)}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 text-[11px] leading-4" style={{ color: "var(--color-text-4)" }}>
+                  {t(`visibility.${visibility}_hint`)}
+                </p>
               </FieldLabel>
             )}
           </div>

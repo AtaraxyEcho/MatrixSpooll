@@ -268,8 +268,10 @@ describe("HomeHeroComposer", () => {
       image_path: "_global_assets/character/hero.png",
       audio_path: null,
       source_project: null,
+      source_project_id: null,
       owner_user_id: null,
       owner: null,
+      visibility: "shared" as const,
       updated_at: "2026-08-20T00:00:00Z",
     };
     vi.spyOn(API, "listAssets").mockResolvedValue({ items: [asset] });

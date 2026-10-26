@@ -31,7 +31,8 @@ from lib.audio_utils import (
     probe_audio_duration_seconds,
 )
 from lib.config.resolver import VisionCapabilityError
-from lib.db import get_async_session
+from lib.db import async_session_factory, get_async_session
+from lib.db.repositories.asset_repo import AssetRepository
 from lib.episode_paths import (
     REFERENCE_VIDEO_STEP1_FILENAME,
     REFERENCE_VIDEO_STEP1_LEGACY_FILENAME,
@@ -57,6 +58,7 @@ from lib.source_loader import (
 )
 from server.auth import CurrentUser, CurrentUserInfo, database_auth_initialized, get_current_user_flexible, is_testing
 from server.routers._script_review_errors import raise_review_error
+from server.services.asset_access import visible_asset_clause
 from server.services.media_delivery import serve_media_file
 from server.services.project_access import resolve_project_access
 from server.services.script_review import ScriptReviewError, ScriptReviewService
@@ -95,6 +97,9 @@ _IMAGE_EXTS: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".webp")
 # gets a hard ceiling.
 IMAGE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 SOURCE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024
+STYLE_IMAGE_MAX_BYTES = 20 * 1024 * 1024
+# 未登记 max_bytes 的上传类型也不做无界读取：兜底按 source 上限收口
+UPLOAD_FALLBACK_MAX_BYTES = SOURCE_UPLOAD_MAX_BYTES
 
 # 落盘文件名策略
 #   stable_png — 稳定单图名 `{name}.png`（实际后缀由图片归一化结果决定）
@@ -276,13 +281,23 @@ async def serve_global_asset(
 ):
     """服务 _global_assets 下的全局资产图片（仅全局库类型：character/scene/prop）。
 
-    需登录：角色设定图等资产可能来自私有项目语境，不对匿名访问开放。
+    需登录 **且** 该文件所属资产对当前用户可见：只看登录态的话，列表/详情做了可见性
+    过滤也挡不住按文件名直取内容——元数据隔离会退化成障眼法。文件必须由 assets 行
+    引用（文件名是 uuid），查不到就 404，与"资产不存在"同口径。
     """
-    del user  # authentication only; global library is shared among signed-in users
     if asset_type not in GLOBAL_LIBRARY_ASSET_TYPES:
         raise HTTPException(status_code=400, detail=_t("invalid_asset_type"))
     if "/" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail=_t("invalid_asset_filename"))
+
+    relative_path = f"_global_assets/{asset_type}/{filename}"
+    async with async_session_factory() as db_session:
+        asset = await AssetRepository(db_session).get_by_path(
+            relative_path,
+            visible_to=visible_asset_clause(user),
+        )
+    if asset is None:
+        raise HTTPException(status_code=404, detail=_t("file_not_found", path=filename))
 
     root = get_project_manager().get_global_assets_root()
     # 防御性检查：即使 filename 通过了字符串校验，也要确保解析后的路径仍在 root 之内
@@ -298,9 +313,14 @@ async def serve_global_asset(
     return FileResponse(str(path))
 
 
-@public_router.get("/avatars/{filename}")
+@router.get("/avatars/{filename}")
 async def serve_user_avatar(filename: str, _t: Translator):
-    """服务 _avatars 下的用户头像图片（文件名即 ``{user_id}.{ext}``）。"""
+    """服务 _avatars 下的用户头像图片（文件名即 ``{user_id}.{ext}``）。
+
+    挂在需登录的 ``router`` 上（见 server/app.py 的注册依赖）：头像文件名可枚举，
+    匿名可读等于对外暴露「系统里有哪些用户」。``<img src>`` 由同源 Cookie 自动带
+    凭证，前端也只在登录后渲染头像，故不需要 ``public_router``。
+    """
     if "/" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail=_t("invalid_asset_filename"))
     root = get_project_manager().get_user_avatars_root()
@@ -365,12 +385,15 @@ async def upload_file(
         )
 
     try:
-        content = await file.read()
+        # 有界读取：只按上限 +1 字节读，超限立即拒收。无界 read() 会把客户端声明的
+        # 任意体积整块读进进程内存，体积判断发生在读完之后，判不到 OOM。
+        max_bytes = spec.max_bytes if spec.max_bytes is not None else UPLOAD_FALLBACK_MAX_BYTES
+        content = await file.read(max_bytes + 1)
 
-        if spec.max_bytes is not None and len(content) > spec.max_bytes:
+        if len(content) > max_bytes:
             raise HTTPException(
                 status_code=400,
-                detail=_t("upload_too_large", max_mb=spec.max_bytes // (1024 * 1024)),
+                detail=_t("upload_too_large", max_mb=max_bytes // (1024 * 1024)),
             )
 
         if spec.content_check == "audio":
@@ -1044,7 +1067,14 @@ async def upload_style_image(project_name: str, user: CurrentUser, _t: Translato
         )
 
     try:
-        content = await file.read()
+        # 风格参考图同样要有界读取 + 体积上限：normalize_uploaded_image 只校验内容
+        # 能否解码，拦不住「先把数 GB 读进内存再校验」的 OOM 路径。
+        content = await file.read(STYLE_IMAGE_MAX_BYTES + 1)
+        if len(content) > STYLE_IMAGE_MAX_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=_t("upload_too_large", max_mb=STYLE_IMAGE_MAX_BYTES // (1024 * 1024)),
+            )
 
         def _sync_prepare():
             project_dir = get_project_manager().get_project_path(project_name)

@@ -157,7 +157,16 @@ class GenerateUnitsBatchRequest(BaseModel):
 # ============ 辅助 ============
 
 
-def _load_episode_script(project_name: str, episode: int, _t: Translator) -> tuple[dict, dict, str]:
+async def _load_episode_script(project_name: str, episode: int, _t: Translator) -> tuple[dict, dict, str]:
+    """加载 project.json + 指定集的剧本（文件锁与磁盘 I/O 丢线程池）。
+
+    project.json / 剧本读都要拿排他文件锁：在主事件循环里同步执行会被后台写入卡住，
+    期间所有 HTTP 请求与 SSE 流一起停摆。已在线程池内的调用方用 ``_load_episode_script_sync``。
+    """
+    return await asyncio.to_thread(_load_episode_script_sync, project_name, episode, _t)
+
+
+def _load_episode_script_sync(project_name: str, episode: int, _t: Translator) -> tuple[dict, dict, str]:
     """加载 project.json + 指定集的剧本。返回 (project, script, script_file)。"""
     try:
         project = get_project_manager().load_project(project_name)
@@ -308,7 +317,7 @@ def _require_unit_ready(unit: dict, *, ignore_marker: bool = False, allow_blank_
 
 @router.get("/episodes/{episode}/units")
 async def list_units(project_name: str, episode: int, _t: Translator) -> dict[str, Any]:
-    _project, script, _sf = _load_episode_script(project_name, episode, _t)
+    _project, script, _sf = await _load_episode_script(project_name, episode, _t)
     return {"units": script.get("video_units") or []}
 
 
@@ -331,7 +340,7 @@ async def add_unit(
     refs = _normalized_refs(req.references)
     references_supplied = "references" in req.model_fields_set
 
-    project, current, script_file = _load_episode_script(project_name, episode, _t)
+    project, current, script_file = await _load_episode_script(project_name, episode, _t)
     if references_supplied:
         _validate_references_exist(project, refs, _t)
     else:
@@ -407,7 +416,7 @@ async def patch_unit(
     _t: Translator,
 ) -> dict[str, Any]:
     refs: list[dict] | None = _normalized_refs(req.references) if req.references is not None else None
-    project, current, script_file = _load_episode_script(project_name, episode, _t)
+    project, current, script_file = await _load_episode_script(project_name, episode, _t)
     _find_unit(current, unit_id, _t)
     if refs is not None:
         _validate_references_exist(project, refs, _t)
@@ -446,7 +455,7 @@ async def delete_unit(
     unit_id: str,
     _t: Translator,
 ) -> Response:
-    _project, current, script_file = _load_episode_script(project_name, episode, _t)
+    _project, current, script_file = await _load_episode_script(project_name, episode, _t)
     _find_unit(current, unit_id, _t)
     result = execute_current_episode_edit(
         get_project_manager(),
@@ -471,7 +480,7 @@ async def reorder_units(
     req: ReorderRequest,
     _t: Translator,
 ) -> dict[str, Any]:
-    _project, current, script_file = _load_episode_script(project_name, episode, _t)
+    _project, current, script_file = await _load_episode_script(project_name, episode, _t)
     units = current.get("video_units") or []
     existing_ids = [unit.get("unit_id") for unit in units]
     error_kind = full_permutation_error(existing_ids, req.unit_ids)
@@ -509,7 +518,7 @@ async def precheck_unit_duration(
     ``needs_confirmation`` 为 false 时仅表示请求时长基准本身是当前档位成员。能力或档位元数据
     无法解析时返回结构化 blocker，不制造无约束申请。
     """
-    project, script, script_file = _load_episode_script(project_name, episode, _t)
+    project, script, script_file = await _load_episode_script(project_name, episode, _t)
     unit = _find_unit(script, unit_id, _t)
     _require_unit_ready(unit)
     tts_in_progress = (
@@ -587,7 +596,7 @@ async def preview_script(
     warning 依赖该集视频后端的能力（``voice_consistency`` 与参考音频段数上限）与本集的无声
     开关，与执行层同一份解析出口；能力解析失败时按 ``soft`` 降级，只是少发这几条提示。
     """
-    project, _script, _sf = _load_episode_script(project_name, episode, _t)
+    project, _script, _sf = await _load_episode_script(project_name, episode, _t)
     caps = await project_video_caps(project, degraded_to="解析预览不发声音相关提示")
     preview = build_script_preview(
         req.prompt,
@@ -623,7 +632,7 @@ async def generate_unit(
     _t: Translator,
     req: GenerateUnitRequest | None = None,
 ) -> dict[str, Any]:
-    project, script, script_file = _load_episode_script(project_name, episode, _t)
+    project, script, script_file = await _load_episode_script(project_name, episode, _t)
     unit = _find_unit(script, unit_id, _t)  # raises 404 if missing
     _require_unit_ready(unit)
     guard_prompt = assemble_shots_text(unit.get("shots") or [])
@@ -756,7 +765,7 @@ async def generate_units_batch(
     targets that never reached the queue.
     """
 
-    project, script, script_file = _load_episode_script(project_name, episode, _t)
+    project, script, script_file = await _load_episode_script(project_name, episode, _t)
     body = req
     try:
         requested_ids = normalize_requested_ids(body.unit_ids, field="unit_ids")
@@ -859,7 +868,7 @@ async def upload_unit_video(
         relative_path = resource_relative_path("reference_videos", unit_id)
 
         def _validate_unit() -> tuple[Path, VersionManager, str]:
-            project, script, script_file = _load_episode_script(project_name, episode, _t)
+            project, script, script_file = _load_episode_script_sync(project_name, episode, _t)
             _find_unit_for_project(project, script, unit_id, _t)  # raises 404 if missing
             project_path = get_project_manager().get_project_path(project_name)
             # 路径遍历防护：unit_id 拼出的绝对路径不得逃出项目目录（与 versions.py 对齐）
@@ -878,7 +887,7 @@ async def upload_unit_video(
             # 上传流可达数百 MB、耗时数秒，期间 episode→script 绑定可能被并发重绑
             # （PATCH / agent 同步剧本）。staging 后重解析绑定，确保元数据写进当前生效的剧本。
             def _recheck_binding() -> str:
-                project2, script2, script_file2 = _load_episode_script(project_name, episode, _t)
+                project2, script2, script_file2 = _load_episode_script_sync(project_name, episode, _t)
                 _find_unit_for_project(project2, script2, unit_id, _t)
                 return script_file2
 

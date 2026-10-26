@@ -100,7 +100,7 @@ import type {
   PresentationRequestOptions,
   PresentationResourceType,
 } from "@/types/presentation";
-import type { Asset, AssetType, AssetCreatePayload, AssetUpdatePayload } from "@/types/asset";
+import type { Asset, AssetScope, AssetType, AssetCreatePayload, AssetUpdatePayload } from "@/types/asset";
 import type { WorkflowPlan, WorkflowPlanRequest } from "@/types/workflow";
 import type {
   AgentCredential,
@@ -3491,12 +3491,13 @@ class API {
   // ==================== Global Asset Library ====================
 
   static async listAssets(
-    params: { type?: AssetType; q?: string; limit?: number; offset?: number } = {},
+    params: { type?: AssetType; q?: string; scope?: AssetScope; limit?: number; offset?: number } = {},
     options: RequestInit = {},
   ) {
     const usp = new URLSearchParams();
     if (params.type) usp.set("type", params.type);
     if (params.q) usp.set("q", params.q);
+    if (params.scope && params.scope !== "all") usp.set("scope", params.scope);
     if (params.limit) usp.set("limit", String(params.limit));
     if (params.offset) usp.set("offset", String(params.offset));
     return this.request<{ items: Asset[] }>(`/assets?${usp.toString()}`, options);
@@ -3512,6 +3513,7 @@ class API {
     form.append("name", payload.name);
     form.append("description", payload.description ?? "");
     form.append("voice_style", payload.voice_style ?? "");
+    if (payload.visibility) form.append("visibility", payload.visibility);
     if (payload.image) form.append("image", payload.image);
     const endpoint = "/assets";
     const url = `${API_BASE}${endpoint}`;

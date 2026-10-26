@@ -19,13 +19,14 @@ from pydantic import AfterValidator, BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
+from lib.api_errors import BadRequestError
 from lib.app_data_dir import app_data_dir
 from lib.backend_assembly.specs import get_provider_spec
 from lib.config.registry import PROVIDER_REGISTRY, model_audio_switch_controllable, model_has_audio_track
 from lib.config.repository import mask_secret
 from lib.config.resolver import VoiceConsistency, derive_voice_consistency
 from lib.config.service import ConfigService, ProviderConfigValueError
-from lib.config.url_utils import normalize_base_url
+from lib.config.url_utils import normalize_base_url, validate_provider_base_url
 from lib.db import get_async_session
 from lib.db.base import dt_to_iso
 from lib.db.repositories.credential_repository import CredentialRepository
@@ -43,6 +44,21 @@ logger = logging.getLogger(__name__)
 MAX_VERTEX_CREDENTIALS_BYTES = 1024 * 1024  # 1 MiB
 
 router = APIRouter(prefix="/providers", tags=["Providers"])
+
+
+def _validated_base_url(value: str | None, _t: Translator) -> str | None:
+    """供应商 base_url 的 SSRF 围栏。空值表示跟随默认端点，无需校验。
+
+    内置供应商凭证与 ``*_base_url`` 配置键都会被用来发真实请求（连接测试、
+    模型发现、生成），缺这层校验时这些入口能把服务端当跳板打内网与云元数据。
+    """
+    if not value:
+        return value
+    try:
+        return validate_provider_base_url(value)
+    except ValueError as exc:
+        raise BadRequestError("provider_base_url_forbidden", reason=str(exc)) from exc
+
 
 _CREDENTIAL_KEYS = frozenset({"api_key", "credentials_path", "base_url", "access_key", "secret_key"})
 
@@ -481,6 +497,8 @@ async def patch_provider_config(
         if value is None:
             await svc.delete_provider_config(provider_id, key, flush=False)
         else:
+            if key.endswith("base_url"):
+                value = _validated_base_url(value, _t) or ""
             try:
                 await svc.set_provider_config(provider_id, key, value, flush=False)
             except ProviderConfigValueError as exc:
@@ -537,7 +555,7 @@ async def create_credential(
         provider=provider_id,
         name=body.name,
         api_key=body.api_key,
-        base_url=body.base_url,
+        base_url=_validated_base_url(body.base_url, _t),
         access_key=body.access_key,
         secret_key=body.secret_key,
     )
@@ -572,7 +590,7 @@ async def update_credential(
     if "api_key" in body.model_fields_set:
         kwargs["api_key"] = body.api_key
     if "base_url" in body.model_fields_set:
-        kwargs["base_url"] = body.base_url
+        kwargs["base_url"] = _validated_base_url(body.base_url, _t)
     if "access_key" in body.model_fields_set:
         kwargs["access_key"] = body.access_key
     if "secret_key" in body.model_fields_set:

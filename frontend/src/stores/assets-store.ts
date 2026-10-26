@@ -1,10 +1,10 @@
 import { create } from "zustand";
 import { API } from "@/api";
-import type { Asset, AssetType } from "@/types/asset";
+import type { Asset, AssetScope, AssetType } from "@/types/asset";
 
 interface AssetsStore {
   byType: Record<AssetType, Asset[]>;
-  loadList: (type: AssetType, q?: string) => Promise<void>;
+  loadList: (type: AssetType, q?: string, scope?: AssetScope) => Promise<void>;
   addAsset: (asset: Asset) => void;
   updateAsset: (asset: Asset) => void;
   deleteAsset: (id: string, type: AssetType) => Promise<void>;
@@ -12,8 +12,8 @@ interface AssetsStore {
 
 export const useAssetsStore = create<AssetsStore>((set) => ({
   byType: { character: [], scene: [], prop: [] },
-  loadList: async (type, q) => {
-    const res = await API.listAssets({ type, q });
+  loadList: async (type, q, scope) => {
+    const res = await API.listAssets({ type, q, scope });
     set((s) => ({ byType: { ...s.byType, [type]: res.items } }));
   },
   addAsset: (asset) =>

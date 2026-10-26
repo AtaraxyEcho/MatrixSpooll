@@ -151,7 +151,7 @@ export function useAssistantSession(projectName: string | null) {
   }, [projectName, store]);
 
   // 补拉会话列表。纳入项目级取消域，挂起期间切换项目时迟到响应不得覆盖已切到的
-  // 新项目会话列表；空列表不写入，避免一次失败的读把列表清空。
+  // 新项目会话列表；失败由 catch 兜掉，成功时（含空列表）一律以服务端为准。
   const refreshSessions = useCallback(() => {
     if (!projectName) return;
     // 本次补拉属于 projectName，取消域也必须是它的。改写的迟到收尾会带着旧
@@ -167,8 +167,9 @@ export function useAssistantSession(projectName: string | null) {
         if (projectAbortOwnerRef.current !== projectName) return;
         // 本次读开始之后发生过本地权威写入：这份列表已经过期
         if (sessionsWriteVersionRef.current !== writeVersion) return;
-        const fresh = res.sessions ?? [];
-        if (fresh.length > 0) store.getState().setSessions(fresh);
+        // 空数组是合法结果（最后一个会话在别的标签页被删掉），照写——请求失败走
+        // 下面的 catch，两者不会混淆。
+        store.getState().setSessions(res.sessions ?? []);
       })
       .catch(() => {/* 静默失败 */});
   }, [projectName, store]);
@@ -491,7 +492,7 @@ export function useAssistantSession(projectName: string | null) {
           const newSession: SessionMeta = {
             id: returnedSessionId,
             project_name: projectName!,
-            title: content.trim().slice(0, 30) || "图片消息",
+            title: content.trim().slice(0, 30) || t("dashboard:assistant_image_message"),
             status: "running",
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -534,13 +535,13 @@ export function useAssistantSession(projectName: string | null) {
         if (err instanceof AgentFailureError) {
           store.getState().setStartupFailure(err.failure);
         } else {
-          store.getState().setError(errMsg(err, "发送失败"));
+          store.getState().setError(errMsg(err, t("dashboard:assistant_send_failed")));
         }
         store.getState().setSending(false);
         return false;
       }
     },
-    [projectName, abortSessionLoad, connectStream, store, writeSessions],
+    [projectName, abortSessionLoad, connectStream, store, writeSessions, t],
   );
 
   const answerQuestion = useCallback(
@@ -555,12 +556,12 @@ export function useAssistantSession(projectName: string | null) {
         await API.answerAssistantQuestion(projectName, sessionId, questionId, answers);
         store.getState().setPendingQuestion(null);
       } catch (err) {
-        store.getState().setError(errMsg(err, "回答失败"));
+        store.getState().setError(errMsg(err, t("dashboard:assistant_answer_failed")));
       } finally {
         store.getState().setAnsweringQuestion(false);
       }
     },
-    [projectName, store],
+    [projectName, store, t],
   );
 
   // 中断会话
@@ -572,10 +573,10 @@ export function useAssistantSession(projectName: string | null) {
     try {
       await API.interruptAssistantSession(projectName, sessionId);
     } catch (err) {
-      store.getState().setError(errMsg(err, "中断失败"));
+      store.getState().setError(errMsg(err, t("dashboard:assistant_interrupt_failed")));
       store.getState().setInterrupting(false);
     }
-  }, [projectName, store]);
+  }, [projectName, store, t]);
 
   // 创建新会话（懒创建：仅清空状态，实际创建延迟到首次发消息时）
   const createNewSession = useCallback(() => {

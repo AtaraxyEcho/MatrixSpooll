@@ -19,6 +19,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useAssistantStore } from "@/stores/assistant-store";
 import { useProjectsStore } from "@/stores/projects-store";
 import { useAppStore } from "@/stores/app-store";
@@ -57,6 +58,8 @@ function SessionSelector({
   const { t } = useTranslation("dashboard");
   const { sessions, currentSessionId, isDraftSession } = useAssistantStore();
   const [open, setOpen] = useState(false);
+  // 待删除的会话：非空即弹站内确认框（原生 confirm 会阻塞流式渲染，样式也与暗房风格割裂）
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
 
@@ -134,7 +137,10 @@ function SessionSelector({
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={(e) => { e.stopPropagation(); if (confirm(t("confirm_delete_session"))) onDelete(session.id); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPendingDeleteId(session.id);
+                    }}
                     className="focus-ring shrink-0 rounded p-0.5 opacity-0 transition-all group-hover:opacity-100 focus-visible:opacity-100"
                     style={{ color: "var(--color-text-4)" }}
                     onMouseEnter={(e) => {
@@ -154,6 +160,20 @@ function SessionSelector({
           </div>
         </GlassPopover>
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        tone="danger"
+        title={t("delete_session")}
+        description={t("confirm_delete_session")}
+        confirmLabel={t("delete_session")}
+        onCancel={() => setPendingDeleteId(null)}
+        onConfirm={() => {
+          const target = pendingDeleteId;
+          setPendingDeleteId(null);
+          if (target) onDelete(target);
+        }}
+      />
     </div>
   );
 }

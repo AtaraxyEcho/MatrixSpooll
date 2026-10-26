@@ -20,6 +20,7 @@ import {
   mergeEntriesBySeq,
   type DraftMirror,
 } from "@/utils/entry-projection";
+import { registerSessionResetter } from "./session-scope";
 
 /** 启动失败的来源入口——决定故障卡片的重试重放哪一处输入。 */
 export type StartupFailureOrigin = "send" | "rewrite";
@@ -321,4 +322,9 @@ export const useAssistantStore = create<AssistantState>((set, get) => {
     setCurrentProject: (project) => set({ currentProject: project }),
     setIsDraftSession: (draft) => set({ isDraftSession: draft }),
   };
+});
+
+// 登出即丢弃助手会话与时间线：会话 id 属于上一位用户的上下文
+registerSessionResetter(() => {
+  useAssistantStore.setState(useAssistantStore.getInitialState(), true);
 });

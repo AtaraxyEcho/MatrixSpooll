@@ -209,6 +209,27 @@ class TestDownloadToken:
             assert payload["project"] == "my-project"
             assert payload["purpose"] == "download"
 
+    def test_download_token_carries_session_id(self):
+        """令牌绑定签发时的浏览器会话，登出/吊销后未过期的令牌也不能再用。"""
+        with patch.dict(os.environ, {"AUTH_TOKEN_SECRET": "test-secret-key-that-is-at-least-32-bytes"}):
+            token = auth_module.create_download_token(
+                "admin",
+                "my-project",
+                user_id="user-1",
+                session_id="session-1",
+            )
+            payload = auth_module.verify_download_token(token, "my-project")
+            assert payload["uid"] == "user-1"
+            assert payload["sid"] == "session-1"
+
+    def test_download_token_without_session_keeps_legacy_shape(self):
+        """旧调用不传 session_id 时不写 sid（保持向后兼容）。"""
+        with patch.dict(os.environ, {"AUTH_TOKEN_SECRET": "test-secret-key-that-is-at-least-32-bytes"}):
+            token = auth_module.create_download_token("admin", "my-project")
+            payload = auth_module.verify_download_token(token, "my-project")
+            assert "sid" not in payload
+            assert "uid" not in payload
+
     def test_verify_download_token_wrong_project(self):
         """项目不匹配应抛出 ValueError"""
         with patch.dict(os.environ, {"AUTH_TOKEN_SECRET": "test-secret-key-that-is-at-least-32-bytes"}):

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { API } from "@/api";
 import { useAppStore } from "@/stores/app-store";
+import { registerSessionResetter } from "@/stores/session-scope";
 import type { TaskItem, TaskStats, TaskStatus } from "@/types";
 
 /** 单次刷新拉取的任务条数上限。 */
@@ -673,3 +674,8 @@ export function useLatestTasksByResource(
     useShallow((s) => selectLatestTaskByResource(s.tasks, { projectName, taskType })),
   );
 }
+
+// 登出即丢弃任务列表与统计：任务属主是上一位用户
+registerSessionResetter(() => {
+  useTasksStore.setState(useTasksStore.getInitialState(), true);
+});

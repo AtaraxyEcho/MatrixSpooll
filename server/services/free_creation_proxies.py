@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import shutil
+import weakref
 from pathlib import Path
 from uuid import uuid4
 
@@ -16,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 _TRANSCODE_SLOTS = asyncio.Semaphore(2)
 _TRANSCODE_TIMEOUT_SECONDS = 30 * 60
-_proxy_locks: dict[str, asyncio.Lock] = {}
+# 弱引用字典：转码完成后的锁不再被引用即回收，避免按媒体文件无限累积
+_proxy_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
 
 
 def _cache_limit_bytes() -> int:
